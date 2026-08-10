@@ -54,6 +54,10 @@ const execution = createExecutionEnvironment<Input, Output>(
 
 const app = createApp({ execution });
 
+app.route("GET", "/health", () =>
+  Response.json({ status: "ok", runtime: "pi" }),
+);
+
 app.route("POST", "/execute", async ({ request, execution }) => {
   const input = (await request.json()) as Partial<Input>;
 

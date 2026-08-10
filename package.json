@@ -18,7 +18,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "check:examples": "npm run check --workspaces --if-present"
+    "check:examples": "npm run check --workspaces --if-present",
+    "dev:openai": "npm run dev --workspace @cantelop/example-openai",
+    "dev:anthropic": "npm run dev --workspace @cantelop/example-anthropic",
+    "dev:pi": "npm run dev --workspace @cantelop/example-pi",
+    "start:openai": "npm run start --workspace @cantelop/example-openai",
+    "start:anthropic": "npm run start --workspace @cantelop/example-anthropic",
+    "start:pi": "npm run start --workspace @cantelop/example-pi"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
