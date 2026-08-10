@@ -4,9 +4,14 @@ This package adapts the [OpenAI Agents SDK](https://openai.github.io/openai-agen
 to Cantelop's runtime-neutral execution environment.
 
 ```bash
-export OPENAI_API_KEY=...
+npm install
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY.
 npm run dev
 ```
+
+Alternatively, export `OPENAI_API_KEY` in the shell before starting the server.
+`GET /health` reports whether the credential is visible without exposing it.
 
 Then create an execution:
 

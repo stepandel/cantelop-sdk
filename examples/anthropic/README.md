@@ -5,9 +5,14 @@ This package adapts the
 to Cantelop's runtime-neutral execution environment.
 
 ```bash
-export ANTHROPIC_API_KEY=...
+npm install
+cp .env.example .env
+# Edit .env and set ANTHROPIC_API_KEY.
 npm run dev
 ```
+
+Alternatively, export `ANTHROPIC_API_KEY` in the shell before starting the
+server.
 
 Then create an execution:
 

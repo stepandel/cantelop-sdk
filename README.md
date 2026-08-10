@@ -45,23 +45,30 @@ Install all workspace dependencies once from the repository root:
 npm install
 ```
 
-Then export the credential required by the runtime and start its server:
+Create the local environment file for the example you want to run:
+
+```bash
+cp examples/openai/.env.example examples/openai/.env
+# Edit examples/openai/.env and add OPENAI_API_KEY.
+```
+
+Then start its server from the repository root:
 
 ```bash
 # OpenAI — http://localhost:3000
-export OPENAI_API_KEY=...
 npm run dev:openai
 
 # Anthropic — http://localhost:3001
-export ANTHROPIC_API_KEY=...
+cp examples/anthropic/.env.example examples/anthropic/.env
 npm run dev:anthropic
 
 # Pi — http://localhost:3002
-export ANTHROPIC_API_KEY=...
-export PI_PROVIDER=anthropic
-export PI_MODEL=claude-sonnet-4-6
+cp examples/pi/.env.example examples/pi/.env
 npm run dev:pi
 ```
+
+Edit each copied `.env` before starting its server. Exported shell variables are
+also supported and take precedence over values loaded from `.env`.
 
 Each server has a credential-free health check:
 

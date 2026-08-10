@@ -5,11 +5,14 @@ This package adapts
 to Cantelop's runtime-neutral execution environment.
 
 ```bash
-export ANTHROPIC_API_KEY=...
-export PI_PROVIDER=anthropic
-export PI_MODEL=claude-sonnet-4-6
+npm install
+cp .env.example .env
+# Edit .env with the provider credential and desired PI_PROVIDER/PI_MODEL.
 npm run dev
 ```
+
+Alternatively, export the provider credential, `PI_PROVIDER`, and `PI_MODEL` in
+the shell before starting the server.
 
 Then create an execution:
 

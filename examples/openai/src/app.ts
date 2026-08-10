@@ -16,6 +16,12 @@ const agent = new Agent({
 
 const execution = createExecutionEnvironment<Input, Output>(
   async ({ input, signal }) => {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error(
+        "OPENAI_API_KEY is not configured. Copy .env.example to .env and add your key, or export it before starting the server.",
+      );
+    }
+
     const result = await run(agent, input.prompt, { signal });
     return { answer: result.finalOutput ?? "" };
   },
@@ -24,7 +30,11 @@ const execution = createExecutionEnvironment<Input, Output>(
 const app = createApp({ execution });
 
 app.route("GET", "/health", () =>
-  Response.json({ status: "ok", runtime: "openai" }),
+  Response.json({
+    status: "ok",
+    runtime: "openai",
+    configured: Boolean(process.env.OPENAI_API_KEY),
+  }),
 );
 
 app.route("POST", "/execute", async ({ request, execution }) => {
