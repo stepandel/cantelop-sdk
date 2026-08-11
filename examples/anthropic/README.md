@@ -5,10 +5,10 @@ This package adapts the
 to Cantelop's runtime-neutral execution environment.
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env
 # Edit .env and set ANTHROPIC_API_KEY.
-npm run dev
+pnpm dev
 ```
 
 Alternatively, export `ANTHROPIC_API_KEY` in the shell before starting the

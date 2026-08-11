@@ -4,10 +4,10 @@ This package adapts the [OpenAI Agents SDK](https://openai.github.io/openai-agen
 to Cantelop's runtime-neutral execution environment.
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env
 # Edit .env and set OPENAI_API_KEY.
-npm run dev
+pnpm dev
 ```
 
 Alternatively, export `OPENAI_API_KEY` in the shell before starting the server.

@@ -12,7 +12,7 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@cantelop/sdk": "file:../..",
+    "@cantelop/sdk": "workspace:*",
     "@openai/agents": "^0.14.3"
   },
   "devDependencies": {

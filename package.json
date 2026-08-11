@@ -3,9 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "examples/*"
-  ],
+  "packageManager": "pnpm@9.15.0",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -22,14 +20,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "check:examples": "npm run check --workspaces --if-present",
-    "dev:openai": "npm run dev --workspace @cantelop/example-openai",
-    "dev:anthropic": "npm run dev --workspace @cantelop/example-anthropic",
-    "dev:pi": "npm run dev --workspace @cantelop/example-pi",
-    "start:openai": "npm run start --workspace @cantelop/example-openai",
-    "start:anthropic": "npm run start --workspace @cantelop/example-anthropic",
-    "start:pi": "npm run start --workspace @cantelop/example-pi"
+    "test": "pnpm build && node --test test/*.test.mjs",
+    "check:examples": "pnpm --filter './examples/**' --if-present check",
+    "dev:openai": "pnpm --filter @cantelop/example-openai dev",
+    "dev:anthropic": "pnpm --filter @cantelop/example-anthropic dev",
+    "dev:pi": "pnpm --filter @cantelop/example-pi dev",
+    "start:openai": "pnpm --filter @cantelop/example-openai start",
+    "start:anthropic": "pnpm --filter @cantelop/example-anthropic start",
+    "start:pi": "pnpm --filter @cantelop/example-pi start"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

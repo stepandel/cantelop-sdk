@@ -88,7 +88,7 @@ runtime behavior.
 Install all workspace dependencies once from the repository root:
 
 ```bash
-npm install
+pnpm install
 ```
 
 Create the local environment file for the example you want to run:
@@ -102,15 +102,15 @@ Then start its server from the repository root:
 
 ```bash
 # OpenAI — http://localhost:3000
-npm run dev:openai
+pnpm dev:openai
 
 # Anthropic — http://localhost:3001
 cp examples/anthropic/.env.example examples/anthropic/.env
-npm run dev:anthropic
+pnpm dev:anthropic
 
 # Pi — http://localhost:3002
 cp examples/pi/.env.example examples/pi/.env
-npm run dev:pi
+pnpm dev:pi
 ```
 
 Edit each copied `.env` before starting its server. Exported shell variables are

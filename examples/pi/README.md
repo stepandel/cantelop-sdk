@@ -5,10 +5,10 @@ This package adapts
 to Cantelop's runtime-neutral execution environment.
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env
 # Edit .env with the provider credential and desired PI_PROVIDER/PI_MODEL.
-npm run dev
+pnpm dev
 ```
 
 Alternatively, export the provider credential, `PI_PROVIDER`, and `PI_MODEL` in
