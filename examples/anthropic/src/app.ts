@@ -2,8 +2,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import {
   createApp,
   createExecutionEnvironment,
-  eventStreamResponse,
 } from "@cantelop/sdk";
+import { eventStreamResponse } from "../../shared/event-stream.js";
 
 interface Input {
   prompt: string;

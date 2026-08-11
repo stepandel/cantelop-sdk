@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   createApp,
   createExecutionEnvironment,
-  eventStreamResponse,
 } from "../dist/index.js";
 import { serve } from "../dist/node.js";
 
@@ -23,15 +22,20 @@ async function withServer(app, run) {
 }
 
 test("the Node adapter streams response bodies", async () => {
-  const execution = createExecutionEnvironment(async ({ emit }) => {
-    emit({ type: "delta", value: "one" });
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    emit({ type: "delta", value: "two" });
-  });
+  const execution = createExecutionEnvironment(async () => undefined);
   const app = createApp({ execution });
-  app.route("GET", "/stream", ({ execution }) => {
-    const run = execution.start(undefined);
-    return eventStreamResponse(run.events());
+  app.route("GET", "/stream", () => {
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encoder.encode("one"));
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          controller.enqueue(encoder.encode("two"));
+          controller.close();
+        },
+      }),
+    );
   });
 
   await withServer(app, async (port) => {
@@ -39,8 +43,7 @@ test("the Node adapter streams response bodies", async () => {
     assert.equal(response.status, 200);
     assert.equal(
       await response.text(),
-      'data: {"type":"delta","value":"one"}\n\n' +
-        'data: {"type":"delta","value":"two"}\n\n',
+      "onetwo",
     );
   });
 });

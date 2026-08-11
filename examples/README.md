@@ -14,6 +14,7 @@ environment, and exposes it through an HTTP route.
 Every example exposes the same transport surface:
 
 - `POST /execute` waits for the final result.
-- `POST /execute/stream` streams `text_delta` and `done` events over SSE.
+- `POST /execute/stream` streams `text_delta` and `done` events over SSE using
+  an example-owned HTTP helper rather than an SDK transport abstraction.
 - `WS /execute` accepts `{ "prompt": "..." }` messages and streams execution
   events back over the socket.

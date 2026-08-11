@@ -3,11 +3,7 @@
 A minimal TypeScript SDK for exposing routes that launch an opaque harness runtime.
 
 ```ts
-import {
-  createApp,
-  createExecutionEnvironment,
-  eventStreamResponse,
-} from "@cantelop/sdk";
+import { createApp, createExecutionEnvironment } from "@cantelop/sdk";
 
 type Input = { prompt: string };
 type Output = { answer: string };
@@ -54,19 +50,18 @@ const execution = createExecutionEnvironment<Input, Output, RuntimeEvent>(
 );
 ```
 
-Return the events as server-sent events from a normal route:
+Consume the events with standard async iteration:
 
 ```ts
-app.route("POST", "/execute/stream", async ({ request, execution }) => {
-  const run = execution.start((await request.json()) as Input, {
-    signal: request.signal,
-  });
-  return eventStreamResponse(run.events(), {
-    eventName: (event) => event.type,
-    headers: { "x-execution-id": run.id },
-  });
-});
+const run = execution.start({ prompt: "Write a haiku" });
+for await (const event of run.events()) {
+  console.log(event);
+}
 ```
+
+How those events reach a client is application-owned. They can be exposed as
+server-sent events, newline-delimited JSON, or through a framework-specific
+streaming response without coupling the execution environment to a transport.
 
 The Node adapter preserves streaming response bodies:
 
@@ -130,7 +125,8 @@ curl http://localhost:3000/execute \
   -d '{"prompt":"Write a haiku about ephemeral VMs"}'
 ```
 
-Stream an execution with SSE:
+The examples choose to expose execution events over SSE using an example-owned
+HTTP helper:
 
 ```bash
 curl -N http://localhost:3000/execute/stream \

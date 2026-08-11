@@ -3,8 +3,8 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   createApp,
   createExecutionEnvironment,
-  eventStreamResponse,
 } from "@cantelop/sdk";
+import { eventStreamResponse } from "../../shared/event-stream.js";
 
 interface Input {
   prompt: string;

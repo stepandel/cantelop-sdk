@@ -1,21 +1,13 @@
-export interface EventStreamResponseOptions<Event> extends ResponseInit {
+export interface EventStreamOptions<Event> extends ResponseInit {
   eventName?: (event: Event) => string | undefined;
-}
-
-function encodeEvent<Event>(
-  event: Event,
-  eventName?: (event: Event) => string | undefined,
-): Uint8Array {
-  const name = eventName?.(event);
-  const prefix = name ? `event: ${name}\n` : "";
-  return new TextEncoder().encode(`${prefix}data: ${JSON.stringify(event)}\n\n`);
 }
 
 export function eventStreamResponse<Event>(
   events: AsyncIterable<Event>,
-  options: EventStreamResponseOptions<Event> = {},
+  options: EventStreamOptions<Event> = {},
 ): Response {
   const iterator = events[Symbol.asyncIterator]();
+  const encoder = new TextEncoder();
   const headers = new Headers(options.headers);
   headers.set("content-type", "text/event-stream; charset=utf-8");
   headers.set("cache-control", "no-cache");
@@ -26,9 +18,14 @@ export function eventStreamResponse<Event>(
         const result = await iterator.next();
         if (result.done) {
           controller.close();
-        } else {
-          controller.enqueue(encodeEvent(result.value, options.eventName));
+          return;
         }
+
+        const name = options.eventName?.(result.value);
+        const prefix = name ? `event: ${name}\n` : "";
+        controller.enqueue(
+          encoder.encode(`${prefix}data: ${JSON.stringify(result.value)}\n\n`),
+        );
       } catch (error) {
         controller.error(error);
       }
