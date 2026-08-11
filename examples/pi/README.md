@@ -22,6 +22,20 @@ curl http://localhost:3002/execute \
   -d '{"prompt":"Write a haiku about ephemeral VMs"}'
 ```
 
+Stream the response over server-sent events:
+
+```bash
+curl -N http://localhost:3002/execute/stream \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Write a haiku about ephemeral VMs"}'
+```
+
+For WebSocket streaming, connect to `ws://localhost:3002/execute` and send:
+
+```json
+{"prompt":"Write a haiku about ephemeral VMs"}
+```
+
 Pi supports multiple model providers. Change `PI_PROVIDER`, `PI_MODEL`, and the
 corresponding provider credential without changing Cantelop. The Pi agent loop
 and model configuration remain entirely inside this package.
