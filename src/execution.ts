@@ -205,6 +205,9 @@ export function createExecutionEnvironment<
         }
       });
 
+      // A streaming consumer may only observe events and never call wait(). Keep
+      // the original promise rejectable for wait(), but mark it as observed.
+      void result.catch(() => undefined);
       handle = new ExecutionHandle(id, controller, result, eventStream);
       return handle;
     },
