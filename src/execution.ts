@@ -102,9 +102,11 @@ class ExecutionEventStream<Event> implements AsyncIterableIterator<Event> {
   }
 
   next(): Promise<IteratorResult<Event>> {
-    const event = this.buffered.shift();
-    if (event !== undefined) {
-      return Promise.resolve({ done: false, value: event });
+    if (this.buffered.length > 0) {
+      return Promise.resolve({
+        done: false,
+        value: this.buffered.shift() as Event,
+      });
     }
     if (this.failed) return Promise.reject(this.failure);
     if (this.done) return Promise.resolve({ done: true, value: undefined });
