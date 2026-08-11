@@ -1,20 +1,12 @@
-# Runtime examples
+# Runtime example
 
-Each directory is a standalone Cantelop application using the same SDK surface
-with a different user-owned harness runtime:
-
-- `openai` uses the OpenAI Agents SDK.
-- `anthropic` uses the Claude Agent SDK.
-- `pi` uses Pi Agent Core.
-
-The examples intentionally keep agent configuration inside their own packages.
-Cantelop only receives an opaque runtime function, starts it through an execution
-environment, and exposes it through an HTTP route.
-
-Every example exposes the same transport surface:
+The `edge` directory contains a standalone Cantelop application compiled
+without Node.js types or deployment-provider APIs. It demonstrates the runtime
+surface available to application developers:
 
 - `POST /execute` waits for the final result.
-- `POST /execute/stream` streams `text_delta` and `done` events over SSE using
-  an example-owned HTTP helper rather than an SDK transport abstraction.
-- `WS /execute` accepts `{ "prompt": "..." }` messages and streams execution
-  events back over the socket.
+- `POST /execute/stream` streams application-defined events over SSE.
+
+Provider credentials and infrastructure bindings are deliberately absent.
+Cantelop may expose selected platform features later through explicit,
+provider-neutral capabilities.

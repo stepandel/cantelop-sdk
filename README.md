@@ -1,6 +1,7 @@
 # Cantelop SDK
 
-A minimal TypeScript SDK for exposing routes that launch an opaque harness runtime.
+An Edge-native TypeScript SDK for exposing routes that launch an opaque harness
+runtime.
 
 ```ts
 import { createApp, createExecutionEnvironment } from "@cantelop/sdk";
@@ -10,7 +11,7 @@ type Output = { answer: string };
 
 const execution = createExecutionEnvironment<Input, Output>(
   async ({ input, signal }) => {
-    // Call OpenAI, Anthropic, Pi, a subprocess, or any other harness here.
+    signal.throwIfAborted();
     return runHarness(input, { signal });
   },
 );
@@ -19,7 +20,7 @@ const app = createApp({ execution });
 
 app.route("POST", "/execute", async ({ request, execution }) => {
   const input = (await request.json()) as Input;
-  const run = execution.start(input);
+  const run = execution.start(input, { signal: request.signal });
 
   return Response.json({
     executionId: run.id,
@@ -30,8 +31,41 @@ app.route("POST", "/execute", async ({ request, execution }) => {
 export default app;
 ```
 
-Harness runtimes can emit any application-defined event type. Executions expose
-those events as an async stream:
+Cantelop owns the deployment adapter. Applications use Web-standard `Request`,
+`Response`, streams, abort signals, and Web Crypto without depending on the
+underlying hosting provider.
+
+## Runtime contract
+
+Harnesses run in an Edge runtime. They may use standard ECMAScript and supported
+Web Platform APIs, including:
+
+- `fetch`, `Request`, and `Response`
+- Web Streams
+- `AbortController` and `AbortSignal`
+- Web Crypto
+- SDK-provided capabilities
+
+Harnesses must not depend on:
+
+- Node.js built-ins such as `fs`, `child_process`, `net`, or `http`
+- `process`, `Buffer`, native modules, or executable binaries
+- a persistent local filesystem
+- listening on ports or creating servers
+- global mutable state surviving between requests
+- work continuing after its request or response stream ends
+- deployment-provider APIs or bindings
+
+Secrets, storage, and other infrastructure are unavailable unless Cantelop
+exposes them through an explicit provider-neutral capability.
+
+Executions are request-scoped. A route can await the final result or keep the
+request active with a streaming response. Durable, detached, or resumable jobs
+require a separate Cantelop capability.
+
+## Events and streaming
+
+Harness runtimes can emit application-defined events:
 
 ```ts
 type RuntimeEvent =
@@ -50,88 +84,18 @@ const execution = createExecutionEnvironment<Input, Output, RuntimeEvent>(
 );
 ```
 
-Consume the events with standard async iteration:
+Executions expose events through standard async iteration. The application owns
+their HTTP representation, such as SSE or newline-delimited JSON.
 
-```ts
-const run = execution.start({ prompt: "Write a haiku" });
-for await (const event of run.events()) {
-  console.log(event);
-}
-```
+See [`examples/edge`](./examples/edge) for complete JSON and streaming routes.
 
-How those events reach a client is application-owned. They can be exposed as
-server-sent events, newline-delimited JSON, or through a framework-specific
-streaming response without coupling the execution environment to a transport.
-
-The Node adapter preserves streaming response bodies:
-
-```ts
-import { serve } from "@cantelop/sdk/node";
-
-serve(app, { port: 3000 });
-```
-
-Register several routes at once with `app.routes([...])`. Pass a Web-standard
-`Request` to `app.handle(request)` from the server adapter of your choice.
-
-The SDK intentionally does not define agents, models, tools, workflows, or VM
-providers. `HarnessRuntime` is the boundary between Cantelop and user-owned
-runtime behavior.
-
-## Run the examples locally
-
-Install all workspace dependencies once from the repository root:
+## Development
 
 ```bash
 pnpm install
+pnpm check
+pnpm test
+pnpm check:examples
 ```
 
-Create the local environment file for the example you want to run:
-
-```bash
-cp examples/openai/.env.example examples/openai/.env
-# Edit examples/openai/.env and add OPENAI_API_KEY.
-```
-
-Then start its server from the repository root:
-
-```bash
-# OpenAI — http://localhost:3000
-pnpm dev:openai
-
-# Anthropic — http://localhost:3001
-cp examples/anthropic/.env.example examples/anthropic/.env
-pnpm dev:anthropic
-
-# Pi — http://localhost:3002
-cp examples/pi/.env.example examples/pi/.env
-pnpm dev:pi
-```
-
-Edit each copied `.env` before starting its server. Exported shell variables are
-also supported and take precedence over values loaded from `.env`.
-
-Each server has a credential-free health check:
-
-```bash
-curl http://localhost:3000/health
-```
-
-Create an execution with:
-
-```bash
-curl http://localhost:3000/execute \
-  -H 'content-type: application/json' \
-  -d '{"prompt":"Write a haiku about ephemeral VMs"}'
-```
-
-The examples choose to expose execution events over SSE using an example-owned
-HTTP helper:
-
-```bash
-curl -N http://localhost:3000/execute/stream \
-  -H 'content-type: application/json' \
-  -d '{"prompt":"Write a haiku about ephemeral VMs"}'
-```
-
-The `start:*` commands run the same servers without file watching.
+The SDK build is checked for Node.js imports and globals before tests pass.
