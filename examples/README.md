@@ -1,12 +1,18 @@
-# Runtime example
+# Provider examples
 
-The `edge` directory contains a standalone Cantelop application compiled
-without Node.js types or deployment-provider APIs. It demonstrates the runtime
-surface available to application developers:
+The OpenAI, Anthropic, and Pi examples each contain two deployment artifacts:
 
-- `POST /execute` waits for the final result.
-- `POST /execute/stream` streams application-defined events over SSE.
+```text
+src/api.ts      Edge HTTP middleware
+src/harness.ts  Linux-native agent runtime
+```
 
-Provider credentials and infrastructure bindings are deliberately absent.
-Cantelop may expose selected platform features later through explicit,
-provider-neutral capabilities.
+All three APIs reuse `shared/prompt-api.ts`, so provider SDKs and credentials
+remain confined to their harness entrypoints. Cantelop creates an API definition
+with a remote execution environment connected to the corresponding harness VM.
+
+Run all API and harness type checks from the repository root:
+
+```bash
+pnpm check:examples
+```

@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createExecutionEnvironment } from "../dist/harness.js";
 
-test("an execution exposes emitted harness events", async () => {
-  const environment = createExecutionEnvironment(async ({ input, emit }) => {
-    emit({ type: "delta", value: input.slice(0, 2) });
-    emit({ type: "delta", value: input.slice(2) });
-    return input.toUpperCase();
-  });
+test("a native harness receives VM environment and emits events", async () => {
+  const environment = createExecutionEnvironment(
+    async ({ input, env, emit }) => {
+      emit({ type: "delta", value: input.slice(0, 2) });
+      emit({ type: "delta", value: input.slice(2) });
+      return `${env.PREFIX}${input.toUpperCase()}`;
+    },
+    { env: { PREFIX: "VM:" } },
+  );
 
   const execution = await environment.start("hello");
   const events = [];
@@ -17,6 +20,6 @@ test("an execution exposes emitted harness events", async () => {
     { type: "delta", value: "he" },
     { type: "delta", value: "llo" },
   ]);
-  assert.equal(await execution.wait(), "HELLO");
+  assert.equal(await execution.wait(), "VM:HELLO");
   assert.equal(execution.status, "succeeded");
 });

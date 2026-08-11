@@ -1,93 +1,95 @@
 # Cantelop SDK
 
-An Edge-native TypeScript SDK for exposing routes that launch an opaque harness
-runtime.
+A TypeScript SDK with separate surfaces for Edge API middleware and native
+harness execution.
 
-```ts
-import { createApp, createExecutionEnvironment } from "@cantelop/sdk";
-
-type Input = { prompt: string };
-type Output = { answer: string };
-
-const execution = createExecutionEnvironment<Input, Output>(
-  async ({ input, signal }) => {
-    signal.throwIfAborted();
-    return runHarness(input, { signal });
-  },
-);
-
-const app = createApp({ execution });
-
-app.route("POST", "/execute", async ({ request, execution }) => {
-  const input = (await request.json()) as Input;
-  const run = execution.start(input, { signal: request.signal });
-
-  return Response.json({
-    executionId: run.id,
-    output: await run.wait(),
-  });
-});
-
-export default app;
+```text
+Edge API  ->  Cantelop execution transport  ->  Linux-native harness VM
 ```
 
-Cantelop owns the deployment adapter. Applications use Web-standard `Request`,
-`Response`, streams, abort signals, and Web Crypto without depending on the
-underlying hosting provider.
+The API validates HTTP requests, dispatches executions, and streams results.
+The harness owns agent and model behavior and can use the native Linux runtime.
 
-## Runtime contract
+## Edge API
 
-Harnesses run in an Edge runtime. They may use standard ECMAScript and supported
-Web Platform APIs, including:
-
-- `fetch`, `Request`, and `Response`
-- Web Streams
-- `AbortController` and `AbortSignal`
-- Web Crypto
-- SDK-provided capabilities
-
-Harnesses must not depend on:
-
-- Node.js built-ins such as `fs`, `child_process`, `net`, or `http`
-- `process`, `Buffer`, native modules, or executable binaries
-- a persistent local filesystem
-- listening on ports or creating servers
-- global mutable state surviving between requests
-- work continuing after its request or response stream ends
-- deployment-provider APIs or bindings
-
-Secrets, storage, and other infrastructure are unavailable unless Cantelop
-exposes them through an explicit provider-neutral capability.
-
-Executions are request-scoped. A route can await the final result or keep the
-request active with a streaming response. Durable, detached, or resumable jobs
-require a separate Cantelop capability.
-
-## Events and streaming
-
-Harness runtimes can emit application-defined events:
+Use `@cantelop/sdk/api` for API middleware. Cantelop injects a remote execution
+environment when it creates the API definition.
 
 ```ts
-type RuntimeEvent =
-  | { type: "text_delta"; delta: string }
-  | { type: "done"; output: Output };
+import { createApp, defineApi } from "@cantelop/sdk/api";
+import type { Input, Output, RuntimeEvent } from "./contracts.js";
 
-const execution = createExecutionEnvironment<Input, Output, RuntimeEvent>(
-  async ({ input, signal, emit }) => {
-    const output = await runHarness(input, {
+export default defineApi<Input, Output, RuntimeEvent>(({ execution }) => {
+  const app = createApp({ execution });
+
+  app.route("POST", "/execute", async ({ request, execution }) => {
+    const input = (await request.json()) as Input;
+    const run = await execution.start(input, { signal: request.signal });
+
+    return Response.json({
+      executionId: run.id,
+      output: await run.wait(),
+    });
+  });
+
+  return app;
+});
+```
+
+API modules run in an Edge runtime. They may use standard ECMAScript and Web
+Platform APIs such as `fetch`, `Request`, `Response`, Web Streams, abort
+signals, and Web Crypto. They must not import the harness or depend on Node.js,
+provider SDKs, native modules, local processes, filesystem access, secrets, or
+deployment-provider bindings.
+
+## Native harness
+
+Use `@cantelop/sdk/harness` for the harness entrypoint that runs inside the
+Linux VM.
+
+```ts
+import { defineHarness } from "@cantelop/sdk/harness";
+import type { Input, Output, RuntimeEvent } from "./contracts.js";
+
+export default defineHarness<Input, Output, RuntimeEvent>(
+  async ({ input, env, signal, emit }) => {
+    const output = await runAgent(input, {
+      apiKey: env.MODEL_API_KEY,
       signal,
       onText: (delta) => emit({ type: "text_delta", delta }),
     });
+
     emit({ type: "done", output });
     return output;
   },
 );
 ```
 
-Executions expose events through standard async iteration. The application owns
-their HTTP representation, such as SSE or newline-delimited JSON.
+Harnesses may use Node.js, subprocesses, the Linux filesystem, provider SDKs,
+and VM environment variables. Cantelop supplies secrets and configuration to
+the harness VM, not to the Edge API.
 
-See [`examples/edge`](./examples/edge) for complete JSON and streaming routes.
+`createExecutionEnvironment()` is also exported from the harness surface for
+running a harness in-process inside a VM or native test environment. Production
+Edge APIs receive a remote `ExecutionEnvironment` implementation from
+Cantelop's transport layer.
+
+## Events and streaming
+
+Executions expose application-defined events through standard async iteration.
+The API owns their HTTP representation, such as server-sent events or
+newline-delimited JSON. A streaming API keeps the Edge request connected while
+the harness runs remotely.
+
+## Examples
+
+Each provider example contains two independently checked entrypoints:
+
+- [`examples/openai`](./examples/openai)
+- [`examples/anthropic`](./examples/anthropic)
+- [`examples/pi`](./examples/pi)
+
+In every example, `src/api.ts` is Edge-only and `src/harness.ts` is native.
 
 ## Development
 
@@ -97,5 +99,3 @@ pnpm check
 pnpm test
 pnpm check:examples
 ```
-
-The SDK build is checked for Node.js imports and globals before tests pass.

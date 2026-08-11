@@ -28,16 +28,6 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  examples/edge:
-    dependencies:
-      '@cantelop/sdk':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-
   examples/openai:
     dependencies:
       '@cantelop/sdk':

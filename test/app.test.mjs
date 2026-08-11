@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createApp } from "../dist/api.js";
+import { createApp, defineApi } from "../dist/api.js";
 import { createExecutionEnvironment } from "../dist/harness.js";
 
 test("an app handles Web requests and responses", async () => {
@@ -8,13 +8,18 @@ test("an app handles Web requests and responses", async () => {
     signal.throwIfAborted();
     return input.toUpperCase();
   });
-  const app = createApp({ execution });
+  const definition = defineApi(({ execution: remoteExecution }) => {
+    const app = createApp({ execution: remoteExecution });
 
-  app.route("POST", "/execute", async ({ request, execution: environment }) => {
-    const input = await request.text();
-    const run = await environment.start(input, { signal: request.signal });
-    return Response.json({ id: run.id, output: await run.wait() });
+    app.route("POST", "/execute", async ({ request, execution: environment }) => {
+      const input = await request.text();
+      const run = await environment.start(input, { signal: request.signal });
+      return Response.json({ id: run.id, output: await run.wait() });
+    });
+
+    return app;
   });
+  const app = definition.create({ execution });
 
   const response = await app.handle(
     new Request("https://example.test/execute", {

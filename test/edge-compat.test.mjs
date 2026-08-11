@@ -19,3 +19,25 @@ test("the Edge API modules have no native harness dependencies", async () => {
     assert.doesNotMatch(source, /["']\.\/harness\.js["']/);
   }
 });
+
+test("provider API entrypoints do not import native dependencies", async () => {
+  const files = [
+    "examples/openai/src/api.ts",
+    "examples/anthropic/src/api.ts",
+    "examples/pi/src/api.ts",
+    "examples/shared/contracts.ts",
+    "examples/shared/event-stream.ts",
+    "examples/shared/prompt-api.ts",
+  ];
+
+  for (const file of files) {
+    const source = await readFile(path.join(repositoryRoot, file), "utf8");
+    assert.doesNotMatch(source, /["']node:/);
+    assert.doesNotMatch(
+      source,
+      /@(?:anthropic-ai|earendil-works|openai)\//,
+    );
+    assert.doesNotMatch(source, /@cantelop\/sdk\/harness/);
+    assert.doesNotMatch(source, /\b(?:Buffer|process)\b/);
+  }
+});
