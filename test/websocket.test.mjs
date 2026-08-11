@@ -4,6 +4,7 @@ import { createApp, createExecutionEnvironment } from "../dist/index.js";
 
 class FakeSocket {
   protocol = "";
+  signal = new AbortController().signal;
   sent = [];
   closed = undefined;
 

@@ -165,17 +165,28 @@ function binaryMessage(data: RawData): Uint8Array {
 
 class NodeWebSocketConnection implements WebSocketConnection {
   private readonly queue = new MessageQueue();
+  private readonly controller = new AbortController();
 
   constructor(private readonly socket: NodeWebSocket) {
     socket.on("message", (data, isBinary) => {
       this.queue.push(isBinary ? binaryMessage(data) : data.toString());
     });
-    socket.once("close", () => this.queue.close());
-    socket.once("error", (error) => this.queue.error(error));
+    socket.once("close", () => {
+      this.controller.abort();
+      this.queue.close();
+    });
+    socket.once("error", (error) => {
+      this.controller.abort(error);
+      this.queue.error(error);
+    });
   }
 
   get protocol(): string {
     return this.socket.protocol;
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
   }
 
   send(message: WebSocketMessage): Promise<void> {

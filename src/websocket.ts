@@ -4,6 +4,7 @@ export type WebSocketMessage = string | Uint8Array;
 
 export interface WebSocketConnection {
   readonly protocol: string;
+  readonly signal: AbortSignal;
   send(message: WebSocketMessage): Awaitable<void>;
   close(code?: number, reason?: string): void;
   messages(): AsyncIterable<WebSocketMessage>;
