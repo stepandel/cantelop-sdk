@@ -4,7 +4,7 @@ import type {
   AnswerOutput,
   PromptInput,
   RuntimeEvent,
-} from "../../shared/contracts.js";
+} from "./contracts.js";
 
 export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>(
   async ({ input, env, signal, emit }) => {
