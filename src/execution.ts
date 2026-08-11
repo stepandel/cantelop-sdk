@@ -10,7 +10,6 @@ export type ExecutionStatus =
 export interface HarnessContext<Input, Event = never> {
   readonly id: string;
   readonly input: Input;
-  readonly env: Readonly<Record<string, string>>;
   readonly signal: AbortSignal;
   emit(event: Event): void;
 }
@@ -22,7 +21,6 @@ export type HarnessRuntime<Input, Output, Event = never> =
     };
 
 export interface StartExecutionOptions {
-  env?: Readonly<Record<string, string>>;
   signal?: AbortSignal;
 }
 
@@ -185,7 +183,6 @@ export function createExecutionEnvironment<
           const output = await invoke(runtime, {
             id,
             input,
-            env: Object.freeze({ ...(options.env ?? {}) }),
             signal: controller.signal,
             emit: (event) => eventStream.emit(event),
           });
