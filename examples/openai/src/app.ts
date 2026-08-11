@@ -84,36 +84,4 @@ app.route("POST", "/execute/stream", async ({ request, execution }) => {
   });
 });
 
-app.websocket("/execute", async ({ socket, execution }) => {
-  for await (const message of socket.messages()) {
-    try {
-      const text =
-        typeof message === "string" ? message : new TextDecoder().decode(message);
-      const input = JSON.parse(text) as Partial<Input>;
-      if (typeof input.prompt !== "string" || input.prompt.length === 0) {
-        throw new Error("prompt is required");
-      }
-
-      const run = execution.start(
-        { prompt: input.prompt },
-        { signal: socket.signal },
-      );
-      await socket.send(
-        JSON.stringify({ type: "started", executionId: run.id }),
-      );
-      for await (const event of run.events()) {
-        await socket.send(JSON.stringify({ executionId: run.id, ...event }));
-      }
-    } catch (error) {
-      if (socket.signal.aborted) return;
-      await socket.send(
-        JSON.stringify({
-          type: "error",
-          message: error instanceof Error ? error.message : "Execution failed",
-        }),
-      );
-    }
-  }
-});
-
 export default app;

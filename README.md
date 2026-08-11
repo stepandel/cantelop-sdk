@@ -68,22 +68,7 @@ app.route("POST", "/execute/stream", async ({ request, execution }) => {
 });
 ```
 
-Or register a WebSocket route:
-
-```ts
-app.websocket("/execute", async ({ socket, execution }) => {
-  for await (const message of socket.messages()) {
-    const input = JSON.parse(String(message)) as Input;
-    const run = execution.start(input, { signal: socket.signal });
-    for await (const event of run.events()) {
-      await socket.send(JSON.stringify(event));
-    }
-  }
-});
-```
-
-The Node adapter preserves streaming response bodies and handles WebSocket
-upgrades:
+The Node adapter preserves streaming response bodies:
 
 ```ts
 import { serve } from "@cantelop/sdk/node";
@@ -153,9 +138,4 @@ curl -N http://localhost:3000/execute/stream \
   -d '{"prompt":"Write a haiku about ephemeral VMs"}'
 ```
 
-Each example also accepts WebSocket connections at `ws://localhost:<port>/execute`.
-Send a JSON message containing a `prompt` and the socket will receive `started`,
-`text_delta`, and `done` messages.
-
-Use the matching port for the Anthropic or Pi example. The `start:*` commands
-run the same servers without file watching.
+The `start:*` commands run the same servers without file watching.

@@ -29,11 +29,5 @@ curl -N http://localhost:3000/execute/stream \
   -d '{"prompt":"Write a haiku about ephemeral VMs"}'
 ```
 
-For WebSocket streaming, connect to `ws://localhost:3000/execute` and send:
-
-```json
-{"prompt":"Write a haiku about ephemeral VMs"}
-```
-
 The OpenAI agent and its configuration belong entirely to this package. Cantelop
 only starts the runtime function and exposes its lifecycle through an execution.

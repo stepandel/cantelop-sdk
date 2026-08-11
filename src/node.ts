@@ -5,16 +5,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import {
-  WebSocket as NodeWebSocket,
-  WebSocketServer,
-  type RawData,
-} from "ws";
 import type { App } from "./app.js";
-import type {
-  WebSocketConnection,
-  WebSocketMessage,
-} from "./websocket.js";
 
 export interface ServeOptions {
   port?: number;
@@ -100,117 +91,6 @@ async function writeResponse(
   }
 }
 
-interface PendingMessage {
-  resolve(result: IteratorResult<WebSocketMessage>): void;
-  reject(error: unknown): void;
-}
-
-class MessageQueue implements AsyncIterableIterator<WebSocketMessage> {
-  private readonly buffered: WebSocketMessage[] = [];
-  private readonly pending: PendingMessage[] = [];
-  private done = false;
-  private failure: unknown;
-  private failed = false;
-  private iterated = false;
-
-  push(message: WebSocketMessage): void {
-    if (this.done || this.failed) return;
-    const pending = this.pending.shift();
-    if (pending) pending.resolve({ done: false, value: message });
-    else this.buffered.push(message);
-  }
-
-  close(): void {
-    if (this.done || this.failed) return;
-    this.done = true;
-    for (const pending of this.pending.splice(0)) {
-      pending.resolve({ done: true, value: undefined });
-    }
-  }
-
-  error(failure: unknown): void {
-    if (this.done || this.failed) return;
-    this.failed = true;
-    this.failure = failure;
-    for (const pending of this.pending.splice(0)) pending.reject(failure);
-  }
-
-  [Symbol.asyncIterator](): AsyncIterableIterator<WebSocketMessage> {
-    if (this.iterated) {
-      throw new Error("WebSocket messages can only be consumed once");
-    }
-    this.iterated = true;
-    return this;
-  }
-
-  next(): Promise<IteratorResult<WebSocketMessage>> {
-    const message = this.buffered.shift();
-    if (message !== undefined) {
-      return Promise.resolve({ done: false, value: message });
-    }
-    if (this.failed) return Promise.reject(this.failure);
-    if (this.done) return Promise.resolve({ done: true, value: undefined });
-
-    return new Promise((resolve, reject) => {
-      this.pending.push({ resolve, reject });
-    });
-  }
-}
-
-function binaryMessage(data: RawData): Uint8Array {
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data));
-  return new Uint8Array(data);
-}
-
-class NodeWebSocketConnection implements WebSocketConnection {
-  private readonly queue = new MessageQueue();
-  private readonly controller = new AbortController();
-
-  constructor(private readonly socket: NodeWebSocket) {
-    socket.on("message", (data, isBinary) => {
-      this.queue.push(isBinary ? binaryMessage(data) : data.toString());
-    });
-    socket.once("close", () => {
-      this.controller.abort();
-      this.queue.close();
-    });
-    socket.once("error", (error) => {
-      this.controller.abort(error);
-      this.queue.error(error);
-    });
-  }
-
-  get protocol(): string {
-    return this.socket.protocol;
-  }
-
-  get signal(): AbortSignal {
-    return this.controller.signal;
-  }
-
-  send(message: WebSocketMessage): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (this.socket.readyState !== NodeWebSocket.OPEN) {
-        reject(new Error("WebSocket is not open"));
-        return;
-      }
-      this.socket.send(message, (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-  }
-
-  close(code?: number, reason?: string): void {
-    this.socket.close(code, reason);
-  }
-
-  messages(): AsyncIterable<WebSocketMessage> {
-    return this.queue;
-  }
-}
-
 export function serve<Input, Output, Event>(
   app: App<Input, Output, Event>,
   options: ServeOptions = {},
@@ -228,24 +108,6 @@ export function serve<Input, Output, Event>(
       }
     })();
   });
-
-  const webSockets = new WebSocketServer({ noServer: true });
-  server.on("upgrade", (incoming, socket, head) => {
-    webSockets.handleUpgrade(incoming, socket, head, (webSocket) => {
-      void (async () => {
-        const connection = new NodeWebSocketConnection(webSocket);
-        try {
-          const { request } = await toRequest(incoming, false);
-          const handled = await app.handleWebSocket(request, connection);
-          if (!handled) connection.close(1008, "WebSocket route not found");
-        } catch (error) {
-          console.error(error);
-          connection.close(1011, "WebSocket handler failed");
-        }
-      })();
-    });
-  });
-
   server.listen(options.port ?? 3000, options.hostname);
   return server;
 }

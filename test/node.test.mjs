@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
-import { WebSocket } from "ws";
 import {
   createApp,
   createExecutionEnvironment,
@@ -43,25 +42,5 @@ test("the Node adapter streams response bodies", async () => {
       'data: {"type":"delta","value":"one"}\n\n' +
         'data: {"type":"delta","value":"two"}\n\n',
     );
-  });
-});
-
-test("the Node adapter upgrades WebSocket routes", async () => {
-  const execution = createExecutionEnvironment(async ({ input }) => input);
-  const app = createApp({ execution });
-  app.websocket("/socket", async ({ socket }) => {
-    for await (const message of socket.messages()) {
-      await socket.send(`echo:${message}`);
-      socket.close();
-    }
-  });
-
-  await withServer(app, async (port) => {
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/socket`);
-    await once(socket, "open");
-    socket.send("hello");
-    const [message] = await once(socket, "message");
-    assert.equal(message.toString(), "echo:hello");
-    await once(socket, "close");
   });
 });
