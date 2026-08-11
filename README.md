@@ -3,7 +3,11 @@
 A minimal TypeScript SDK for exposing routes that launch an opaque harness runtime.
 
 ```ts
-import { createApp, createExecutionEnvironment } from "@cantelop/sdk";
+import {
+  createApp,
+  createExecutionEnvironment,
+  eventStreamResponse,
+} from "@cantelop/sdk";
 
 type Input = { prompt: string };
 type Output = { answer: string };
