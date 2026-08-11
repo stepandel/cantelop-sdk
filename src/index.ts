@@ -17,3 +17,6 @@ export type {
   HarnessRuntime,
   StartExecutionOptions,
 } from "./execution.js";
+
+export { eventStreamResponse } from "./stream.js";
+export type { EventStreamResponseOptions } from "./stream.js";
