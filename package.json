@@ -8,10 +8,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./node": {
-      "types": "./dist/node.d.ts",
-      "import": "./dist/node.js"
     }
   },
   "files": [
@@ -21,13 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs",
-    "check:examples": "pnpm --filter './examples/**' --if-present check",
-    "dev:openai": "pnpm --filter @cantelop/example-openai dev",
-    "dev:anthropic": "pnpm --filter @cantelop/example-anthropic dev",
-    "dev:pi": "pnpm --filter @cantelop/example-pi dev",
-    "start:openai": "pnpm --filter @cantelop/example-openai start",
-    "start:anthropic": "pnpm --filter @cantelop/example-anthropic start",
-    "start:pi": "pnpm --filter @cantelop/example-pi start"
+    "check:examples": "pnpm --filter './examples/**' --if-present check"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
