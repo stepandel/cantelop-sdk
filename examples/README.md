@@ -10,3 +10,10 @@ with a different user-owned harness runtime:
 The examples intentionally keep agent configuration inside their own packages.
 Cantelop only receives an opaque runtime function, starts it through an execution
 environment, and exposes it through an HTTP route.
+
+Every example exposes the same transport surface:
+
+- `POST /execute` waits for the final result.
+- `POST /execute/stream` streams `text_delta` and `done` events over SSE.
+- `WS /execute` accepts `{ "prompt": "..." }` messages and streams execution
+  events back over the socket.

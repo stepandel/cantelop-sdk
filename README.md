@@ -30,6 +30,63 @@ app.route("POST", "/execute", async ({ request, execution }) => {
 export default app;
 ```
 
+Harness runtimes can emit any application-defined event type. Executions expose
+those events as an async stream:
+
+```ts
+type RuntimeEvent =
+  | { type: "text_delta"; delta: string }
+  | { type: "done"; output: Output };
+
+const execution = createExecutionEnvironment<Input, Output, RuntimeEvent>(
+  async ({ input, signal, emit }) => {
+    const output = await runHarness(input, {
+      signal,
+      onText: (delta) => emit({ type: "text_delta", delta }),
+    });
+    emit({ type: "done", output });
+    return output;
+  },
+);
+```
+
+Return the events as server-sent events from a normal route:
+
+```ts
+app.route("POST", "/execute/stream", async ({ request, execution }) => {
+  const run = execution.start((await request.json()) as Input, {
+    signal: request.signal,
+  });
+  return eventStreamResponse(run.events(), {
+    eventName: (event) => event.type,
+    headers: { "x-execution-id": run.id },
+  });
+});
+```
+
+Or register a WebSocket route:
+
+```ts
+app.websocket("/execute", async ({ socket, execution }) => {
+  for await (const message of socket.messages()) {
+    const input = JSON.parse(String(message)) as Input;
+    const run = execution.start(input, { signal: socket.signal });
+    for await (const event of run.events()) {
+      await socket.send(JSON.stringify(event));
+    }
+  }
+});
+```
+
+The Node adapter preserves streaming response bodies and handles WebSocket
+upgrades:
+
+```ts
+import { serve } from "@cantelop/sdk/node";
+
+serve(app, { port: 3000 });
+```
+
 Register several routes at once with `app.routes([...])`. Pass a Web-standard
 `Request` to `app.handle(request)` from the server adapter of your choice.
 
@@ -83,6 +140,18 @@ curl http://localhost:3000/execute \
   -H 'content-type: application/json' \
   -d '{"prompt":"Write a haiku about ephemeral VMs"}'
 ```
+
+Stream an execution with SSE:
+
+```bash
+curl -N http://localhost:3000/execute/stream \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Write a haiku about ephemeral VMs"}'
+```
+
+Each example also accepts WebSocket connections at `ws://localhost:<port>/execute`.
+Send a JSON message containing a `prompt` and the socket will receive `started`,
+`text_delta`, and `done` messages.
 
 Use the matching port for the Anthropic or Pi example. The `start:*` commands
 run the same servers without file watching.
