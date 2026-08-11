@@ -3,8 +3,11 @@ import { defineHarness } from "@cantelop/sdk/harness";
 import type {
   AnswerOutput,
   PromptInput,
-  RuntimeEvent,
 } from "./contracts.js";
+
+type RuntimeEvent =
+  | { type: "text_delta"; delta: string }
+  | { type: "done"; output: AnswerOutput };
 
 export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>(
   async ({ input, env, signal, emit }) => {
