@@ -4,7 +4,7 @@ import type {
   AnswerOutput,
   PromptInput,
   RuntimeEvent,
-} from "../../shared/contracts.js";
+} from "./contracts.js";
 
 const agent = new Agent({
   name: "Cantelop OpenAI example",
