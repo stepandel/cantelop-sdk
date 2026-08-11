@@ -1,24 +1,24 @@
 import type { App } from "./app.js";
 import type { ExecutionEnvironment } from "./execution.js";
 
-export interface ApiContext<Input, Output, Event = never> {
-  readonly execution: ExecutionEnvironment<Input, Output, Event>;
+export interface ApiContext<Input, Output> {
+  readonly execution: ExecutionEnvironment<Input, Output>;
 }
 
-export interface ApiDefinition<Input, Output, Event = never> {
+export interface ApiDefinition<Input, Output> {
   create(
-    context: ApiContext<Input, Output, Event>,
-  ): App<Input, Output, Event>;
+    context: ApiContext<Input, Output>,
+  ): App<Input, Output>;
 }
 
-export type ApiFactory<Input, Output, Event = never> = (
-  context: ApiContext<Input, Output, Event>,
-) => App<Input, Output, Event>;
+export type ApiFactory<Input, Output> = (
+  context: ApiContext<Input, Output>,
+) => App<Input, Output>;
 
 /** Defines an Edge API whose execution transport is injected by Cantelop. */
-export function defineApi<Input, Output, Event = never>(
-  factory: ApiFactory<Input, Output, Event>,
-): ApiDefinition<Input, Output, Event> {
+export function defineApi<Input, Output>(
+  factory: ApiFactory<Input, Output>,
+): ApiDefinition<Input, Output> {
   return Object.freeze({ create: factory });
 }
 

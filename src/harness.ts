@@ -1,6 +1,5 @@
 import type {
   Execution,
-  ExecutionEnvironment,
   ExecutionStatus,
   StartExecutionOptions,
 } from "./execution.js";
@@ -27,6 +26,18 @@ export type HarnessRuntime<Input, Output, Event = never> =
 
 export interface HarnessEnvironmentOptions {
   env?: HarnessEnvironment;
+}
+
+export interface HarnessExecution<Output, Event = never>
+  extends Execution<Output> {
+  events(): AsyncIterable<Event>;
+}
+
+export interface HarnessExecutionEnvironment<Input, Output, Event = never> {
+  start(
+    input: Input,
+    options?: StartExecutionOptions,
+  ): Promise<HarnessExecution<Output, Event>>;
 }
 
 export function defineHarness<Input, Output, Event = never>(
@@ -113,7 +124,8 @@ function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException("Execution cancelled", "AbortError");
 }
 
-class ExecutionHandle<Output, Event> implements Execution<Output, Event> {
+class ExecutionHandle<Output, Event>
+  implements HarnessExecution<Output, Event> {
   status: ExecutionStatus = "pending";
   startedAt?: Date;
   finishedAt?: Date;
@@ -152,7 +164,7 @@ export function createExecutionEnvironment<
 >(
   runtime: HarnessRuntime<Input, Output, Event>,
   options: HarnessEnvironmentOptions = {},
-): ExecutionEnvironment<Input, Output, Event> {
+): HarnessExecutionEnvironment<Input, Output, Event> {
   return {
     async start(input, startOptions: StartExecutionOptions = {}) {
       const id = crypto.randomUUID();

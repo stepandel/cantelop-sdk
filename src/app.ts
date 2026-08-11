@@ -9,34 +9,34 @@ export type HttpMethod =
   | "POST"
   | "PUT";
 
-export interface RouteContext<Input, Output, Event = never> {
+export interface RouteContext<Input, Output> {
   readonly request: Request;
-  readonly execution: ExecutionEnvironment<Input, Output, Event>;
+  readonly execution: ExecutionEnvironment<Input, Output>;
 }
 
-export type RouteHandler<Input, Output, Event = never> = (
-  context: RouteContext<Input, Output, Event>,
+export type RouteHandler<Input, Output> = (
+  context: RouteContext<Input, Output>,
 ) => Response | Promise<Response>;
 
-export interface Route<Input, Output, Event = never> {
+export interface Route<Input, Output> {
   readonly method: HttpMethod;
   readonly path: string;
-  readonly handler: RouteHandler<Input, Output, Event>;
+  readonly handler: RouteHandler<Input, Output>;
 }
 
-export interface AppOptions<Input, Output, Event = never> {
-  readonly execution: ExecutionEnvironment<Input, Output, Event>;
+export interface AppOptions<Input, Output> {
+  readonly execution: ExecutionEnvironment<Input, Output>;
 }
 
-export interface App<Input, Output, Event = never> {
+export interface App<Input, Output> {
   route(
     method: HttpMethod,
     path: string,
-    handler: RouteHandler<Input, Output, Event>,
-  ): App<Input, Output, Event>;
+    handler: RouteHandler<Input, Output>,
+  ): App<Input, Output>;
   routes(
-    routes: readonly Route<Input, Output, Event>[],
-  ): App<Input, Output, Event>;
+    routes: readonly Route<Input, Output>[],
+  ): App<Input, Output>;
   handle(request: Request): Promise<Response>;
 }
 
@@ -51,12 +51,11 @@ function normalizePath(path: string): string {
 export function createApp<
   Input = unknown,
   Output = unknown,
-  Event = never,
 >(
-  options: AppOptions<Input, Output, Event>,
-): App<Input, Output, Event> {
-  const registered = new Map<string, RouteHandler<Input, Output, Event>>();
-  const app: App<Input, Output, Event> = {
+  options: AppOptions<Input, Output>,
+): App<Input, Output> {
+  const registered = new Map<string, RouteHandler<Input, Output>>();
+  const app: App<Input, Output> = {
     route(method, path, handler) {
       const key = `${method} ${normalizePath(path)}`;
 
