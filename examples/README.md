@@ -8,10 +8,10 @@ src/harness.ts  Linux-native agent runtime
 ```
 
 Each provider directory is a complete, self-contained implementation with its
-own contracts, request validation, routes, and SSE response helper. Provider
-SDKs and credentials remain confined to the harness entrypoint. Cantelop creates
+own contracts, request validation, and routes. Provider SDKs, credentials, and
+incremental events remain confined to the harness entrypoint. Cantelop creates
 each API definition with a remote execution environment connected to its
-corresponding harness VM.
+corresponding harness VM; direct client streaming is configured at the VM.
 
 Run all API and harness type checks from the repository root:
 

@@ -7,7 +7,7 @@ harness execution.
 Edge API  ->  Cantelop execution transport  ->  Linux-native harness VM
 ```
 
-The API validates HTTP requests, dispatches executions, and streams results.
+The API validates HTTP requests, dispatches executions, and returns results.
 The harness owns agent and model behavior and can use the native Linux runtime.
 
 ## Edge API
@@ -17,9 +17,9 @@ environment when it creates the API definition.
 
 ```ts
 import { createApp, defineApi } from "@cantelop/sdk/api";
-import type { Input, Output, RuntimeEvent } from "./contracts.js";
+import type { Input, Output } from "./contracts.js";
 
-export default defineApi<Input, Output, RuntimeEvent>(({ execution }) => {
+export default defineApi<Input, Output>(({ execution }) => {
   const app = createApp({ execution });
 
   app.route("POST", "/execute", async ({ request, execution }) => {
@@ -74,12 +74,16 @@ running a harness in-process inside a VM or native test environment. Production
 Edge APIs receive a remote `ExecutionEnvironment` implementation from
 Cantelop's transport layer.
 
-## Events and streaming
+## Events and direct streaming
 
-Executions expose application-defined events through standard async iteration.
-The API owns their HTTP representation, such as server-sent events or
-newline-delimited JSON. A streaming API keeps the Edge request connected while
-the harness runs remotely.
+Native harness executions expose application-defined events through standard
+async iteration. Edge `Execution` handles deliberately do not expose those
+events and Cantelop does not proxy them through the API runtime.
+
+Applications that stream incremental output configure a direct connection from
+the harness VM to the client. The VM-facing endpoint owns its protocol,
+authentication, TLS, CORS, backpressure, and reconnect behavior. The Edge API
+remains the control and non-streaming result plane.
 
 ## Examples
 

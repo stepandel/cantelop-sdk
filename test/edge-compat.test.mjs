@@ -20,17 +20,28 @@ test("the Edge API modules have no native harness dependencies", async () => {
   }
 });
 
+test("only native harness executions expose events", async () => {
+  const edgeContract = await readFile(
+    path.join(repositoryRoot, "dist/execution.d.ts"),
+    "utf8",
+  );
+  const harnessContract = await readFile(
+    path.join(repositoryRoot, "dist/harness.d.ts"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(edgeContract, /\bevents\(\)/);
+  assert.match(harnessContract, /\bevents\(\): AsyncIterable<Event>/);
+});
+
 test("provider API entrypoints do not import native dependencies", async () => {
   const files = [
     "examples/openai/src/api.ts",
     "examples/openai/src/contracts.ts",
-    "examples/openai/src/event-stream.ts",
     "examples/anthropic/src/api.ts",
     "examples/anthropic/src/contracts.ts",
-    "examples/anthropic/src/event-stream.ts",
     "examples/pi/src/api.ts",
     "examples/pi/src/contracts.ts",
-    "examples/pi/src/event-stream.ts",
   ];
 
   for (const file of files) {
@@ -43,5 +54,7 @@ test("provider API entrypoints do not import native dependencies", async () => {
     assert.doesNotMatch(source, /@cantelop\/sdk\/harness/);
     assert.doesNotMatch(source, /\b(?:Buffer|process)\b/);
     assert.doesNotMatch(source, /from\s+["']\.\.\//);
+    assert.doesNotMatch(source, /\.events\(\)/);
+    assert.doesNotMatch(source, /\/execute\/stream/);
   }
 });
