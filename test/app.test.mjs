@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createApp,
-  createExecutionEnvironment,
-} from "../dist/index.js";
+import { createApp } from "../dist/api.js";
+import { createExecutionEnvironment } from "../dist/harness.js";
 
 test("an app handles Web requests and responses", async () => {
   const execution = createExecutionEnvironment(async ({ input, signal }) => {
@@ -14,7 +12,7 @@ test("an app handles Web requests and responses", async () => {
 
   app.route("POST", "/execute", async ({ request, execution: environment }) => {
     const input = await request.text();
-    const run = environment.start(input, { signal: request.signal });
+    const run = await environment.start(input, { signal: request.signal });
     return Response.json({ id: run.id, output: await run.wait() });
   });
 
