@@ -1,4 +1,5 @@
 import type { ExecutionEnvironment } from "./execution.js";
+import type { WebSocketConnection } from "./websocket.js";
 
 export type HttpMethod =
   | "DELETE"
@@ -24,6 +25,21 @@ export interface Route<Input, Output, Event = never> {
   readonly handler: RouteHandler<Input, Output, Event>;
 }
 
+export interface WebSocketContext<Input, Output, Event = never> {
+  readonly request: Request;
+  readonly socket: WebSocketConnection;
+  readonly execution: ExecutionEnvironment<Input, Output, Event>;
+}
+
+export type WebSocketHandler<Input, Output, Event = never> = (
+  context: WebSocketContext<Input, Output, Event>,
+) => void | Promise<void>;
+
+export interface WebSocketRoute<Input, Output, Event = never> {
+  readonly path: string;
+  readonly handler: WebSocketHandler<Input, Output, Event>;
+}
+
 export interface AppOptions<Input, Output, Event = never> {
   readonly execution: ExecutionEnvironment<Input, Output, Event>;
 }
@@ -37,7 +53,18 @@ export interface App<Input, Output, Event = never> {
   routes(
     routes: readonly Route<Input, Output, Event>[],
   ): App<Input, Output, Event>;
+  websocket(
+    path: string,
+    handler: WebSocketHandler<Input, Output, Event>,
+  ): App<Input, Output, Event>;
+  websockets(
+    routes: readonly WebSocketRoute<Input, Output, Event>[],
+  ): App<Input, Output, Event>;
   handle(request: Request): Promise<Response>;
+  handleWebSocket(
+    request: Request,
+    socket: WebSocketConnection,
+  ): Promise<boolean>;
 }
 
 function normalizePath(path: string): string {
@@ -56,6 +83,10 @@ export function createApp<
   options: AppOptions<Input, Output, Event>,
 ): App<Input, Output, Event> {
   const registered = new Map<string, RouteHandler<Input, Output, Event>>();
+  const registeredWebSockets = new Map<
+    string,
+    WebSocketHandler<Input, Output, Event>
+  >();
 
   const app: App<Input, Output, Event> = {
     route(method, path, handler) {
@@ -72,6 +103,24 @@ export function createApp<
     routes(routes) {
       for (const route of routes) {
         app.route(route.method, route.path, route.handler);
+      }
+
+      return app;
+    },
+
+    websocket(path, handler) {
+      const normalized = normalizePath(path);
+      if (registeredWebSockets.has(normalized)) {
+        throw new Error(`WebSocket route already registered: ${normalized}`);
+      }
+
+      registeredWebSockets.set(normalized, handler);
+      return app;
+    },
+
+    websockets(routes) {
+      for (const route of routes) {
+        app.websocket(route.path, route.handler);
       }
 
       return app;
@@ -99,6 +148,15 @@ export function createApp<
       }
 
       return new Response("Not Found", { status: 404 });
+    },
+
+    async handleWebSocket(request, socket) {
+      const path = normalizePath(new URL(request.url).pathname);
+      const handler = registeredWebSockets.get(path);
+      if (!handler) return false;
+
+      await handler({ request, socket, execution: options.execution });
+      return true;
     },
   };
 
