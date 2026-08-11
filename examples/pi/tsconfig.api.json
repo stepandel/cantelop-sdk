@@ -11,5 +11,5 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true
   },
-  "include": ["src/api.ts", "../shared/**/*.ts"]
+  "include": ["src/api.ts", "src/contracts.ts", "src/event-stream.ts"]
 }

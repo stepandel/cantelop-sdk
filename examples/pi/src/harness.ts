@@ -5,7 +5,7 @@ import type {
   AnswerOutput,
   PromptInput,
   RuntimeEvent,
-} from "../../shared/contracts.js";
+} from "./contracts.js";
 
 const models = builtinModels();
 
