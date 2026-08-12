@@ -46,6 +46,11 @@ signals, and Web Crypto. They must not import the harness or depend on Node.js,
 provider SDKs, native modules, local processes, filesystem access, secrets, or
 deployment-provider bindings.
 
+Cantelop's deployment builder wraps the default API definition with
+`createApiWorker()` from `@cantelop/sdk/edge`. This generated bootstrap is a
+standard module Worker entrypoint; customer API source remains independent of
+Cloudflare bindings and deployment configuration.
+
 ## Native harness
 
 Use `@cantelop/sdk/harness` for the harness entrypoint that runs inside the

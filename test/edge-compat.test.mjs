@@ -14,6 +14,7 @@ test("the Edge API modules have no native harness dependencies", async () => {
     "api.js",
     "app.js",
     "execution.js",
+    "edge.js",
     "index.js",
     "remote-execution.js",
   ];
