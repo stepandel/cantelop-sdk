@@ -51,6 +51,21 @@ Cantelop's deployment builder wraps the default API definition with
 standard module Worker entrypoint; customer API source remains independent of
 Cloudflare bindings and deployment configuration.
 
+The provider-neutral build surface is available from `@cantelop/sdk/build`:
+
+```ts
+import { buildApi } from "@cantelop/sdk/build";
+
+await buildApi({
+  entrypoint: "./src/api.ts",
+  outdir: "./dist/cantelop-api",
+});
+```
+
+It emits a bundled `worker.mjs`, source map, and `cantelop-api.json`
+manifest. Upload credentials and provider-specific deployment settings remain
+the responsibility of Cantelop's API-provider adapter.
+
 ## Native harness
 
 Use `@cantelop/sdk/harness` for the harness entrypoint that runs inside the

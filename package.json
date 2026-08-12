@@ -17,6 +17,10 @@
       "types": "./dist/edge.d.ts",
       "import": "./dist/edge.js"
     },
+    "./build": {
+      "types": "./dist/build.d.ts",
+      "import": "./dist/build.js"
+    },
     "./harness": {
       "types": "./dist/harness.d.ts",
       "import": "./dist/harness.js"
@@ -31,6 +35,9 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs",
     "check:examples": "pnpm --filter './examples/**' --if-present check"
+  },
+  "dependencies": {
+    "esbuild": "^0.25.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
