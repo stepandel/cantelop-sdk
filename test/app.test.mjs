@@ -9,7 +9,11 @@ test("an app handles Web requests and responses", async () => {
     return input.toUpperCase();
   });
   const definition = defineApi(({ execution: remoteExecution }) => {
-    const app = createApp({ execution: remoteExecution });
+    const app = createApp({
+      execution: remoteExecution.forEnvironment(
+        "env_0123456789abcdef0123456789abcdef",
+      ),
+    });
 
     app.route("POST", "/execute", async ({ request, execution: environment }) => {
       const input = await request.text();
@@ -19,7 +23,14 @@ test("an app handles Web requests and responses", async () => {
 
     return app;
   });
-  const app = definition.create({ execution });
+  const app = definition.create({
+    execution: {
+      forEnvironment(environmentId) {
+        assert.equal(environmentId, "env_0123456789abcdef0123456789abcdef");
+        return execution;
+      },
+    },
+  });
 
   const response = await app.handle(
     new Request("https://example.test/execute", {

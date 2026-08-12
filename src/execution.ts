@@ -28,3 +28,7 @@ export interface ExecutionEnvironment<Input, Output> {
     options?: StartExecutionOptions,
   ): Promise<Execution<Output>>;
 }
+
+export interface ExecutionProvider<Input, Output> {
+  forEnvironment(environmentId: string): ExecutionEnvironment<Input, Output>;
+}

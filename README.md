@@ -20,7 +20,11 @@ import { createApp, defineApi } from "@cantelop/sdk/api";
 import type { Input, Output } from "./contracts.js";
 
 export default defineApi<Input, Output>(({ execution }) => {
-  const app = createApp({ execution });
+  const app = createApp({
+    execution: execution.forEnvironment(
+      "env_0123456789abcdef0123456789abcdef",
+    ),
+  });
 
   app.route("POST", "/execute", async ({ request, execution }) => {
     const input = (await request.json()) as Input;

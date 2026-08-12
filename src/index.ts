@@ -10,6 +10,7 @@ export type {
   AppOptions,
   Execution,
   ExecutionEnvironment,
+  ExecutionProvider,
   ExecutionStatus,
   HttpMethod,
   Route,
@@ -17,3 +18,8 @@ export type {
   RouteHandler,
   StartExecutionOptions,
 } from "./api.js";
+export {
+  RemoteExecutionError,
+  createRemoteExecutionProvider,
+} from "./api.js";
+export type { RemoteExecutionProviderOptions } from "./api.js";

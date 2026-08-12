@@ -10,7 +10,13 @@ const repositoryRoot = path.resolve(
 );
 
 test("the Edge API modules have no native harness dependencies", async () => {
-  const files = ["api.js", "app.js", "execution.js", "index.js"];
+  const files = [
+    "api.js",
+    "app.js",
+    "execution.js",
+    "index.js",
+    "remote-execution.js",
+  ];
 
   for (const file of files) {
     const source = await readFile(path.join(repositoryRoot, "dist", file), "utf8");

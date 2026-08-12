@@ -1,8 +1,8 @@
 import type { App } from "./app.js";
-import type { ExecutionEnvironment } from "./execution.js";
+import type { ExecutionProvider } from "./execution.js";
 
 export interface ApiContext<Input, Output> {
-  readonly execution: ExecutionEnvironment<Input, Output>;
+  readonly execution: ExecutionProvider<Input, Output>;
 }
 
 export interface ApiDefinition<Input, Output> {
@@ -34,6 +34,12 @@ export type {
 export type {
   Execution,
   ExecutionEnvironment,
+  ExecutionProvider,
   ExecutionStatus,
   StartExecutionOptions,
 } from "./execution.js";
+export {
+  RemoteExecutionError,
+  createRemoteExecutionProvider,
+} from "./remote-execution.js";
+export type { RemoteExecutionProviderOptions } from "./remote-execution.js";
