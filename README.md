@@ -78,6 +78,11 @@ Harnesses may use Node.js, subprocesses, the Linux filesystem, provider SDKs,
 and VM environment variables. Cantelop supplies secrets and configuration to
 the harness VM, not to the Edge API.
 
+Cantelop's generated native bootstrap calls `serveHarness()` from
+`@cantelop/sdk/harness`. It accepts no port argument: the runtime provider
+injects `CANTELOP_INTERNAL_PORT` from the App's
+`harness.runtime.internal_port`, which remains the single source of truth.
+
 `createExecutionEnvironment()` is also exported from the harness surface for
 running a harness in-process inside a VM or native test environment. Production
 Edge APIs receive a remote `ExecutionEnvironment` implementation from
