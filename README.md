@@ -1,5 +1,17 @@
 # Cantelop SDK
 
+## Install
+
+Cantelop applications use the SDK from both their Edge API build and native
+harness image:
+
+```sh
+pnpm add @cantelop/sdk@0.1.0-rc.1
+```
+
+The release candidate requires Node.js 22 or newer. Cantelop's CLI invokes the
+project-installed `@cantelop/sdk/build`; it does not carry a second SDK copy.
+
 A TypeScript SDK with separate surfaces for Edge API middleware and native
 harness execution.
 
@@ -131,4 +143,10 @@ pnpm install
 pnpm check
 pnpm test
 pnpm check:examples
+pnpm check:package
 ```
+
+`check:package` packs the exact npm artifact, rejects leaked development files,
+installs it into an empty project, imports every public entrypoint, and builds a
+customer API. See [`docs/releasing.md`](./docs/releasing.md) for the release
+boundary. Publishing is a separate production operation.
