@@ -3,6 +3,14 @@
   "version": "0.1.0-rc.1",
   "description": "Provider-neutral API and native harness SDK for Cantelop applications",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stepandel/cantelop-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/stepandel/cantelop-sdk/issues"
+  },
+  "homepage": "https://github.com/stepandel/cantelop-sdk#readme",
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "engines": {

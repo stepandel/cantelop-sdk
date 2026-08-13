@@ -1,0 +1,51 @@
+name: Publish SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package version to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Enable pinned package manager
+        run: corepack enable
+
+      - name: Require the requested version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          package_version="$(node -p 'require("./package.json").version')"
+          test "${REQUESTED_VERSION}" = "${package_version}"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm check:examples
+      - run: pnpm check:package
+
+      - name: Publish release candidate
+        if: contains(inputs.version, '-')
+        run: npm publish --access public --tag next
+
+      - name: Publish stable release
+        if: ${{ !contains(inputs.version, '-') }}
+        run: npm publish --access public

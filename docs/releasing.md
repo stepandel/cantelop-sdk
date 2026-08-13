@@ -28,8 +28,17 @@ generated `dist` files because `prepack` rebuilds them from tracked source.
 
 ## Production operation
 
-Publishing is deliberately not scripted as part of qualification. After the
-candidate commit and tag are reviewed, the production operator may publish the
-same qualified version with npm provenance and immediately verify the registry
-tarball from a clean consumer. That credentialed publication, tag creation, and
-registry verification belong to the production operations milestone.
+The source repository is `stepandel/cantelop-sdk`. Its manual
+`.github/workflows/publish.yml` workflow uses npm trusted publishing and accepts
+only the exact version already present in `package.json`. Prerelease versions
+publish under the `next` dist-tag; stable versions publish under `latest`.
+
+The repository is currently private, so trusted publishing provides OIDC
+authentication but npm will not generate public provenance. After transferring
+the repository, update `package.json`, the local Git remote, and npm's trusted
+publisher owner before the next release.
+
+The workflow never runs automatically. An operator must select it manually,
+provide the exact version, and npm must already trust the repository and
+`publish.yml` workflow. Immediately after publication, verify the registry
+tarball from a clean consumer before creating the matching release tag.
