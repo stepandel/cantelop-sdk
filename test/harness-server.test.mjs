@@ -32,11 +32,40 @@ test("the native adapter executes the versioned harness protocol", async (t) => 
   );
 
   assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get("X-Cantelop-SDK-Execution-Complete"),
+    executionId,
+  );
   assert.deepEqual(await response.json(), { output: { answer: "HELLO" } });
   assert.equal(received.id, executionId);
   assert.deepEqual(received.input, { prompt: "hello" });
   assert.equal(received.env.MODEL, "test-model");
   assert.equal(received.signal.aborted, false);
+});
+
+test("the native adapter marks a failed user execution as settled", async (t) => {
+  const server = createServer(
+    createHarnessRequestHandler(async () => {
+      throw new Error("user execution failed");
+    }),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(
+    `${origin(server)}/__cantelop/v1/executions/${executionId}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: {} }),
+    },
+  );
+
+  assert.equal(response.status, 500);
+  assert.equal(
+    response.headers.get("X-Cantelop-SDK-Execution-Complete"),
+    executionId,
+  );
 });
 
 test("the native adapter rejects malformed protocol requests", async (t) => {
@@ -64,6 +93,10 @@ test("the native adapter rejects malformed protocol requests", async (t) => {
   });
 
   assert.equal(malformed.status, 400);
+  assert.equal(
+    malformed.headers.get("X-Cantelop-SDK-Execution-Complete"),
+    null,
+  );
   assert.deepEqual(await malformed.json(), {
     error: { code: "invalid_execution_request" },
   });

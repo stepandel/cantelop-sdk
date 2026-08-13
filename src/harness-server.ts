@@ -16,6 +16,7 @@ const EXECUTION_PATH_PATTERN =
   /^\/__cantelop\/v1\/executions\/(exec_[0-9a-f]{32})$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
+const EXECUTION_COMPLETE_HEADER = "X-Cantelop-SDK-Execution-Complete";
 
 export interface HarnessRequestHandlerOptions {
   env?: HarnessEnvironment;
@@ -85,8 +86,10 @@ async function handleRequest<Input, Output, Event>(
     writeError(response, 415, "unsupported_media_type");
     return;
   }
+  const executionID = match[1] as string;
 
   const controller = new AbortController();
+  let executionSettled = false;
   const abort = () => controller.abort(new DOMException("Request cancelled", "AbortError"));
   request.once("aborted", abort);
   response.once("close", () => {
@@ -100,17 +103,26 @@ async function handleRequest<Input, Output, Event>(
       return;
     }
 
-    const output = await invokeHarness(runtime, {
-      id: match[1] as string,
-      input: envelope.input as Input,
-      env,
-      signal: controller.signal,
-      emit: () => undefined,
-    });
+    let output: Output;
+    try {
+      output = await invokeHarness(runtime, {
+        id: executionID,
+        input: envelope.input as Input,
+        env,
+        signal: controller.signal,
+        emit: () => undefined,
+      });
+    } finally {
+      executionSettled = true;
+    }
     if (controller.signal.aborted || response.destroyed) return;
+    response.setHeader(EXECUTION_COMPLETE_HEADER, executionID);
     writeJSON(response, 200, { output });
   } catch (error) {
     if (controller.signal.aborted || response.destroyed) return;
+    if (executionSettled) {
+      response.setHeader(EXECUTION_COMPLETE_HEADER, executionID);
+    }
     if (error instanceof ProtocolError) {
       writeError(response, error.status, error.code);
       return;
