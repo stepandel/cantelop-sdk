@@ -1,9 +1,16 @@
 {
   "name": "@cantelop/sdk",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0-rc.1",
+  "description": "Provider-neutral API and native harness SDK for Cantelop applications",
+  "license": "UNLICENSED",
   "type": "module",
   "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -34,7 +41,9 @@
     "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs",
-    "check:examples": "pnpm --filter './examples/**' --if-present check"
+    "check:examples": "pnpm --filter './examples/**' --if-present check",
+    "check:package": "pnpm build && node scripts/check-package.mjs",
+    "prepack": "pnpm build"
   },
   "dependencies": {
     "esbuild": "^0.25.0"
