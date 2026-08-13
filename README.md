@@ -124,6 +124,13 @@ Cantelop's generated native bootstrap calls `serveHarness()` from
 injects `CANTELOP_INTERNAL_PORT` from the App's
 `harness.runtime.internal_port`, which remains the single source of truth.
 
+The user-defined harness function owns execution completion. Resolving its
+returned value completes the execution successfully; throwing completes it as
+failed, and settling after an abort completes cancellation handling. The native
+adapter attests that settlement to Cantelop only after the function has settled.
+Application events such as `{ type: "done" }` are ordinary user-defined stream
+events and do not control the Sandbox lifecycle.
+
 `createExecutionEnvironment()` is also exported from the harness surface for
 running a harness in-process inside a VM or native test environment. Production
 Edge APIs receive a remote `ExecutionEnvironment` implementation from
@@ -139,6 +146,8 @@ Applications that stream incremental output configure a direct connection from
 the harness VM to the client. The VM-facing endpoint owns its protocol,
 authentication, TLS, CORS, backpressure, and reconnect behavior. The Edge API
 remains the control and non-streaming result plane.
+The harness function must remain pending until any direct stream and associated
+background work that belongs to the execution are complete.
 
 ## Examples
 
