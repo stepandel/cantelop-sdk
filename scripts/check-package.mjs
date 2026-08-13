@@ -17,7 +17,7 @@ try {
   );
   const [pack] = JSON.parse(stdout);
   assert.equal(pack.name, "@cantelop/sdk");
-  assert.equal(pack.version, "0.1.0-rc.3");
+  assert.equal(pack.version, "0.1.0-rc.4");
   assert.ok(pack.size > 0);
   const paths = pack.files.map(({ path: file }) => file);
   assert.ok(paths.includes("dist/build.js"));
