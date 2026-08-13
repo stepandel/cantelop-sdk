@@ -8,7 +8,11 @@ const executionId = "exec_0123456789abcdef0123456789abcdef";
 
 test("the Edge adapter turns an API definition into a standard Worker", async () => {
   let runtimeRequest;
-  const definition = defineApi(({ execution }) => {
+  let receivedEnvironment;
+  let factoryCalls = 0;
+  const definition = defineApi(({ execution, env }) => {
+    factoryCalls += 1;
+    receivedEnvironment = env;
     const app = createApp({
       execution: execution.forEnvironment(environmentId),
     });
@@ -28,12 +32,19 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
     },
   });
 
+  const bindings = {
+    LOG_LEVEL: "debug",
+    API_SECRET: "edge-secret",
+    CANTELOP_INTERNAL_TOKEN: "reserved",
+    SERVICE: { fetch() {} },
+  };
   const response = await worker.fetch(
     new Request("https://base-agent.cantelop.dev/execute", {
       method: "POST",
       body: JSON.stringify({ prompt: "hello" }),
       headers: { "Content-Type": "application/json" },
     }),
+    bindings,
   );
 
   assert.deepEqual(await response.json(), {
@@ -48,6 +59,14 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
     runtimeRequest.headers.get("X-Cantelop-Edge-Environment-ID"),
     environmentId,
   );
+  assert.deepEqual({ ...receivedEnvironment }, {
+    LOG_LEVEL: "debug",
+    API_SECRET: "edge-secret",
+  });
+  assert.equal(Object.isFrozen(receivedEnvironment), true);
+
+  await worker.fetch(new Request("https://base-agent.cantelop.dev/missing"), bindings);
+  assert.equal(factoryCalls, 1);
 });
 
 test("the Edge adapter rejects a malformed API definition at startup", () => {

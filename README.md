@@ -55,8 +55,22 @@ export default defineApi<Input, Output>(({ execution }) => {
 API modules run in an Edge runtime. They may use standard ECMAScript and Web
 Platform APIs such as `fetch`, `Request`, `Response`, Web Streams, abort
 signals, and Web Crypto. They must not import the harness or depend on Node.js,
-provider SDKs, native modules, local processes, filesystem access, secrets, or
-deployment-provider bindings.
+native modules, local processes, filesystem access, or deployment-provider
+bindings. Cantelop supplies App variables and secrets through the
+provider-neutral `env` context:
+
+```ts
+export default defineApi(({ execution, env }) => {
+  const token = env.API_TOKEN;
+  // Define routes using token and execution.
+});
+```
+
+All App variables and secrets are available to both the Edge API and native
+harness. Edge code can therefore read and disclose any configured value;
+applications should treat every API dependency and request path as trusted with
+all App credentials. Cantelop-reserved bindings and provider capabilities are
+not exposed through `env`.
 
 Cantelop's deployment builder wraps the default API definition with
 `createApiWorker()` from `@cantelop/sdk/edge`. This generated bootstrap is a
@@ -102,8 +116,8 @@ export default defineHarness<Input, Output, RuntimeEvent>(
 ```
 
 Harnesses may use Node.js, subprocesses, the Linux filesystem, provider SDKs,
-and VM environment variables. Cantelop supplies secrets and configuration to
-the harness VM, not to the Edge API.
+and VM environment variables. Cantelop supplies the same App variables and
+secrets to the harness VM and Edge API.
 
 Cantelop's generated native bootstrap calls `serveHarness()` from
 `@cantelop/sdk/harness`. It accepts no port argument: the runtime provider

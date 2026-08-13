@@ -5,6 +5,7 @@ export {
 export type {
   ApiContext,
   ApiDefinition,
+  ApiEnvironment,
   ApiFactory,
   App,
   AppOptions,

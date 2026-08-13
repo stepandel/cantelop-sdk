@@ -1,8 +1,12 @@
 import type { App } from "./app.js";
 import type { ExecutionProvider } from "./execution.js";
 
+/** Customer variables and secrets supplied to an Edge API by Cantelop. */
+export type ApiEnvironment = Readonly<Record<string, string | undefined>>;
+
 export interface ApiContext<Input, Output> {
   readonly execution: ExecutionProvider<Input, Output>;
+  readonly env: ApiEnvironment;
 }
 
 export interface ApiDefinition<Input, Output> {
