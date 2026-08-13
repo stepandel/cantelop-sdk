@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -35,10 +35,45 @@ try {
     assert.ok(paths.includes(target.types.replace(/^\.\//, "")), `${name} types target is not packed`);
   }
 
-  await writeFile(
-    path.join(temporary, "qualification.json"),
-    `${JSON.stringify({ name: pack.name, version: pack.version, filename: pack.filename, files: paths.length }, null, 2)}\n`,
+  const consumer = path.join(temporary, "consumer");
+  await mkdir(consumer);
+  await writeFile(path.join(consumer, "package.json"), '{"private":true,"type":"module"}\n');
+  await execute(
+    "npm",
+    ["install", "--ignore-scripts", "--no-audit", "--no-fund", path.join(temporary, pack.filename)],
+    { cwd: consumer, maxBuffer: 1024 * 1024 },
   );
+  await writeFile(
+    path.join(consumer, "api.mjs"),
+    [
+      'import { createApp, defineApi } from "@cantelop/sdk/api";',
+      "export default defineApi(({ execution }) => {",
+      "  const app = createApp({ execution: execution.forEnvironment(\"env_0123456789abcdef0123456789abcdef\") });",
+      '  app.route("GET", "/health", () => Response.json({ status: "ok" }));',
+      "  return app;",
+      "});",
+    ].join("\n"),
+  );
+  await writeFile(
+    path.join(consumer, "qualify.mjs"),
+    [
+      'import assert from "node:assert/strict";',
+      'import { buildApi } from "@cantelop/sdk/build";',
+      'import { createApp, defineApi } from "@cantelop/sdk/api";',
+      'import { createApiWorker } from "@cantelop/sdk/edge";',
+      'import { defineHarness, serveHarness } from "@cantelop/sdk/harness";',
+      "assert.equal(typeof buildApi, \"function\");",
+      "assert.equal(typeof createApp, \"function\");",
+      "assert.equal(typeof defineApi, \"function\");",
+      "assert.equal(typeof createApiWorker, \"function\");",
+      "assert.equal(typeof defineHarness, \"function\");",
+      "assert.equal(typeof serveHarness, \"function\");",
+      'await buildApi({ entrypoint: "./api.mjs", outdir: "./artifact" });',
+    ].join("\n"),
+  );
+  await execute(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
+  const artifactManifest = JSON.parse(await readFile(path.join(consumer, "artifact", "cantelop-api.json"), "utf8"));
+  assert.equal(artifactManifest.kind, "cantelop-edge-api");
   process.stdout.write(`Qualified ${pack.filename} (${paths.length} files)\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
