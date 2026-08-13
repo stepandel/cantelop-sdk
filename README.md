@@ -6,7 +6,7 @@ Cantelop applications use the SDK from both their Edge API build and native
 harness image:
 
 ```sh
-pnpm add @cantelop/sdk@0.1.0-rc.4
+pnpm add @cantelop/sdk@0.1.0-rc.3
 ```
 
 The release candidate requires Node.js 22 or newer. Cantelop's CLI invokes the
