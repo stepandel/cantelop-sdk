@@ -16,7 +16,7 @@ A TypeScript SDK with separate surfaces for Edge API middleware and native
 harness execution.
 
 ```text
-Edge API  ->  Cantelop execution transport  ->  Linux-native harness VM
+Edge API  ->  Cantelop Session  ->  Linux-native harness VM
 ```
 
 The API validates HTTP requests, dispatches executions, and returns results.
@@ -24,33 +24,58 @@ The harness owns agent and model behavior and can use the native Linux runtime.
 
 ## Edge API
 
-Use `@cantelop/sdk/api` for API middleware. Cantelop injects a remote Workspace
-execution provider when it creates the API definition.
+Use `@cantelop/sdk/api` for API middleware. Cantelop injects the current App,
+already authenticated and scoped by the platform. No API key or endpoint
+configuration is required.
 
 ```ts
-import { createApp, defineApi } from "@cantelop/sdk/api";
+import { createRouter, defineApi } from "@cantelop/sdk/api";
 import type { Input, Output } from "./contracts.js";
 
-export default defineApi<Input, Output>(({ execution }) => {
-  const app = createApp({
-    execution: execution.forWorkspace(
-      "wsp_0123456789abcdef0123456789abcdef",
-    ),
+export default defineApi<Input, Output>(({ app }) => {
+  const router = createRouter();
+
+  router.route("POST", "/workspaces", async ({ request }) => {
+    const { slug } = await request.json() as { slug: string };
+    const workspace = await app.workspaces.create({ slug });
+    return Response.json(workspace, { status: 201 });
   });
 
-  app.route("POST", "/execute", async ({ request, execution }) => {
-    const input = (await request.json()) as Input;
-    const run = await execution.start(input, { signal: request.signal });
+  router.route("POST", "/sessions", async ({ request }) => {
+    const config = await request.json() as {
+      workspaceId: string;
+      keepAliveSeconds: number;
+    };
+    const session = await app.sessions.create(config);
+    return Response.json({ sessionId: session.id }, { status: 201 });
+  });
 
+  router.route("POST", "/execute", async ({ request }) => {
+    const { sessionId, input } = await request.json() as {
+      sessionId: string;
+      input: Input;
+    };
+    const session = app.sessions.connect(sessionId);
     return Response.json({
-      executionId: run.id,
-      output: await run.wait(),
+      output: await session.execute(input, { signal: request.signal }),
     });
   });
 
-  return app;
+  return router;
 });
 ```
+
+Every execution belongs to a Session. A Session keeps its Sandbox warm for
+`keepAliveSeconds` after work completes. If the Sandbox has already been
+released, the platform can reactivate the same logical Session on a new
+Sandbox. Explicitly terminating the Session makes it final:
+
+```ts
+await app.sessions.connect(sessionId).terminate();
+```
+
+Workspace creation takes a routing `slug`. The current App identity is derived
+by the trusted bridge and cannot be supplied or overridden by application code.
 
 API modules run in an Edge runtime. They may use standard ECMAScript and Web
 Platform APIs such as `fetch`, `Request`, `Response`, Web Streams, abort
@@ -60,9 +85,9 @@ bindings. Cantelop supplies App variables and secrets through the
 provider-neutral `env` context:
 
 ```ts
-export default defineApi(({ execution, env }) => {
+export default defineApi(({ app, env }) => {
   const token = env.API_TOKEN;
-  // Define routes using token and execution.
+  // Define routes using token and the current App's capabilities.
 });
 ```
 
@@ -133,14 +158,13 @@ events and do not control the Sandbox lifecycle.
 
 `createExecutionEnvironment()` is also exported from the harness surface for
 running a harness in-process inside a VM or native test environment. Production
-Edge APIs receive a remote `WorkspaceExecution` implementation from
-Cantelop's transport layer.
+Edge APIs execute only through a Session injected as part of the current App.
 
 ## Events and direct streaming
 
 Native harness executions expose application-defined events through standard
-async iteration. Edge `Execution` handles deliberately do not expose those
-events and Cantelop does not proxy them through the API runtime.
+async iteration. Edge Session execution returns its final output and does not
+expose those native event handles through the API runtime.
 
 Applications that stream incremental output configure a direct connection from
 the harness VM to the client. The VM-facing endpoint owns its protocol,

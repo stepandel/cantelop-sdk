@@ -6,8 +6,9 @@ This example has two deployment artifacts:
 - `src/harness.ts` runs Pi Agent Core and provider integrations in a
   Linux-native VM.
 
-Cantelop injects a remote Workspace execution provider when it creates the API and
-supplies provider credentials and Pi configuration only to the harness VM.
+Cantelop injects the current App when it creates the API. The Edge API manages
+Workspaces and reusable Sessions without an API key; provider credentials and
+Pi configuration are supplied only to the harness VM.
 
 ```bash
 pnpm install

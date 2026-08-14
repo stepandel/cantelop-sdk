@@ -1,35 +1,49 @@
-import { createApp, defineApi } from "@cantelop/sdk/api";
+import { createRouter, defineApi } from "@cantelop/sdk/api";
 import type {
   AnswerOutput,
+  CreateSessionRequest,
+  ExecuteRequest,
   PromptInput,
 } from "./contracts.js";
 
 export default defineApi<PromptInput, AnswerOutput>(
-  ({ execution }) => {
-    const app = createApp({
-      execution: execution.forWorkspace(
-        "wsp_0123456789abcdef0123456789abcdef",
-      ),
-    });
+  ({ app }) => {
+    const router = createRouter();
 
-    app.route("GET", "/health", () =>
+    router.route("GET", "/health", () =>
       Response.json({ status: "ok", runtime: "pi" }),
     );
 
-    app.route("POST", "/execute", async ({ request, execution }) => {
-      const input = (await request.json()) as Partial<PromptInput>;
-      if (typeof input.prompt !== "string" || input.prompt.length === 0) {
-        return Response.json({ error: "prompt is required" }, { status: 400 });
+    router.route("POST", "/workspaces", async ({ request }) => {
+      const input = (await request.json()) as { slug?: unknown };
+      if (typeof input.slug !== "string") {
+        return Response.json({ error: "slug is required" }, { status: 400 });
       }
-
-      const run = await execution.start(
-        { prompt: input.prompt },
-        { signal: request.signal },
-      );
-      const output = await run.wait();
-      return Response.json({ executionId: run.id, ...output });
+      return Response.json(await app.workspaces.create({ slug: input.slug }), { status: 201 });
     });
 
-    return app;
+    router.route("POST", "/sessions", async ({ request }) => {
+      const input = (await request.json()) as Partial<CreateSessionRequest>;
+      if (typeof input.workspaceId !== "string" || typeof input.keepAliveSeconds !== "number" ||
+          !Number.isInteger(input.keepAliveSeconds)) {
+        return Response.json({ error: "workspaceId and keepAliveSeconds are required" }, { status: 400 });
+      }
+      const session = await app.sessions.create({
+        workspaceId: input.workspaceId,
+        keepAliveSeconds: input.keepAliveSeconds,
+      });
+      return Response.json({ sessionId: session.id }, { status: 201 });
+    });
+
+    router.route("POST", "/execute", async ({ request }) => {
+      const input = (await request.json()) as Partial<ExecuteRequest>;
+      if (typeof input.sessionId !== "string" || typeof input.prompt !== "string" || input.prompt.length === 0) {
+        return Response.json({ error: "sessionId and prompt are required" }, { status: 400 });
+      }
+      const session = app.sessions.connect(input.sessionId);
+      return Response.json(await session.execute({ prompt: input.prompt }, { signal: request.signal }));
+    });
+
+    return router;
   },
 );
