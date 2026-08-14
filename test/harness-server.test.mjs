@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import test from "node:test";
 import {
@@ -137,6 +138,75 @@ test("serveHarness exposes an explicit listener-ready signal", async (t) => {
   } finally {
     if (previous === undefined) delete process.env.CANTELOP_INTERNAL_PORT;
     else process.env.CANTELOP_INTERNAL_PORT = previous;
+  }
+});
+
+test("serveHarness adopts the platform-prebound listener", async () => {
+  const reservation = createServer();
+  await listen(reservation);
+  const address = reservation.address();
+  assert.equal(typeof address, "object");
+  const descriptor = reservation._handle.fd;
+  assert.equal(Number.isInteger(descriptor), true);
+
+  const child = spawn(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    [
+      'import { serveHarness } from "./dist/harness.js";',
+      "const harness = serveHarness(async () => ({ ready: true }));",
+      "await harness.ready;",
+      'process.stdout.write("READY\\n");',
+      "setTimeout(() => {}, 30_000);",
+    ].join("\n"),
+  ], {
+    cwd: new URL("..", import.meta.url),
+    env: {
+      ...process.env,
+      CANTELOP_INTERNAL_PORT: String(address.port),
+      CANTELOP_INTERNAL_FD: "3",
+    },
+    stdio: ["ignore", "pipe", "inherit", descriptor],
+  });
+  await close(reservation);
+  try {
+    await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.stdout.once("data", (chunk) => {
+        if (String(chunk) === "READY\n") resolve();
+        else reject(new Error(`unexpected child output: ${String(chunk)}`));
+      });
+    });
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/__cantelop/v1/executions/${executionId}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: {} }),
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { output: { ready: true } });
+  } finally {
+    child.kill();
+  }
+});
+
+test("serveHarness rejects an invalid inherited listener descriptor", () => {
+  const previousPort = process.env.CANTELOP_INTERNAL_PORT;
+  const previousFD = process.env.CANTELOP_INTERNAL_FD;
+  process.env.CANTELOP_INTERNAL_PORT = "3000";
+  process.env.CANTELOP_INTERNAL_FD = "socket";
+  try {
+    assert.throws(
+      () => serveHarness(async () => undefined),
+      /CANTELOP_INTERNAL_FD must be an inherited file descriptor/,
+    );
+  } finally {
+    if (previousPort === undefined) delete process.env.CANTELOP_INTERNAL_PORT;
+    else process.env.CANTELOP_INTERNAL_PORT = previousPort;
+    if (previousFD === undefined) delete process.env.CANTELOP_INTERNAL_FD;
+    else process.env.CANTELOP_INTERNAL_FD = previousFD;
   }
 });
 

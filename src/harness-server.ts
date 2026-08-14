@@ -17,6 +17,7 @@ const EXECUTION_PATH_PATTERN =
   /^\/__cantelop\/v1\/executions\/(exec_[0-9a-f]{32})$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
+const INTERNAL_FD_VARIABLE = "CANTELOP_INTERNAL_FD";
 const EXECUTION_COMPLETE_HEADER = "X-Cantelop-SDK-Execution-Complete";
 
 export interface HarnessRequestHandlerOptions {
@@ -58,9 +59,10 @@ export function serveHarness<Input, Output, Event = never>(
   runtime: HarnessRuntime<Input, Output, Event>,
 ): HarnessServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
+  const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
   const server = createServer(createHarnessRequestHandler(runtime));
   markHarnessStartup("server_created");
-  const ready = listen(server, port);
+  const ready = listen(server, port, inheritedFD);
   return {
     server,
     port,
@@ -69,7 +71,7 @@ export function serveHarness<Input, Output, Event = never>(
   };
 }
 
-function listen(server: Server, port: number): Promise<void> {
+function listen(server: Server, port: number, inheritedFD: number | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
     const listening = () => {
       server.removeListener("error", failed);
@@ -82,7 +84,8 @@ function listen(server: Server, port: number): Promise<void> {
     };
     server.once("listening", listening);
     server.once("error", failed);
-    server.listen(port, "0.0.0.0");
+    if (inheritedFD === undefined) server.listen(port, "0.0.0.0");
+    else server.listen({ fd: inheritedFD });
   });
 }
 
@@ -205,6 +208,18 @@ function readInternalPort(value: string | undefined): number {
     throw new Error(`${INTERNAL_PORT_VARIABLE} must be a TCP port between 1 and 65535`);
   }
   return port;
+}
+
+function readInternalFD(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${INTERNAL_FD_VARIABLE} must be an inherited file descriptor`);
+  }
+  const descriptor = Number(value);
+  if (!Number.isSafeInteger(descriptor) || descriptor < 3 || descriptor > 1_048_575) {
+    throw new Error(`${INTERNAL_FD_VARIABLE} must be an inherited file descriptor`);
+  }
+  return descriptor;
 }
 
 function isJSONContentType(value: string | undefined): boolean {
