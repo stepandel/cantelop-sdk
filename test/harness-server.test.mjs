@@ -118,6 +118,28 @@ test("serveHarness requires the platform-owned internal port", () => {
   }
 });
 
+test("serveHarness exposes an explicit listener-ready signal", async (t) => {
+  const previous = process.env.CANTELOP_INTERNAL_PORT;
+  const reservation = createServer();
+  await listen(reservation);
+  const address = reservation.address();
+  assert.equal(typeof address, "object");
+  const port = address.port;
+  await close(reservation);
+  process.env.CANTELOP_INTERNAL_PORT = String(port);
+
+  try {
+    const harness = serveHarness(async () => undefined);
+    t.after(() => harness.close());
+    await harness.ready;
+    assert.equal(harness.server.listening, true);
+    assert.equal(harness.port, port);
+  } finally {
+    if (previous === undefined) delete process.env.CANTELOP_INTERNAL_PORT;
+    else process.env.CANTELOP_INTERNAL_PORT = previous;
+  }
+});
+
 function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 }

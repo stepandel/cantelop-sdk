@@ -25,6 +25,8 @@ export interface HarnessRequestHandlerOptions {
 export interface HarnessServer {
   readonly server: Server;
   readonly port: number;
+  /** Resolves only after the platform-owned execution socket is accepting connections. */
+  readonly ready: Promise<void>;
   close(): Promise<void>;
 }
 
@@ -56,12 +58,29 @@ export function serveHarness<Input, Output, Event = never>(
 ): HarnessServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const server = createServer(createHarnessRequestHandler(runtime));
-  server.listen(port, "0.0.0.0");
+  const ready = listen(server, port);
   return {
     server,
     port,
+    ready,
     close: () => closeServer(server),
   };
+}
+
+function listen(server: Server, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const listening = () => {
+      server.removeListener("error", failed);
+      resolve();
+    };
+    const failed = (error: Error) => {
+      server.removeListener("listening", listening);
+      reject(error);
+    };
+    server.once("listening", listening);
+    server.once("error", failed);
+    server.listen(port, "0.0.0.0");
+  });
 }
 
 async function handleRequest<Input, Output, Event>(
