@@ -24,17 +24,15 @@ The harness owns agent and model behavior and can use the native Linux runtime.
 
 ## Edge API
 
-Use `@cantelop/sdk/api` for API middleware. Cantelop injects the current App,
-already authenticated and scoped by the platform. No API key or endpoint
-configuration is required.
+Use `@cantelop/sdk/api` for API middleware. Cantelop injects the current App and
+root router. The App is already authenticated and scoped by the platform; no
+API key, endpoint configuration, or router construction is required.
 
 ```ts
-import { createRouter, defineApi } from "@cantelop/sdk/api";
+import { defineApi } from "@cantelop/sdk/api";
 import type { Input, Output } from "./contracts.js";
 
-export default defineApi<Input, Output>(({ app }) => {
-  const router = createRouter();
-
+export default defineApi<Input, Output>(({ app, router }) => {
   router.route("POST", "/workspaces", async ({ request }) => {
     const { slug } = await request.json() as { slug: string };
     const workspace = await app.workspaces.create({ slug });
@@ -60,8 +58,6 @@ export default defineApi<Input, Output>(({ app }) => {
       output: await session.execute(input, { signal: request.signal }),
     });
   });
-
-  return router;
 });
 ```
 
@@ -85,9 +81,11 @@ bindings. Cantelop supplies App variables and secrets through the
 provider-neutral `env` context:
 
 ```ts
-export default defineApi(({ app, env }) => {
+export default defineApi(({ app, env, router }) => {
   const token = env.API_TOKEN;
-  // Define routes using token and the current App's capabilities.
+  router.route("GET", "/token-status", () =>
+    Response.json({ configured: token !== undefined }),
+  );
 });
 ```
 

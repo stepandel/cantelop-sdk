@@ -1,4 +1,4 @@
-import { createRouter, defineApi } from "@cantelop/sdk/api";
+import { defineApi } from "@cantelop/sdk/api";
 import type {
   AnswerOutput,
   CreateSessionRequest,
@@ -7,9 +7,7 @@ import type {
 } from "./contracts.js";
 
 export default defineApi<PromptInput, AnswerOutput>(
-  ({ app }) => {
-    const router = createRouter();
-
+  ({ app, router }) => {
     router.route("GET", "/health", () =>
       Response.json({ status: "ok", runtime: "pi" }),
     );
@@ -44,6 +42,5 @@ export default defineApi<PromptInput, AnswerOutput>(
       return Response.json(await session.execute({ prompt: input.prompt }, { signal: request.signal }));
     });
 
-    return router;
   },
 );

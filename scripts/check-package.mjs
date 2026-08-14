@@ -46,11 +46,9 @@ try {
   await writeFile(
     path.join(consumer, "api.mjs"),
     [
-      'import { createRouter, defineApi } from "@cantelop/sdk/api";',
-      "export default defineApi(() => {",
-      "  const router = createRouter();",
+      'import { defineApi } from "@cantelop/sdk/api";',
+      "export default defineApi(({ router }) => {",
       '  router.route("GET", "/health", () => Response.json({ status: "ok" }));',
-      "  return router;",
       "});",
     ].join("\n"),
   );
@@ -59,12 +57,11 @@ try {
     [
       'import assert from "node:assert/strict";',
       'import { buildApi, buildHarness } from "@cantelop/sdk/build";',
-      'import { createRouter, defineApi } from "@cantelop/sdk/api";',
+      'import { defineApi } from "@cantelop/sdk/api";',
       'import { createApiWorker } from "@cantelop/sdk/edge";',
       'import { defineHarness, serveHarness } from "@cantelop/sdk/harness";',
       "assert.equal(typeof buildApi, \"function\");",
       "assert.equal(typeof buildHarness, \"function\");",
-      "assert.equal(typeof createRouter, \"function\");",
       "assert.equal(typeof defineApi, \"function\");",
       "assert.equal(typeof createApiWorker, \"function\");",
       "assert.equal(typeof defineHarness, \"function\");",

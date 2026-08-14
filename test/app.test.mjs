@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRouter, defineApi } from "../dist/api.js";
+import * as api from "../dist/api.js";
+import { defineApi } from "../dist/api.js";
+
+test("defineApi owns the public root router", () => {
+  assert.equal("createRouter" in api, false);
+});
 
 test("a router handles Web requests and can close over the current App", async () => {
-  const definition = defineApi(({ app }) => {
-    const router = createRouter();
+  const definition = defineApi(({ app, router }) => {
     router.route("POST", "/execute", async ({ request }) => {
       const session = app.sessions.connect("ses_test");
       return Response.json({ output: await session.execute(await request.text()) });
     });
-    return router;
   });
   const router = definition.create({
     app: {
@@ -42,8 +45,19 @@ test("a router handles Web requests and can close over the current App", async (
 });
 
 test("a router returns Web-standard routing errors", async () => {
-  const router = createRouter();
-  router.route("POST", "/execute", () => new Response());
+  const definition = defineApi(({ router }) => {
+    router.route("POST", "/execute", () => new Response());
+  });
+  const router = definition.create({
+    app: {
+      workspaces: { create() { throw new Error("not used"); } },
+      sessions: {
+        create() { throw new Error("not used"); },
+        connect() { throw new Error("not used"); },
+      },
+    },
+    env: {},
+  });
 
   const methodNotAllowed = await router.handle(
     new Request("https://example.test/execute"),

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRouter, defineApi } from "../dist/api.js";
+import { defineApi } from "../dist/api.js";
 import { createApiWorker } from "../dist/edge.js";
 
 const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
@@ -11,10 +11,9 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
   const runtimeRequests = [];
   let receivedEnvironment;
   let factoryCalls = 0;
-  const definition = defineApi(({ app, env }) => {
+  const definition = defineApi(({ app, env, router }) => {
     factoryCalls += 1;
     receivedEnvironment = env;
-    const router = createRouter();
     router.route("POST", "/execute", async ({ request }) => {
       const session = await app.sessions.create({
         workspaceId,
@@ -23,7 +22,6 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
       const output = await session.execute(await request.json(), { signal: request.signal });
       return Response.json({ sessionId: session.id, output });
     });
-    return router;
   });
   const worker = createApiWorker(definition, {
     sessionId: () => sessionId,

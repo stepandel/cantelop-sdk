@@ -14,11 +14,9 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
   await writeFile(
     entrypoint,
     [
-      `import { createRouter, defineApi } from ${JSON.stringify(sdkApi)};`,
-      "export default defineApi(() => {",
-      "  const router = createRouter();",
+      `import { defineApi } from ${JSON.stringify(sdkApi)};`,
+      "export default defineApi(({ router }) => {",
       '  router.route("GET", "/health", () => Response.json({ status: "ok" }));',
-      "  return router;",
       "});",
     ].join("\n"),
   );

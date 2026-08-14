@@ -1,5 +1,4 @@
 export {
-  createRouter,
   defineApi,
 } from "./api.js";
 export type {
