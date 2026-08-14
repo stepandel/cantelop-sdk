@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createExecutionEnvironment } from "../dist/harness.js";
+import { createHarnessExecutor } from "../dist/harness.js";
 
 test("a native harness receives VM environment and emits events", async () => {
-  const environment = createExecutionEnvironment(
+  const executor = createHarnessExecutor(
     async ({ input, env, emit }) => {
       emit({ type: "delta", value: input.slice(0, 2) });
       emit({ type: "delta", value: input.slice(2) });
@@ -12,7 +12,7 @@ test("a native harness receives VM environment and emits events", async () => {
     { env: { PREFIX: "VM:" } },
   );
 
-  const execution = await environment.start("hello");
+  const execution = await executor.start("hello");
   const events = [];
   for await (const event of execution.events()) events.push(event);
 

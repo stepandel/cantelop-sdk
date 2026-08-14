@@ -154,7 +154,7 @@ adapter attests that settlement to Cantelop only after the function has settled.
 Application events such as `{ type: "done" }` are ordinary user-defined stream
 events and do not control the Sandbox lifecycle.
 
-`createExecutionEnvironment()` is also exported from the harness surface for
+`createHarnessExecutor()` is also exported from the harness surface for
 running a harness in-process inside a VM or native test environment. Production
 Edge APIs execute only through a Session injected as part of the current App.
 

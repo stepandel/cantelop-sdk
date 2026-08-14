@@ -24,7 +24,7 @@ export type HarnessRuntime<Input, Output, Event = never> =
       run(context: HarnessContext<Input, Event>): Awaitable<Output>;
     };
 
-export interface HarnessEnvironmentOptions {
+export interface HarnessExecutorOptions {
   env?: HarnessEnvironment;
 }
 
@@ -33,7 +33,7 @@ export interface HarnessExecution<Output, Event = never>
   events(): AsyncIterable<Event>;
 }
 
-export interface HarnessExecutionEnvironment<Input, Output, Event = never> {
+export interface HarnessExecutor<Input, Output, Event = never> {
   start(
     input: Input,
     options?: StartExecutionOptions,
@@ -154,17 +154,17 @@ class ExecutionHandle<Output, Event>
 }
 
 /**
- * Creates the in-process execution environment used inside a native harness VM.
+ * Creates the in-process executor used inside a native harness VM.
  * Edge APIs execute through an injected Session instead.
  */
-export function createExecutionEnvironment<
+export function createHarnessExecutor<
   Input = unknown,
   Output = unknown,
   Event = never,
 >(
   runtime: HarnessRuntime<Input, Output, Event>,
-  options: HarnessEnvironmentOptions = {},
-): HarnessExecutionEnvironment<Input, Output, Event> {
+  options: HarnessExecutorOptions = {},
+): HarnessExecutor<Input, Output, Event> {
   return {
     async start(input, startOptions: StartExecutionOptions = {}) {
       const id = crypto.randomUUID();
