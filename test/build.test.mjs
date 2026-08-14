@@ -75,4 +75,7 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   const source = await readFile(artifact.mainModule, "utf8");
   assert.match(source, /ready/);
   assert.doesNotMatch(source, /from ["']\.\/dependency\.ts["']/);
+  assert.match(source, /harness_startup_stage/);
+  assert.match(source, /bun_entry/);
+  assert.match(source, /module_evaluated/);
 });

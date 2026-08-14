@@ -13,6 +13,7 @@ const MANIFEST_FILE = "cantelop-api.json";
 const HARNESS_MAIN_MODULE = "harness.mjs";
 const HARNESS_MANIFEST_FILE = "cantelop-harness.json";
 const EDGE_ADAPTER_MODULE = fileURLToPath(new URL("./edge.js", import.meta.url));
+const HARNESS_STARTUP_STATE_KEY = "dev.cantelop.sdk.harness-startup.v1";
 
 export interface BuildApiOptions {
   readonly entrypoint: string;
@@ -127,8 +128,25 @@ export async function buildHarness(
 
   const mainModule = path.join(outdir, HARNESS_MAIN_MODULE);
   await build({
-    entryPoints: [entrypoint],
-    absWorkingDir: path.dirname(entrypoint),
+    stdin: {
+      contents: [
+        `const key = Symbol.for(${JSON.stringify(HARNESS_STARTUP_STATE_KEY)});`,
+        "const state = { started: process.hrtime.bigint(), seen: new Set() };",
+        "Object.defineProperty(globalThis, key, { value: state, configurable: false });",
+        "const mark = (stage) => {",
+        "  if (state.seen.has(stage)) return;",
+        "  state.seen.add(stage);",
+        "  const now = process.hrtime.bigint();",
+        "  process.stderr.write(`${JSON.stringify({ component: \"cantelop.sdk\", event: \"harness_startup_stage\", stage, elapsed_us: Number((now - state.started) / 1000n) })}\\n`);",
+        "};",
+        "mark(\"bun_entry\");",
+        `await import(${JSON.stringify(entrypoint)});`,
+        "mark(\"module_evaluated\");",
+      ].join("\n"),
+      loader: "ts",
+      resolveDir: path.dirname(entrypoint),
+      sourcefile: "cantelop-harness-bootstrap.ts",
+    },
     bundle: true,
     format: "esm",
     platform: "node",

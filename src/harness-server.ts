@@ -11,6 +11,7 @@ import type {
   HarnessEnvironment,
   HarnessRuntime,
 } from "./harness.js";
+import { markHarnessStartup } from "./harness-startup.js";
 
 const EXECUTION_PATH_PATTERN =
   /^\/__cantelop\/v1\/executions\/(exec_[0-9a-f]{32})$/;
@@ -58,6 +59,7 @@ export function serveHarness<Input, Output, Event = never>(
 ): HarnessServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const server = createServer(createHarnessRequestHandler(runtime));
+  markHarnessStartup("server_created");
   const ready = listen(server, port);
   return {
     server,
@@ -71,6 +73,7 @@ function listen(server: Server, port: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const listening = () => {
       server.removeListener("error", failed);
+      markHarnessStartup("listener_ready");
       resolve();
     };
     const failed = (error: Error) => {
