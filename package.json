@@ -1,6 +1,6 @@
 {
   "name": "@cantelop/sdk",
-  "version": "0.1.0-rc.7",
+  "version": "0.1.0-rc.8",
   "description": "Provider-neutral API and native harness SDK for Cantelop applications",
   "license": "UNLICENSED",
   "repository": {
