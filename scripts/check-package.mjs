@@ -17,7 +17,7 @@ try {
   );
   const [pack] = JSON.parse(stdout);
   assert.equal(pack.name, "@cantelop/sdk");
-  assert.equal(pack.version, "0.1.0-rc.5");
+  assert.equal(pack.version, "0.1.0-rc.6");
   assert.ok(pack.size > 0);
   const paths = pack.files.map(({ path: file }) => file);
   assert.ok(paths.includes("dist/build.js"));
@@ -58,11 +58,12 @@ try {
     path.join(consumer, "qualify.mjs"),
     [
       'import assert from "node:assert/strict";',
-      'import { buildApi } from "@cantelop/sdk/build";',
+      'import { buildApi, buildHarness } from "@cantelop/sdk/build";',
       'import { createApp, defineApi } from "@cantelop/sdk/api";',
       'import { createApiWorker } from "@cantelop/sdk/edge";',
       'import { defineHarness, serveHarness } from "@cantelop/sdk/harness";',
       "assert.equal(typeof buildApi, \"function\");",
+      "assert.equal(typeof buildHarness, \"function\");",
       "assert.equal(typeof createApp, \"function\");",
       "assert.equal(typeof defineApi, \"function\");",
       "assert.equal(typeof createApiWorker, \"function\");",
