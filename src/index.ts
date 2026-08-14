@@ -1,5 +1,5 @@
 export {
-  createApp,
+  createRouter,
   defineApi,
 } from "./api.js";
 export type {
@@ -7,20 +7,18 @@ export type {
   ApiDefinition,
   ApiEnvironment,
   ApiFactory,
-  App,
-  AppOptions,
-  Execution,
-  WorkspaceExecution,
-  ExecutionProvider,
-  ExecutionStatus,
+  CantelopApp,
   HttpMethod,
   Route,
   RouteContext,
   RouteHandler,
-  StartExecutionOptions,
+  Router,
+  Session,
+  SessionCreateConfig,
+  SessionExecuteOptions,
+  SessionService,
+  Workspace,
+  WorkspaceCreateConfig,
+  WorkspaceService,
 } from "./api.js";
-export {
-  RemoteExecutionError,
-  createRemoteExecutionProvider,
-} from "./api.js";
-export type { RemoteExecutionProviderOptions } from "./api.js";
+export { RemoteAppError } from "./api.js";

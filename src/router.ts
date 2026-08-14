@@ -1,5 +1,3 @@
-import type { WorkspaceExecution } from "./execution.js";
-
 export type HttpMethod =
   | "DELETE"
   | "GET"
@@ -9,34 +7,23 @@ export type HttpMethod =
   | "POST"
   | "PUT";
 
-export interface RouteContext<Input, Output> {
+export interface RouteContext {
   readonly request: Request;
-  readonly execution: WorkspaceExecution<Input, Output>;
 }
 
-export type RouteHandler<Input, Output> = (
-  context: RouteContext<Input, Output>,
+export type RouteHandler = (
+  context: RouteContext,
 ) => Response | Promise<Response>;
 
-export interface Route<Input, Output> {
+export interface Route {
   readonly method: HttpMethod;
   readonly path: string;
-  readonly handler: RouteHandler<Input, Output>;
+  readonly handler: RouteHandler;
 }
 
-export interface AppOptions<Input, Output> {
-  readonly execution: WorkspaceExecution<Input, Output>;
-}
-
-export interface App<Input, Output> {
-  route(
-    method: HttpMethod,
-    path: string,
-    handler: RouteHandler<Input, Output>,
-  ): App<Input, Output>;
-  routes(
-    routes: readonly Route<Input, Output>[],
-  ): App<Input, Output>;
+export interface Router {
+  route(method: HttpMethod, path: string, handler: RouteHandler): Router;
+  routes(routes: readonly Route[]): Router;
   handle(request: Request): Promise<Response>;
 }
 
@@ -48,14 +35,9 @@ function normalizePath(path: string): string {
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
-export function createApp<
-  Input = unknown,
-  Output = unknown,
->(
-  options: AppOptions<Input, Output>,
-): App<Input, Output> {
-  const registered = new Map<string, RouteHandler<Input, Output>>();
-  const app: App<Input, Output> = {
+export function createRouter(): Router {
+  const registered = new Map<string, RouteHandler>();
+  const router: Router = {
     route(method, path, handler) {
       const key = `${method} ${normalizePath(path)}`;
 
@@ -64,15 +46,15 @@ export function createApp<
       }
 
       registered.set(key, handler);
-      return app;
+      return router;
     },
 
     routes(routes) {
       for (const route of routes) {
-        app.route(route.method, route.path, route.handler);
+        router.route(route.method, route.path, route.handler);
       }
 
-      return app;
+      return router;
     },
 
     async handle(request) {
@@ -81,9 +63,7 @@ export function createApp<
       const method = request.method.toUpperCase() as HttpMethod;
       const handler = registered.get(`${method} ${path}`);
 
-      if (handler) {
-        return handler({ request, execution: options.execution });
-      }
+      if (handler) return handler({ request });
 
       const allowed = [...registered.keys()]
         .filter((key) => key.endsWith(` ${path}`))
@@ -100,5 +80,5 @@ export function createApp<
     },
   };
 
-  return app;
+  return router;
 }

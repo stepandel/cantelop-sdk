@@ -1,38 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createApp, defineApi } from "../dist/api.js";
-import { createExecutionEnvironment } from "../dist/harness.js";
+import { createRouter, defineApi } from "../dist/api.js";
 
-test("an app handles Web requests and responses", async () => {
-  const execution = createExecutionEnvironment(async ({ input, signal }) => {
-    signal.throwIfAborted();
-    return input.toUpperCase();
-  });
-  const definition = defineApi(({ execution: remoteExecution }) => {
-    const app = createApp({
-      execution: remoteExecution.forWorkspace(
-        "wsp_0123456789abcdef0123456789abcdef",
-      ),
+test("a router handles Web requests and can close over the current App", async () => {
+  const definition = defineApi(({ app }) => {
+    const router = createRouter();
+    router.route("POST", "/execute", async ({ request }) => {
+      const session = app.sessions.connect("ses_test");
+      return Response.json({ output: await session.execute(await request.text()) });
     });
-
-    app.route("POST", "/execute", async ({ request, execution: environment }) => {
-      const input = await request.text();
-      const run = await environment.start(input, { signal: request.signal });
-      return Response.json({ id: run.id, output: await run.wait() });
-    });
-
-    return app;
+    return router;
   });
-  const app = definition.create({
-    execution: {
-      forWorkspace(workspaceId) {
-        assert.equal(workspaceId, "wsp_0123456789abcdef0123456789abcdef");
-        return execution;
+  const router = definition.create({
+    app: {
+      workspaces: { create() { throw new Error("not used"); } },
+      sessions: {
+        create() { throw new Error("not used"); },
+        connect(sessionId) {
+          assert.equal(sessionId, "ses_test");
+          return {
+            id: sessionId,
+            execute: async (input) => input.toUpperCase(),
+            terminate: async () => undefined,
+          };
+        },
       },
     },
+    env: {},
   });
 
-  const response = await app.handle(
+  const response = await router.handle(
     new Request("https://example.test/execute", {
       body: "hello",
       method: "POST",
@@ -41,19 +38,17 @@ test("an app handles Web requests and responses", async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.match(body.id, /^[0-9a-f-]{36}$/);
   assert.equal(body.output, "HELLO");
 });
 
-test("an app returns Web-standard routing errors", async () => {
-  const execution = createExecutionEnvironment(async () => undefined);
-  const app = createApp({ execution });
-  app.route("POST", "/execute", () => new Response());
+test("a router returns Web-standard routing errors", async () => {
+  const router = createRouter();
+  router.route("POST", "/execute", () => new Response());
 
-  const methodNotAllowed = await app.handle(
+  const methodNotAllowed = await router.handle(
     new Request("https://example.test/execute"),
   );
-  const notFound = await app.handle(
+  const notFound = await router.handle(
     new Request("https://example.test/missing"),
   );
 

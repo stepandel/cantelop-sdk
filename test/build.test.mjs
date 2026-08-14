@@ -14,13 +14,11 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
   await writeFile(
     entrypoint,
     [
-      `import { createApp, defineApi } from ${JSON.stringify(sdkApi)};`,
-      "export default defineApi(({ execution }) => {",
-      "  const app = createApp({",
-      '    execution: execution.forWorkspace("wsp_0123456789abcdef0123456789abcdef"),',
-      "  });",
-      '  app.route("GET", "/health", () => Response.json({ status: "ok" }));',
-      "  return app;",
+      `import { createRouter, defineApi } from ${JSON.stringify(sdkApi)};`,
+      "export default defineApi(() => {",
+      "  const router = createRouter();",
+      '  router.route("GET", "/health", () => Response.json({ status: "ok" }));',
+      "  return router;",
       "});",
     ].join("\n"),
   );
@@ -31,7 +29,7 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
     schema_version: 1,
     kind: "cantelop-edge-api",
     main_module: "worker.mjs",
-    execution_protocol_version: 1,
+    execution_protocol_version: 2,
   });
   assert.deepEqual(
     JSON.parse(await readFile(artifact.manifestFile, "utf8")),
@@ -65,7 +63,7 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.equal(artifact.mainModule, path.join(outdir, "harness.mjs"));
   assert.equal(artifact.manifest.kind, "cantelop-native-harness");
   assert.equal(artifact.manifest.main_module, "harness.mjs");
-  assert.equal(artifact.manifest.execution_protocol_version, 1);
+  assert.equal(artifact.manifest.execution_protocol_version, 2);
   assert.ok(artifact.manifest.bundled_bytes > 0);
   assert.deepEqual(
     JSON.parse(await readFile(artifact.manifestFile, "utf8")),

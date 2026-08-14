@@ -12,11 +12,12 @@ const repositoryRoot = path.resolve(
 test("the Edge API modules have no native harness dependencies", async () => {
   const files = [
     "api.js",
-    "app.js",
-    "execution.js",
     "edge.js",
+    "execution.js",
     "index.js",
-    "remote-execution.js",
+    "remote-app.js",
+    "resources.js",
+    "router.js",
   ];
 
   for (const file of files) {
@@ -29,7 +30,7 @@ test("the Edge API modules have no native harness dependencies", async () => {
 
 test("only native harness executions expose events", async () => {
   const edgeContract = await readFile(
-    path.join(repositoryRoot, "dist/execution.d.ts"),
+    path.join(repositoryRoot, "dist/resources.d.ts"),
     "utf8",
   );
   const harnessContract = await readFile(

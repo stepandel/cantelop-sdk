@@ -6,9 +6,10 @@ export type ExecutionStatus =
   | "cancelled";
 
 export interface StartExecutionOptions {
-  signal?: AbortSignal;
+  readonly signal?: AbortSignal;
 }
 
+/** An in-process native harness execution. */
 export interface Execution<Output> {
   readonly id: string;
   readonly status: ExecutionStatus;
@@ -16,19 +17,4 @@ export interface Execution<Output> {
   readonly finishedAt?: Date;
   cancel(reason?: unknown): Promise<void>;
   wait(): Promise<Output>;
-}
-
-/**
- * The API-facing transport for dispatching work through one Workspace.
- * Cantelop supplies a remote implementation at the Edge.
- */
-export interface WorkspaceExecution<Input, Output> {
-  start(
-    input: Input,
-    options?: StartExecutionOptions,
-  ): Promise<Execution<Output>>;
-}
-
-export interface ExecutionProvider<Input, Output> {
-  forWorkspace(workspaceId: string): WorkspaceExecution<Input, Output>;
 }

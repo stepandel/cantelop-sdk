@@ -1,33 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createApp, defineApi } from "../dist/api.js";
+import { createRouter, defineApi } from "../dist/api.js";
 import { createApiWorker } from "../dist/edge.js";
 
 const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
+const sessionId = "ses_0123456789abcdef0123456789abcdef";
 const executionId = "exec_0123456789abcdef0123456789abcdef";
 
 test("the Edge adapter turns an API definition into a standard Worker", async () => {
-  let runtimeRequest;
+  const runtimeRequests = [];
   let receivedEnvironment;
   let factoryCalls = 0;
-  const definition = defineApi(({ execution, env }) => {
+  const definition = defineApi(({ app, env }) => {
     factoryCalls += 1;
     receivedEnvironment = env;
-    const app = createApp({
-      execution: execution.forWorkspace(workspaceId),
-    });
-    app.route("POST", "/execute", async ({ request, execution: runtime }) => {
-      const run = await runtime.start(await request.json(), {
-        signal: request.signal,
+    const router = createRouter();
+    router.route("POST", "/execute", async ({ request }) => {
+      const session = await app.sessions.create({
+        workspaceId,
+        keepAliveSeconds: 300,
       });
-      return Response.json({ id: run.id, output: await run.wait() });
+      const output = await session.execute(await request.json(), { signal: request.signal });
+      return Response.json({ sessionId: session.id, output });
     });
-    return app;
+    return router;
   });
   const worker = createApiWorker(definition, {
+    sessionId: () => sessionId,
     executionId: () => executionId,
     fetch: async (request) => {
-      runtimeRequest = request;
+      runtimeRequests.push(request);
+      if (request.url.endsWith("/__cantelop/v1/sessions")) {
+        return Response.json({ id: sessionId }, { status: 202 });
+      }
       return Response.json({ output: { answer: "edge to VM" } });
     },
   });
@@ -48,17 +53,15 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
   );
 
   assert.deepEqual(await response.json(), {
-    id: executionId,
+    sessionId,
     output: { answer: "edge to VM" },
   });
+  assert.equal(runtimeRequests.length, 2);
   assert.equal(
-    runtimeRequest.url,
-    `https://runtime.cantelop.internal/__cantelop/v1/executions/${executionId}`,
+    runtimeRequests[1].url,
+    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${sessionId}/executions`,
   );
-  assert.equal(
-    runtimeRequest.headers.get("X-Cantelop-Edge-Workspace-ID"),
-    workspaceId,
-  );
+  assert.equal(runtimeRequests[1].headers.get("X-Cantelop-Edge-Workspace-ID"), null);
   assert.deepEqual({ ...receivedEnvironment }, {
     LOG_LEVEL: "debug",
     API_SECRET: "edge-secret",

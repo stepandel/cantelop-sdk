@@ -1,9 +1,9 @@
 import type { ApiDefinition, ApiEnvironment } from "./api.js";
-import type { App } from "./app.js";
 import {
-  createRemoteExecutionProvider,
-  type RemoteExecutionProviderOptions,
-} from "./remote-execution.js";
+  createRemoteApp,
+  type RemoteAppOptions,
+} from "./remote-app.js";
+import type { Router } from "./router.js";
 
 export interface EdgeApiWorker {
   fetch(request: Request, bindings?: Readonly<Record<string, unknown>>): Promise<Response>;
@@ -19,7 +19,7 @@ const RESERVED_BINDING_PREFIX = "CANTELOP_";
  */
 export function createApiWorker<Input = unknown, Output = unknown>(
   definition: ApiDefinition<Input, Output>,
-  options: RemoteExecutionProviderOptions = {},
+  options: RemoteAppOptions = {},
 ): EdgeApiWorker {
   if (
     typeof definition !== "object" ||
@@ -29,29 +29,29 @@ export function createApiWorker<Input = unknown, Output = unknown>(
     throw new TypeError("Invalid Cantelop API definition");
   }
 
-  const execution = createRemoteExecutionProvider<Input, Output>(options);
-  const apps = new WeakMap<object, App<Input, Output>>();
-  let appWithoutBindings: App<Input, Output> | undefined;
+  const app = createRemoteApp<Input, Output>(options);
+  const routers = new WeakMap<object, Router>();
+  let routerWithoutBindings: Router | undefined;
 
-  const appFor = (
+  const routerFor = (
     bindings: Readonly<Record<string, unknown>> | undefined,
-  ): App<Input, Output> => {
+  ): Router => {
     if (bindings === undefined) {
-      appWithoutBindings ??= definition.create({
-        execution,
+      routerWithoutBindings ??= definition.create({
+        app,
         env: Object.freeze({}),
       });
-      return appWithoutBindings;
+      return routerWithoutBindings;
     }
 
-    const cached = apps.get(bindings);
+    const cached = routers.get(bindings);
     if (cached) return cached;
-    const app = definition.create({
-      execution,
+    const router = definition.create({
+      app,
       env: customerEnvironment(bindings),
     });
-    apps.set(bindings, app);
-    return app;
+    routers.set(bindings, router);
+    return router;
   };
 
   return Object.freeze({
@@ -59,7 +59,7 @@ export function createApiWorker<Input = unknown, Output = unknown>(
       request: Request,
       bindings?: Readonly<Record<string, unknown>>,
     ): Promise<Response> {
-      return appFor(bindings).handle(request);
+      return routerFor(bindings).handle(request);
     },
   });
 }

@@ -155,7 +155,7 @@ class ExecutionHandle<Output, Event>
 
 /**
  * Creates the in-process execution environment used inside a native harness VM.
- * Edge APIs receive a remote WorkspaceExecution from Cantelop instead.
+ * Edge APIs execute through an injected Session instead.
  */
 export function createExecutionEnvironment<
   Input = unknown,
@@ -229,7 +229,6 @@ export function createExecutionEnvironment<
 
 export type {
   Execution,
-  WorkspaceExecution,
   ExecutionStatus,
   StartExecutionOptions,
 } from "./execution.js";
