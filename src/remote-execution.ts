@@ -1,14 +1,14 @@
 import type {
   Execution,
-  ExecutionEnvironment,
+  WorkspaceExecution,
   ExecutionProvider,
   ExecutionStatus,
   StartExecutionOptions,
 } from "./execution.js";
 
-const ENVIRONMENT_ID_PATTERN = /^env_[0-9a-f]{32}$/;
+const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const RUNTIME_ORIGIN = "https://runtime.cantelop.internal";
-const ENVIRONMENT_HEADER = "X-Cantelop-Edge-Environment-ID";
+const WORKSPACE_HEADER = "X-Cantelop-Edge-Workspace-ID";
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 
 type RuntimeFetch = (request: Request) => Promise<Response>;
@@ -36,8 +36,8 @@ export function createRemoteExecutionProvider<Input = unknown, Output = unknown>
   const executionId = options.executionId ?? createExecutionID;
 
   return Object.freeze({
-    forEnvironment(environmentId: string): ExecutionEnvironment<Input, Output> {
-      assertEnvironmentID(environmentId);
+    forWorkspace(workspaceId: string): WorkspaceExecution<Input, Output> {
+      assertWorkspaceID(workspaceId);
       return Object.freeze({
         start(
           input: Input,
@@ -48,7 +48,7 @@ export function createRemoteExecutionProvider<Input = unknown, Output = unknown>
           return Promise.resolve(
             new RemoteExecution<Output>(
               id,
-              environmentId,
+              workspaceId,
               input,
               startOptions,
               runtimeFetch,
@@ -71,7 +71,7 @@ class RemoteExecution<Output> implements Execution<Output> {
 
   constructor(
     readonly id: string,
-    environmentId: string,
+    workspaceId: string,
     input: unknown,
     options: StartExecutionOptions,
     runtimeFetch: RuntimeFetch,
@@ -83,7 +83,7 @@ class RemoteExecution<Output> implements Execution<Output> {
       options.signal?.addEventListener("abort", this.forwardAbort, { once: true });
     }
 
-    this.result = this.execute(environmentId, input, runtimeFetch).finally(() => {
+    this.result = this.execute(workspaceId, input, runtimeFetch).finally(() => {
       options.signal?.removeEventListener("abort", this.forwardAbort);
     });
     void this.result.catch(() => undefined);
@@ -101,7 +101,7 @@ class RemoteExecution<Output> implements Execution<Output> {
   }
 
   private async execute(
-    environmentId: string,
+    workspaceId: string,
     input: unknown,
     runtimeFetch: RuntimeFetch,
   ): Promise<Output> {
@@ -123,7 +123,7 @@ class RemoteExecution<Output> implements Execution<Output> {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            [ENVIRONMENT_HEADER]: environmentId,
+            [WORKSPACE_HEADER]: workspaceId,
           },
           body,
           redirect: "manual",
@@ -174,9 +174,9 @@ function readErrorCode(envelope: unknown): string {
     : "execution_failed";
 }
 
-function assertEnvironmentID(environmentId: string): void {
-  if (!ENVIRONMENT_ID_PATTERN.test(environmentId)) {
-    throw new TypeError("Invalid Cantelop Environment ID");
+function assertWorkspaceID(workspaceId: string): void {
+  if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
+    throw new TypeError("Invalid Cantelop Workspace ID");
   }
 }
 

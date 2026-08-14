@@ -37,7 +37,7 @@ export type {
 } from "./app.js";
 export type {
   Execution,
-  ExecutionEnvironment,
+  WorkspaceExecution,
   ExecutionProvider,
   ExecutionStatus,
   StartExecutionOptions,

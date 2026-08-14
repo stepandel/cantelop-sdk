@@ -17,7 +17,7 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
       `import { createApp, defineApi } from ${JSON.stringify(sdkApi)};`,
       "export default defineApi(({ execution }) => {",
       "  const app = createApp({",
-      '    execution: execution.forEnvironment("env_0123456789abcdef0123456789abcdef"),',
+      '    execution: execution.forWorkspace("wsp_0123456789abcdef0123456789abcdef"),',
       "  });",
       '  app.route("GET", "/health", () => Response.json({ status: "ok" }));',
       "  return app;",

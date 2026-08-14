@@ -1,4 +1,4 @@
-import type { ExecutionEnvironment } from "./execution.js";
+import type { WorkspaceExecution } from "./execution.js";
 
 export type HttpMethod =
   | "DELETE"
@@ -11,7 +11,7 @@ export type HttpMethod =
 
 export interface RouteContext<Input, Output> {
   readonly request: Request;
-  readonly execution: ExecutionEnvironment<Input, Output>;
+  readonly execution: WorkspaceExecution<Input, Output>;
 }
 
 export type RouteHandler<Input, Output> = (
@@ -25,7 +25,7 @@ export interface Route<Input, Output> {
 }
 
 export interface AppOptions<Input, Output> {
-  readonly execution: ExecutionEnvironment<Input, Output>;
+  readonly execution: WorkspaceExecution<Input, Output>;
 }
 
 export interface App<Input, Output> {

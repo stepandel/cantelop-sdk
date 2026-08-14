@@ -19,10 +19,10 @@ export interface Execution<Output> {
 }
 
 /**
- * The API-facing transport for dispatching work to a harness execution
- * environment. Cantelop supplies a remote implementation at the Edge.
+ * The API-facing transport for dispatching work through one Workspace.
+ * Cantelop supplies a remote implementation at the Edge.
  */
-export interface ExecutionEnvironment<Input, Output> {
+export interface WorkspaceExecution<Input, Output> {
   start(
     input: Input,
     options?: StartExecutionOptions,
@@ -30,5 +30,5 @@ export interface ExecutionEnvironment<Input, Output> {
 }
 
 export interface ExecutionProvider<Input, Output> {
-  forEnvironment(environmentId: string): ExecutionEnvironment<Input, Output>;
+  forWorkspace(workspaceId: string): WorkspaceExecution<Input, Output>;
 }

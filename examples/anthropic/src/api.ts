@@ -7,8 +7,8 @@ import type {
 export default defineApi<PromptInput, AnswerOutput>(
   ({ execution }) => {
     const app = createApp({
-      execution: execution.forEnvironment(
-        "env_0123456789abcdef0123456789abcdef",
+      execution: execution.forWorkspace(
+        "wsp_0123456789abcdef0123456789abcdef",
       ),
     });
 

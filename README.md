@@ -24,8 +24,8 @@ The harness owns agent and model behavior and can use the native Linux runtime.
 
 ## Edge API
 
-Use `@cantelop/sdk/api` for API middleware. Cantelop injects a remote execution
-environment when it creates the API definition.
+Use `@cantelop/sdk/api` for API middleware. Cantelop injects a remote Workspace
+execution provider when it creates the API definition.
 
 ```ts
 import { createApp, defineApi } from "@cantelop/sdk/api";
@@ -33,8 +33,8 @@ import type { Input, Output } from "./contracts.js";
 
 export default defineApi<Input, Output>(({ execution }) => {
   const app = createApp({
-    execution: execution.forEnvironment(
-      "env_0123456789abcdef0123456789abcdef",
+    execution: execution.forWorkspace(
+      "wsp_0123456789abcdef0123456789abcdef",
     ),
   });
 
@@ -133,7 +133,7 @@ events and do not control the Sandbox lifecycle.
 
 `createExecutionEnvironment()` is also exported from the harness surface for
 running a harness in-process inside a VM or native test environment. Production
-Edge APIs receive a remote `ExecutionEnvironment` implementation from
+Edge APIs receive a remote `WorkspaceExecution` implementation from
 Cantelop's transport layer.
 
 ## Events and direct streaming

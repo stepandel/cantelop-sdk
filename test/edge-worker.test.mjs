@@ -3,7 +3,7 @@ import test from "node:test";
 import { createApp, defineApi } from "../dist/api.js";
 import { createApiWorker } from "../dist/edge.js";
 
-const environmentId = "env_0123456789abcdef0123456789abcdef";
+const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
 const executionId = "exec_0123456789abcdef0123456789abcdef";
 
 test("the Edge adapter turns an API definition into a standard Worker", async () => {
@@ -14,7 +14,7 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
     factoryCalls += 1;
     receivedEnvironment = env;
     const app = createApp({
-      execution: execution.forEnvironment(environmentId),
+      execution: execution.forWorkspace(workspaceId),
     });
     app.route("POST", "/execute", async ({ request, execution: runtime }) => {
       const run = await runtime.start(await request.json(), {
@@ -56,8 +56,8 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
     `https://runtime.cantelop.internal/__cantelop/v1/executions/${executionId}`,
   );
   assert.equal(
-    runtimeRequest.headers.get("X-Cantelop-Edge-Environment-ID"),
-    environmentId,
+    runtimeRequest.headers.get("X-Cantelop-Edge-Workspace-ID"),
+    workspaceId,
   );
   assert.deepEqual({ ...receivedEnvironment }, {
     LOG_LEVEL: "debug",

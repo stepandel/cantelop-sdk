@@ -48,7 +48,7 @@ try {
     [
       'import { createApp, defineApi } from "@cantelop/sdk/api";',
       "export default defineApi(({ execution }) => {",
-      "  const app = createApp({ execution: execution.forEnvironment(\"env_0123456789abcdef0123456789abcdef\") });",
+      "  const app = createApp({ execution: execution.forWorkspace(\"wsp_0123456789abcdef0123456789abcdef\") });",
       '  app.route("GET", "/health", () => Response.json({ status: "ok" }));',
       "  return app;",
       "});",

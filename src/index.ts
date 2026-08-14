@@ -10,7 +10,7 @@ export type {
   App,
   AppOptions,
   Execution,
-  ExecutionEnvironment,
+  WorkspaceExecution,
   ExecutionProvider,
   ExecutionStatus,
   HttpMethod,

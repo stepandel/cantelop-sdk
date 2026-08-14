@@ -10,8 +10,8 @@ test("an app handles Web requests and responses", async () => {
   });
   const definition = defineApi(({ execution: remoteExecution }) => {
     const app = createApp({
-      execution: remoteExecution.forEnvironment(
-        "env_0123456789abcdef0123456789abcdef",
+      execution: remoteExecution.forWorkspace(
+        "wsp_0123456789abcdef0123456789abcdef",
       ),
     });
 
@@ -25,8 +25,8 @@ test("an app handles Web requests and responses", async () => {
   });
   const app = definition.create({
     execution: {
-      forEnvironment(environmentId) {
-        assert.equal(environmentId, "env_0123456789abcdef0123456789abcdef");
+      forWorkspace(workspaceId) {
+        assert.equal(workspaceId, "wsp_0123456789abcdef0123456789abcdef");
         return execution;
       },
     },

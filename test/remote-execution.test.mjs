@@ -5,10 +5,10 @@ import {
   createRemoteExecutionProvider,
 } from "../dist/api.js";
 
-const environmentId = "env_0123456789abcdef0123456789abcdef";
+const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
 const executionId = "exec_0123456789abcdef0123456789abcdef";
 
-test("remote execution selects an explicit Environment and uses the v1 runtime contract", async () => {
+test("remote execution selects an explicit Workspace and uses the v1 runtime contract", async () => {
   let forwarded;
   const provider = createRemoteExecutionProvider({
     executionId: () => executionId,
@@ -18,7 +18,7 @@ test("remote execution selects an explicit Environment and uses the v1 runtime c
     },
   });
 
-  const execution = await provider.forEnvironment(environmentId).start({ prompt: "hello" });
+  const execution = await provider.forWorkspace(workspaceId).start({ prompt: "hello" });
   assert.deepEqual(await execution.wait(), { answer: "done" });
   assert.equal(execution.status, "succeeded");
   assert.equal(
@@ -27,28 +27,28 @@ test("remote execution selects an explicit Environment and uses the v1 runtime c
   );
   assert.equal(forwarded.method, "POST");
   assert.equal(forwarded.redirect, "manual");
-  assert.equal(forwarded.headers.get("X-Cantelop-Edge-Environment-ID"), environmentId);
+  assert.equal(forwarded.headers.get("X-Cantelop-Edge-Workspace-ID"), workspaceId);
   assert.deepEqual(await forwarded.json(), { input: { prompt: "hello" } });
 });
 
-test("remote execution requires a concrete Environment ID", () => {
+test("remote execution requires a concrete Workspace ID", () => {
   const provider = createRemoteExecutionProvider();
-  assert.throws(() => provider.forEnvironment("primary"), /Invalid Cantelop Environment ID/);
+  assert.throws(() => provider.forWorkspace("primary"), /Invalid Cantelop Workspace ID/);
 });
 
 test("remote execution exposes stable remote errors", async () => {
   const provider = createRemoteExecutionProvider({
     executionId: () => executionId,
     fetch: async () => Response.json(
-      { error: { code: "environment_unavailable", message: "private detail" } },
+      { error: { code: "workspace_unavailable", message: "private detail" } },
       { status: 409 },
     ),
   });
-  const execution = await provider.forEnvironment(environmentId).start({});
+  const execution = await provider.forWorkspace(workspaceId).start({});
 
   await assert.rejects(execution.wait(), (error) => {
     assert.ok(error instanceof RemoteExecutionError);
-    assert.equal(error.code, "environment_unavailable");
+    assert.equal(error.code, "workspace_unavailable");
     assert.equal(error.status, 409);
     assert.doesNotMatch(error.message, /private detail/);
     return true;
@@ -69,7 +69,7 @@ test("remote execution cancellation aborts the runtime request", async () => {
       });
     },
   });
-  const execution = await provider.forEnvironment(environmentId).start({});
+  const execution = await provider.forWorkspace(workspaceId).start({});
   await execution.cancel(new Error("cancelled by test"));
 
   await assert.rejects(execution.wait(), /cancelled by test/);

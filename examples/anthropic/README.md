@@ -6,7 +6,7 @@ This example has two deployment artifacts:
 - `src/harness.ts` runs the Claude Agent SDK and its subprocess in a
   Linux-native VM.
 
-Cantelop injects a remote execution environment when it creates the API and
+Cantelop injects a remote Workspace execution provider when it creates the API and
 supplies Anthropic credentials only to the harness VM.
 
 ```bash
