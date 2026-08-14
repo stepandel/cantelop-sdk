@@ -17,6 +17,10 @@ export interface SessionCreateConfig {
   readonly keepAliveSeconds: number;
 }
 
+export interface SessionOpenConfig extends SessionCreateConfig {
+  readonly key: string;
+}
+
 export interface SessionExecuteOptions {
   readonly signal?: AbortSignal;
 }
@@ -33,6 +37,7 @@ export interface WorkspaceService {
 
 export interface SessionService<Input, Output> {
   create(config: SessionCreateConfig): Promise<Session<Input, Output>>;
+  open(config: SessionOpenConfig): Promise<Session<Input, Output>>;
   connect(sessionId: string): Session<Input, Output>;
 }
 

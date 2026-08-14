@@ -3,6 +3,7 @@ import type {
   Session,
   SessionCreateConfig,
   SessionExecuteOptions,
+  SessionOpenConfig,
   Workspace,
   WorkspaceCreateConfig,
 } from "./resources.js";
@@ -61,6 +62,28 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
         throw new RemoteAppError("invalid_session_response", 0);
       }
       return createRemoteSession(id, runtimeFetch, executionId);
+    },
+
+    async open(config: SessionOpenConfig): Promise<Session<Input, Output>> {
+      assertSessionKey(config.key);
+      assertWorkspaceID(config.workspaceId);
+      assertKeepAliveSeconds(config.keepAliveSeconds);
+      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/sessions/open", {
+        method: "POST",
+        body: {
+          key: config.key,
+          workspace_id: config.workspaceId,
+          keep_alive_seconds: config.keepAliveSeconds,
+        },
+      });
+      if (
+        !isRecord(envelope) ||
+        typeof envelope.id !== "string" ||
+        !SESSION_ID_PATTERN.test(envelope.id)
+      ) {
+        throw new RemoteAppError("invalid_session_response", 0);
+      }
+      return createRemoteSession(envelope.id, runtimeFetch, executionId);
     },
 
     connect(id: string): Session<Input, Output> {
@@ -218,6 +241,12 @@ function assertWorkspaceID(id: string): void {
 
 function assertSessionID(id: string): void {
   if (!SESSION_ID_PATTERN.test(id)) throw new TypeError("Invalid Cantelop Session ID");
+}
+
+function assertSessionKey(key: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(key)) {
+    throw new TypeError("Invalid Cantelop Session key");
+  }
 }
 
 function assertExecutionID(id: string): void {

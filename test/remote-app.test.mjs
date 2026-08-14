@@ -53,6 +53,32 @@ test("a Session is created with its Workspace and sole keep-alive setting", asyn
   });
 });
 
+test("a Workspace-scoped key opens a platform-identified Session", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    sessionId: () => {
+      throw new Error("open must not generate the Session ID in the SDK");
+    },
+    fetch: async (request) => {
+      forwarded = request;
+      return Response.json({ id: sessionId }, { status: 200 });
+    },
+  });
+
+  const session = await app.sessions.open({
+    key: "telegram",
+    workspaceId,
+    keepAliveSeconds: 300,
+  });
+  assert.equal(session.id, sessionId);
+  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/sessions/open");
+  assert.deepEqual(await forwarded.json(), {
+    key: "telegram",
+    workspace_id: workspaceId,
+    keep_alive_seconds: 300,
+  });
+});
+
 test("execution is a child operation of a Session", async () => {
   let forwarded;
   const app = createRemoteApp({
@@ -99,6 +125,10 @@ test("resource configuration is validated before transport", async () => {
   await assert.rejects(
     app.sessions.create({ workspaceId, keepAliveSeconds: 0 }),
     /keepAliveSeconds/,
+  );
+  await assert.rejects(
+    app.sessions.open({ key: "not a valid key", workspaceId, keepAliveSeconds: 300 }),
+    /Session key/,
   );
   assert.throws(() => app.sessions.connect("sandbox-1"), /Session ID/);
 });

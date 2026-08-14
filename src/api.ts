@@ -47,6 +47,7 @@ export type {
   Session,
   SessionCreateConfig,
   SessionExecuteOptions,
+  SessionOpenConfig,
   SessionService,
   Workspace,
   WorkspaceCreateConfig,

@@ -70,6 +70,21 @@ Sandbox. Explicitly terminating the Session makes it final:
 await app.sessions.connect(sessionId).terminate();
 ```
 
+Distributed API workers can converge on one Session without storing its ID by
+opening a Workspace-scoped key. Cantelop generates the Session ID and durably
+binds the non-secret key inside that Workspace:
+
+```ts
+const session = await app.sessions.open({
+  key: "telegram",
+  workspaceId,
+  keepAliveSeconds: 300,
+});
+```
+
+Opening the same key with different configuration conflicts. Termination is
+still final; use a new key when a distinct logical Session is required.
+
 Workspace creation takes a routing `slug`. The current App identity is derived
 by the trusted bridge and cannot be supplied or overridden by application code.
 
