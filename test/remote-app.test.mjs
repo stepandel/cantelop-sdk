@@ -42,14 +42,14 @@ test("a Session is created with its Workspace and sole keep-alive setting", asyn
 
   const session = await app.sessions.create({
     workspaceId,
-    keepAliveSeconds: 300,
+    keepAliveSeconds: 0,
   });
   assert.equal(session.id, sessionId);
   assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/sessions");
   assert.deepEqual(await forwarded.json(), {
     id: sessionId,
     workspace_id: workspaceId,
-    keep_alive_seconds: 300,
+    keep_alive_seconds: 0,
   });
 });
 
@@ -123,7 +123,7 @@ test("resource configuration is validated before transport", async () => {
   const app = createRemoteApp();
   await assert.rejects(app.workspaces.create({ slug: "Bad Slug" }), /Workspace slug/);
   await assert.rejects(
-    app.sessions.create({ workspaceId, keepAliveSeconds: 0 }),
+    app.sessions.create({ workspaceId, keepAliveSeconds: -1 }),
     /keepAliveSeconds/,
   );
   await assert.rejects(

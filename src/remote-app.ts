@@ -14,7 +14,7 @@ const EXECUTION_ID_PATTERN = /^exec_[0-9a-f]{32}$/;
 const WORKSPACE_SLUG_PATTERN = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const RUNTIME_ORIGIN = "https://runtime.cantelop.internal";
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
-const MIN_KEEP_ALIVE_SECONDS = 30;
+const MIN_KEEP_ALIVE_SECONDS = 0;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
 
 type RuntimeFetch = (request: Request) => Promise<Response>;
@@ -259,7 +259,7 @@ function assertWorkspaceSlug(slug: string): void {
 
 function assertKeepAliveSeconds(value: number): void {
   if (!Number.isInteger(value) || value < MIN_KEEP_ALIVE_SECONDS || value > MAX_KEEP_ALIVE_SECONDS) {
-    throw new TypeError("keepAliveSeconds must be an integer between 30 and 604800");
+    throw new TypeError("keepAliveSeconds must be an integer between 0 and 604800");
   }
 }
 
