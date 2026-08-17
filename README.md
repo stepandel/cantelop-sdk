@@ -88,9 +88,8 @@ Existing Workspaces are addressable by their App-scoped slug:
 const workspace = await app.workspaces.open({ slug: "production" });
 ```
 
-A keyed Session can use either the existing `workspaceId` form or a slug
-directly. The reserved `"default"` selector means the App's initial Workspace,
-even when that Workspace has another slug:
+A keyed Session can use either the existing `workspaceId` form or an exact
+App-scoped slug:
 
 ```ts
 const session = await app.sessions.open({
@@ -100,15 +99,14 @@ const session = await app.sessions.open({
 });
 
 const defaultSession = await app.sessions.open({
-  workspace: "default",
   key: threadKey,
 });
 ```
 
 Omitted `keepAliveSeconds` defaults to `0`, releasing the Sandbox after each
-execution while retaining the logical Session. `workspaces.open()` always
-performs exact slug lookup, so `{ slug: "default" }` refers to a literal
-Workspace slug rather than the reserved Session selector.
+execution while retaining the logical Session. Omitting both Workspace
+selectors uses the App's injected initial Workspace. Every string, including
+`"default"`, is an ordinary exact slug; no slug has platform-defined meaning.
 
 Opening the same key with different configuration conflicts. Termination is
 still final; use a new key when a distinct logical Session is required.

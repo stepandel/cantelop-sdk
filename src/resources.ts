@@ -29,6 +29,7 @@ interface SessionOpenBaseConfig {
 export type SessionOpenConfig = SessionOpenBaseConfig & (
   | { readonly workspaceId: string; readonly workspace?: never }
   | { readonly workspace: string; readonly workspaceId?: never }
+  | { readonly workspace?: never; readonly workspaceId?: never }
 );
 
 export interface SessionExecuteOptions {

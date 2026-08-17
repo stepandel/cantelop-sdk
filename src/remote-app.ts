@@ -71,8 +71,8 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
       assertSessionKey(config.key);
       const workspaceId = "workspaceId" in config ? config.workspaceId : undefined;
       const workspace = "workspace" in config ? config.workspace : undefined;
-      if ((typeof workspaceId === "string") === (typeof workspace === "string")) {
-        throw new TypeError("Session open requires exactly one Workspace ID or slug");
+      if (typeof workspaceId === "string" && typeof workspace === "string") {
+        throw new TypeError("Session open accepts at most one Workspace ID or slug");
       }
       if (workspaceId !== undefined) assertWorkspaceID(workspaceId);
       if (workspace !== undefined) assertWorkspaceSlug(workspace);
@@ -82,7 +82,9 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
         method: "POST",
         body: {
           key: config.key,
-          ...(workspaceId === undefined ? { workspace } : { workspace_id: workspaceId }),
+          ...(workspaceId !== undefined
+            ? { workspace_id: workspaceId }
+            : workspace !== undefined ? { workspace } : {}),
           keep_alive_seconds: keepAliveSeconds,
         },
       });

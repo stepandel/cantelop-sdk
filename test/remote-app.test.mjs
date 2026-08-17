@@ -102,7 +102,7 @@ test("a Workspace-scoped key opens a platform-identified Session", async () => {
   });
 });
 
-test("a Session opens by Workspace slug with zero keep-alive by default", async () => {
+test("a Session treats default as a literal Workspace slug", async () => {
   let forwarded;
   const app = createRemoteApp({
     fetch: async (request) => {
@@ -119,6 +119,23 @@ test("a Session opens by Workspace slug with zero keep-alive by default", async 
   assert.deepEqual(await forwarded.json(), {
     key: "thread",
     workspace: "default",
+    keep_alive_seconds: 0,
+  });
+});
+
+test("a Session uses the injected primary Workspace when its selector is omitted", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    fetch: async (request) => {
+      forwarded = request;
+      return Response.json({ id: sessionId });
+    },
+  });
+
+  const session = await app.sessions.open({ key: "thread" });
+  assert.equal(session.id, sessionId);
+  assert.deepEqual(await forwarded.json(), {
+    key: "thread",
     keep_alive_seconds: 0,
   });
 });
@@ -213,7 +230,7 @@ test("resource configuration is validated before transport", async () => {
   );
   await assert.rejects(
     app.sessions.open({ key: "thread", workspace: "production", workspaceId }),
-    /exactly one Workspace/,
+    /at most one Workspace/,
   );
   assert.throws(() => app.sessions.connect("sandbox-1"), /Session ID/);
 });
