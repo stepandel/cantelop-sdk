@@ -40,6 +40,22 @@ the command's `-config`, `-api`, and `-harness` flags for non-default paths. Add
 an expanded harness object with `context` and `dockerfile` only when native
 dependencies or system tools require a custom image.
 
+Declare configuration requirements by name without committing production
+values:
+
+```json
+"environment": {
+  "OPENAI_MODEL": { "default": "gpt-4.1-mini" },
+  "OPENAI_API_KEY": { "secret": true, "required": true }
+}
+```
+
+`secret` and `required` default to `false`. Non-secret `default` values seed
+`cantelop dev` and are overridden by `.env`; they are not copied into the
+production App. `cantelop doctor` verifies every entry marked `required`
+against that App's redacted configuration. Secret declarations cannot contain
+defaults, and `CANTELOP_*` names are reserved by the runtime.
+
 The canonical schema is owned by the Cantelop CLI/platform rather than copied
 into this package. The provider examples in this repository each include a
 complete manifest that points to that schema.
