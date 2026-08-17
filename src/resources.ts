@@ -23,7 +23,7 @@ export interface SessionCreateConfig {
 
 interface SessionOpenBaseConfig {
   readonly key: string;
-  readonly keepAliveSeconds?: number;
+  readonly keepAliveSeconds: number;
 }
 
 export type SessionOpenConfig = SessionOpenBaseConfig & (

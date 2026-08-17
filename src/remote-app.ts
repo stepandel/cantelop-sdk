@@ -76,8 +76,7 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
       }
       if (workspaceId !== undefined) assertWorkspaceID(workspaceId);
       if (workspace !== undefined) assertWorkspaceSlug(workspace);
-      const keepAliveSeconds = config.keepAliveSeconds ?? 0;
-      assertKeepAliveSeconds(keepAliveSeconds);
+      assertKeepAliveSeconds(config.keepAliveSeconds);
       const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/sessions/open", {
         method: "POST",
         body: {
@@ -85,7 +84,7 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
           ...(workspaceId !== undefined
             ? { workspace_id: workspaceId }
             : workspace !== undefined ? { workspace } : {}),
-          keep_alive_seconds: keepAliveSeconds,
+          keep_alive_seconds: config.keepAliveSeconds,
         },
       });
       if (

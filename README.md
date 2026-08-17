@@ -100,13 +100,14 @@ const session = await app.sessions.open({
 
 const defaultSession = await app.sessions.open({
   key: threadKey,
+  keepAliveSeconds: 3600,
 });
 ```
 
-Omitted `keepAliveSeconds` defaults to `0`, releasing the Sandbox after each
-execution while retaining the logical Session. Omitting both Workspace
-selectors uses the App's injected initial Workspace. Every string, including
-`"default"`, is an ordinary exact slug; no slug has platform-defined meaning.
+`keepAliveSeconds` is always required so Sandbox lifetime remains an explicit
+caller decision. Omitting both Workspace selectors uses the App's injected
+initial Workspace. Every string, including `"default"`, is an ordinary exact
+slug; no slug has platform-defined meaning.
 
 Opening the same key with different configuration conflicts. Termination is
 still final; use a new key when a distinct logical Session is required.

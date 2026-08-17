@@ -114,6 +114,7 @@ test("a Session treats default as a literal Workspace slug", async () => {
   const session = await app.sessions.open({
     workspace: "default",
     key: "thread",
+    keepAliveSeconds: 0,
   });
   assert.equal(session.id, sessionId);
   assert.deepEqual(await forwarded.json(), {
@@ -132,7 +133,7 @@ test("a Session uses the injected primary Workspace when its selector is omitted
     },
   });
 
-  const session = await app.sessions.open({ key: "thread" });
+  const session = await app.sessions.open({ key: "thread", keepAliveSeconds: 0 });
   assert.equal(session.id, sessionId);
   assert.deepEqual(await forwarded.json(), {
     key: "thread",
@@ -225,11 +226,17 @@ test("resource configuration is validated before transport", async () => {
     /Session key/,
   );
   await assert.rejects(
-    app.sessions.open({ key: "thread", workspace: "Bad Slug" }),
+    app.sessions.open({ key: "thread", workspace: "Bad Slug", keepAliveSeconds: 0 }),
     /Workspace slug/,
   );
   await assert.rejects(
-    app.sessions.open({ key: "thread", workspace: "production", workspaceId }),
+    app.sessions.open({ key: "thread" }),
+    /keepAliveSeconds/,
+  );
+  await assert.rejects(
+    app.sessions.open({
+      key: "thread", workspace: "production", workspaceId, keepAliveSeconds: 0,
+    }),
     /at most one Workspace/,
   );
   assert.throws(() => app.sessions.connect("sandbox-1"), /Session ID/);
