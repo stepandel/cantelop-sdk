@@ -6,7 +6,7 @@ Cantelop applications use the SDK from both their Edge API build and native
 harness image:
 
 ```sh
-pnpm add @cantelop/sdk@0.1.0-rc.12
+pnpm add @cantelop/sdk@0.1.0-rc.13
 ```
 
 The release candidate requires Node.js 22 or newer. Cantelop's CLI invokes the
@@ -129,6 +129,25 @@ await buildApi({
 It emits a bundled `worker.mjs`, source map, and `cantelop-api.json`
 manifest. Upload credentials and provider-specific deployment settings remain
 the responsibility of Cantelop's API-provider adapter.
+
+Cantelop's local runner uses `buildLocalApi()` to generate the same
+provider-neutral Worker with one development-only difference: SDK Workspace
+and Session requests are redirected to a numeric loopback bridge. The bridge
+origin must use plain HTTP on `127.0.0.1` or `[::1]`; public `fetch()` calls made
+by application code are unaffected.
+
+```ts
+import { buildLocalApi } from "@cantelop/sdk/build";
+
+await buildLocalApi({
+  entrypoint: "./src/api.ts",
+  outdir: "./dist/cantelop-local-api",
+  runtimeOrigin: "http://127.0.0.1:43123",
+});
+```
+
+Application projects normally use this through `cantelop dev` rather than
+calling it directly.
 
 ## Native harness
 

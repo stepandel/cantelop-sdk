@@ -20,6 +20,11 @@ export interface BuildApiOptions {
   readonly outdir: string;
 }
 
+export interface BuildLocalApiOptions extends BuildApiOptions {
+  /** Numeric loopback origin for the local Cantelop Session bridge. */
+  readonly runtimeOrigin: string;
+}
+
 export interface ApiArtifactManifest {
   readonly schema_version: 1;
   readonly kind: "cantelop-edge-api";
@@ -60,6 +65,25 @@ export interface HarnessArtifact {
  * remain outside the SDK.
  */
 export async function buildApi(options: BuildApiOptions): Promise<ApiArtifact> {
+  return buildApiArtifact(options);
+}
+
+/**
+ * Bundles a customer API definition for the local worker host. Calls to the
+ * platform-owned runtime hostname are redirected to a loopback Session bridge;
+ * customer API source and the production artifact remain unchanged.
+ */
+export async function buildLocalApi(
+  options: BuildLocalApiOptions,
+): Promise<ApiArtifact> {
+  const runtimeOrigin = localRuntimeOrigin(options.runtimeOrigin);
+  return buildApiArtifact(options, runtimeOrigin);
+}
+
+async function buildApiArtifact(
+  options: BuildApiOptions,
+  runtimeOrigin?: string,
+): Promise<ApiArtifact> {
   const entrypoint = path.resolve(options.entrypoint);
   const outdir = path.resolve(options.outdir);
   if (entrypoint === outdir || path.dirname(entrypoint) === outdir) {
@@ -73,7 +97,16 @@ export async function buildApi(options: BuildApiOptions): Promise<ApiArtifact> {
       contents: [
         `import definition from ${JSON.stringify(entrypoint)};`,
         `import { createApiWorker } from ${JSON.stringify(EDGE_ADAPTER_MODULE)};`,
-        "export default createApiWorker(definition);",
+        ...(runtimeOrigin === undefined ? [
+          "export default createApiWorker(definition);",
+        ] : [
+          `const runtimeOrigin = ${JSON.stringify(runtimeOrigin)};`,
+          "const runtimeFetch = (request) => {",
+          "  const source = new URL(request.url);",
+          "  return fetch(new Request(new URL(source.pathname + source.search, runtimeOrigin), request));",
+          "};",
+          "export default createApiWorker(definition, { fetch: runtimeFetch });",
+        ]),
       ].join("\n"),
       loader: "ts",
       resolveDir: path.dirname(entrypoint),
@@ -107,6 +140,28 @@ export async function buildApi(options: BuildApiOptions): Promise<ApiArtifact> {
     manifestFile,
     manifest: Object.freeze(manifest),
   });
+}
+
+function localRuntimeOrigin(value: string): string {
+  let origin: URL;
+  try {
+    origin = new URL(value);
+  } catch {
+    throw new TypeError("Local runtime origin must be a numeric HTTP loopback origin");
+  }
+  const numericLoopback = origin.hostname === "127.0.0.1" || origin.hostname === "[::1]";
+  if (
+    origin.protocol !== "http:" ||
+    !numericLoopback ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.pathname !== "/" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  ) {
+    throw new TypeError("Local runtime origin must be a numeric HTTP loopback origin");
+  }
+  return origin.origin;
 }
 
 /**
