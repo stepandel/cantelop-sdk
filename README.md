@@ -6,7 +6,7 @@ Cantelop applications use the SDK from both their Edge API build and native
 harness image:
 
 ```sh
-pnpm add @cantelop/sdk@0.1.0-rc.14
+pnpm add @cantelop/sdk@0.1.0-rc.15
 ```
 
 The release candidate requires Node.js 22 or newer. Cantelop's CLI invokes the
@@ -243,7 +243,7 @@ parity mode.
 CLI compatibility is explicit: `@cantelop/sdk/build` exports
 `CANTELOP_CLI_BUILD_PROTOCOL_VERSION` alongside the one-shot and watch build
 functions. Current CLIs require protocol version `1`, first packaged in
-`@cantelop/sdk@0.1.0-rc.14`. `cantelop doctor` reports older or incomplete
+`@cantelop/sdk@0.1.0-rc.15`. `cantelop doctor` reports older or incomplete
 project installations before a build is attempted.
 
 ## Native harness
