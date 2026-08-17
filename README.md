@@ -12,6 +12,38 @@ pnpm add @cantelop/sdk@0.1.0-rc.14
 The release candidate requires Node.js 22 or newer. Cantelop's CLI invokes the
 project-installed `@cantelop/sdk/build`; it does not carry a second SDK copy.
 
+## Initialize a project
+
+After creating an App, generate the deployment manifest from its slug:
+
+```sh
+cantelop init -app vera
+```
+
+This creates the minimal `cantelop.json` and refuses to overwrite an existing
+file:
+
+```json
+{
+  "$schema": "https://cantelop.dev/schemas/app-v1.json",
+  "app": "vera",
+  "api": "src/api.ts",
+  "harness": "src/harness.ts"
+}
+```
+
+The schema URL enables completion, validation, and field documentation in JSON
+Schema-aware editors. It also identifies the configuration format version, so
+there is no separate version field. `app` is the exact human-readable slug of
+an existing App; generated `app_...` IDs do not belong in project source. Use
+the command's `-config`, `-api`, and `-harness` flags for non-default paths. Add
+an expanded harness object with `context` and `dockerfile` only when native
+dependencies or system tools require a custom image.
+
+The canonical schema is owned by the Cantelop CLI/platform rather than copied
+into this package. The provider examples in this repository each include a
+complete manifest that points to that schema.
+
 A TypeScript SDK with separate surfaces for Edge API middleware and native
 harness execution.
 

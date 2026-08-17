@@ -1,0 +1,6 @@
+{
+  "$schema": "https://cantelop.dev/schemas/app-v1.json",
+  "app": "anthropic",
+  "api": "src/api.ts",
+  "harness": "src/harness.ts"
+}
