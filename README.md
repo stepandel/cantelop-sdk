@@ -202,7 +202,11 @@ await buildLocalApi({
 ```
 
 Application projects normally use this through `cantelop dev` rather than
-calling it directly.
+calling it directly. The CLI uses `watchLocalProject()` for native development;
+it keeps esbuild contexts for the API and harness alive, rebuilds only affected
+dependency graphs, and reports successful or failed component rebuilds through
+its callback. `cantelop dev --container` uses the one-shot builders for Docker
+parity mode.
 
 ## Native harness
 
