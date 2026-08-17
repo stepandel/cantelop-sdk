@@ -2,6 +2,10 @@ export interface WorkspaceCreateConfig {
   readonly slug: string;
 }
 
+export interface WorkspaceOpenConfig {
+  readonly slug: string;
+}
+
 export interface Workspace {
   readonly id: string;
   readonly appId: string;
@@ -17,9 +21,15 @@ export interface SessionCreateConfig {
   readonly keepAliveSeconds: number;
 }
 
-export interface SessionOpenConfig extends SessionCreateConfig {
+interface SessionOpenBaseConfig {
   readonly key: string;
+  readonly keepAliveSeconds?: number;
 }
+
+export type SessionOpenConfig = SessionOpenBaseConfig & (
+  | { readonly workspaceId: string; readonly workspace?: never }
+  | { readonly workspace: string; readonly workspaceId?: never }
+);
 
 export interface SessionExecuteOptions {
   readonly signal?: AbortSignal;
@@ -46,6 +56,7 @@ export interface Session<Input, Output> {
 
 export interface WorkspaceService {
   create(config: WorkspaceCreateConfig): Promise<Workspace>;
+  open(config: WorkspaceOpenConfig): Promise<Workspace>;
 }
 
 export interface SessionService<Input, Output> {

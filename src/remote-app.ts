@@ -8,6 +8,7 @@ import type {
   SessionOpenConfig,
   Workspace,
   WorkspaceCreateConfig,
+  WorkspaceOpenConfig,
 } from "./resources.js";
 
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
@@ -68,14 +69,21 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
 
     async open(config: SessionOpenConfig): Promise<Session<Input, Output>> {
       assertSessionKey(config.key);
-      assertWorkspaceID(config.workspaceId);
-      assertKeepAliveSeconds(config.keepAliveSeconds);
+      const workspaceId = "workspaceId" in config ? config.workspaceId : undefined;
+      const workspace = "workspace" in config ? config.workspace : undefined;
+      if ((typeof workspaceId === "string") === (typeof workspace === "string")) {
+        throw new TypeError("Session open requires exactly one Workspace ID or slug");
+      }
+      if (workspaceId !== undefined) assertWorkspaceID(workspaceId);
+      if (workspace !== undefined) assertWorkspaceSlug(workspace);
+      const keepAliveSeconds = config.keepAliveSeconds ?? 0;
+      assertKeepAliveSeconds(keepAliveSeconds);
       const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/sessions/open", {
         method: "POST",
         body: {
           key: config.key,
-          workspace_id: config.workspaceId,
-          keep_alive_seconds: config.keepAliveSeconds,
+          ...(workspaceId === undefined ? { workspace } : { workspace_id: workspaceId }),
+          keep_alive_seconds: keepAliveSeconds,
         },
       });
       if (
@@ -98,6 +106,15 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
     async create(config: WorkspaceCreateConfig): Promise<Workspace> {
       assertWorkspaceSlug(config.slug);
       const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/workspaces", {
+        method: "POST",
+        body: { slug: config.slug },
+      });
+      return readWorkspace(envelope);
+    },
+
+    async open(config: WorkspaceOpenConfig): Promise<Workspace> {
+      assertWorkspaceSlug(config.slug);
+      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/workspaces/open", {
         method: "POST",
         body: { slug: config.slug },
       });

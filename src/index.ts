@@ -22,6 +22,7 @@ export type {
   SessionService,
   Workspace,
   WorkspaceCreateConfig,
+  WorkspaceOpenConfig,
   WorkspaceService,
 } from "./api.js";
 export { RemoteAppError } from "./api.js";

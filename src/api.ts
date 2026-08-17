@@ -54,6 +54,7 @@ export type {
   SessionService,
   Workspace,
   WorkspaceCreateConfig,
+  WorkspaceOpenConfig,
   WorkspaceService,
 } from "./resources.js";
 export { RemoteAppError } from "./remote-app.js";

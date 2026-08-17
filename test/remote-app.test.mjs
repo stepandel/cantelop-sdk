@@ -30,6 +30,29 @@ test("the current App creates Workspaces without a caller-supplied App ID", asyn
   assert.equal(workspace.createdAt.toISOString(), "2026-08-14T12:00:00.000Z");
 });
 
+test("the current App opens an existing Workspace by slug", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    fetch: async (request) => {
+      forwarded = request;
+      return Response.json({
+        id: workspaceId,
+        app_id: "app_0123456789abcdef0123456789abcdef",
+        slug: "production",
+        hostname: "production--agent.app.cantelop.dev",
+        created_at: "2026-08-14T12:00:00Z",
+        updated_at: "2026-08-14T12:00:00Z",
+      });
+    },
+  });
+
+  const workspace = await app.workspaces.open({ slug: "production" });
+  assert.equal(workspace.id, workspaceId);
+  assert.equal(workspace.slug, "production");
+  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/workspaces/open");
+  assert.deepEqual(await forwarded.json(), { slug: "production" });
+});
+
 test("a Session is created with its Workspace and sole keep-alive setting", async () => {
   let forwarded;
   const app = createRemoteApp({
@@ -76,6 +99,27 @@ test("a Workspace-scoped key opens a platform-identified Session", async () => {
     key: "telegram",
     workspace_id: workspaceId,
     keep_alive_seconds: 300,
+  });
+});
+
+test("a Session opens by Workspace slug with zero keep-alive by default", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    fetch: async (request) => {
+      forwarded = request;
+      return Response.json({ id: sessionId });
+    },
+  });
+
+  const session = await app.sessions.open({
+    workspace: "default",
+    key: "thread",
+  });
+  assert.equal(session.id, sessionId);
+  assert.deepEqual(await forwarded.json(), {
+    key: "thread",
+    workspace: "default",
+    keep_alive_seconds: 0,
   });
 });
 
@@ -162,6 +206,14 @@ test("resource configuration is validated before transport", async () => {
   await assert.rejects(
     app.sessions.open({ key: "not a valid key", workspaceId, keepAliveSeconds: 300 }),
     /Session key/,
+  );
+  await assert.rejects(
+    app.sessions.open({ key: "thread", workspace: "Bad Slug" }),
+    /Workspace slug/,
+  );
+  await assert.rejects(
+    app.sessions.open({ key: "thread", workspace: "production", workspaceId }),
+    /exactly one Workspace/,
   );
   assert.throws(() => app.sessions.connect("sandbox-1"), /Session ID/);
 });
