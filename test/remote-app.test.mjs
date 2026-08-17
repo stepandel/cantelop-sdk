@@ -103,36 +103,36 @@ test("execution is a child operation of a Session", async () => {
 });
 
 test("asynchronous dispatch is durably accepted with a system execution identity", async () => {
-	let forwarded;
-	const app = createRemoteApp({
-		executionId: () => executionId,
-		fetch: async (request) => {
-			forwarded = request;
-			return Response.json({
-				id: executionId,
-				status: "queued",
-				accepted_at: "2026-08-17T12:00:00Z",
-			}, { status: 202 });
-		},
-	});
+  let forwarded;
+  const app = createRemoteApp({
+    executionId: () => executionId,
+    fetch: async (request) => {
+      forwarded = request;
+      return Response.json({
+        id: executionId,
+        status: "queued",
+        accepted_at: "2026-08-17T12:00:00Z",
+      }, { status: 202 });
+    },
+  });
 
-	const receipt = await app.executions.dispatch({
-		workspaceId,
-		sessionKey: "github:repository",
-		keepAliveSeconds: 300,
-		input: { event: "push" },
-	});
-	assert.equal(receipt.id, executionId);
-	assert.equal(receipt.status, "queued");
-	assert.equal(receipt.acceptedAt.toISOString(), "2026-08-17T12:00:00.000Z");
-	assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/executions");
-	assert.deepEqual(await forwarded.json(), {
-		id: executionId,
-		workspace_id: workspaceId,
-		session_key: "github:repository",
-		keep_alive_seconds: 300,
-		input: { event: "push" },
-	});
+  const receipt = await app.executions.dispatch({
+    workspaceId,
+    sessionKey: "github:repository",
+    keepAliveSeconds: 300,
+    input: { event: "push" },
+  });
+  assert.equal(receipt.id, executionId);
+  assert.equal(receipt.status, "queued");
+  assert.equal(receipt.acceptedAt.toISOString(), "2026-08-17T12:00:00.000Z");
+  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/executions");
+  assert.deepEqual(await forwarded.json(), {
+    id: executionId,
+    workspace_id: workspaceId,
+    session_key: "github:repository",
+    keep_alive_seconds: 300,
+    input: { event: "push" },
+  });
 });
 
 test("Session termination targets the logical Session", async () => {
