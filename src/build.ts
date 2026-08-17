@@ -21,6 +21,10 @@ const HARNESS_MANIFEST_FILE = "cantelop-harness.json";
 const EDGE_ADAPTER_MODULE = fileURLToPath(new URL("./edge.js", import.meta.url));
 const HARNESS_STARTUP_STATE_KEY = "dev.cantelop.sdk.harness-startup.v1";
 
+// The CLI checks this exact protocol before using the build module. Increment
+// it when an incompatible build/watch contract is introduced.
+export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 1;
+
 export interface BuildApiOptions {
   readonly entrypoint: string;
   readonly outdir: string;

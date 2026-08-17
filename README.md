@@ -208,6 +208,12 @@ dependency graphs, and reports successful or failed component rebuilds through
 its callback. `cantelop dev --container` uses the one-shot builders for Docker
 parity mode.
 
+CLI compatibility is explicit: `@cantelop/sdk/build` exports
+`CANTELOP_CLI_BUILD_PROTOCOL_VERSION` alongside the one-shot and watch build
+functions. Current CLIs require protocol version `1`, first packaged in
+`@cantelop/sdk@0.1.0-rc.14`. `cantelop doctor` reports older or incomplete
+project installations before a build is attempted.
+
 ## Native harness
 
 Use `@cantelop/sdk/harness` for the harness entrypoint that runs inside the

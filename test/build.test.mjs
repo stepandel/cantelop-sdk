@@ -4,11 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
   buildApi,
   buildHarness,
   buildLocalApi,
   watchLocalProject,
 } from "../dist/build.js";
+
+test("the build module declares its CLI compatibility protocol", () => {
+  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 1);
+  assert.equal(typeof buildLocalApi, "function");
+  assert.equal(typeof watchLocalProject, "function");
+});
 
 test("buildApi emits a self-contained standard Worker and manifest", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-build-"));
