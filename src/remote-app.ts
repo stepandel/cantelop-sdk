@@ -1,4 +1,6 @@
 import type {
+  AsyncExecutionDispatch,
+  AsyncExecutionReceipt,
   CantelopApp,
   Session,
   SessionCreateConfig,
@@ -103,7 +105,36 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
     },
   });
 
-  return Object.freeze({ sessions, workspaces });
+  const executions = Object.freeze({
+    async dispatch(config: AsyncExecutionDispatch<Input>): Promise<AsyncExecutionReceipt> {
+      assertWorkspaceID(config.workspaceId);
+      assertSessionKey(config.sessionKey);
+      assertKeepAliveSeconds(config.keepAliveSeconds);
+      const id = executionId();
+      assertExecutionID(id);
+      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/executions", {
+        method: "POST",
+        body: {
+          id,
+          workspace_id: config.workspaceId,
+          session_key: config.sessionKey,
+          keep_alive_seconds: config.keepAliveSeconds,
+          input: config.input,
+        },
+      });
+      if (!isRecord(envelope) || envelope.id !== id || envelope.status !== "queued" ||
+          typeof envelope.accepted_at !== "string") {
+        throw new RemoteAppError("invalid_execution_response", 0);
+      }
+      return Object.freeze({
+        id,
+        status: "queued" as const,
+        acceptedAt: readExecutionDate(envelope.accepted_at),
+      });
+    },
+  });
+
+  return Object.freeze({ executions, sessions, workspaces });
 }
 
 function createRemoteSession<Input, Output>(
@@ -225,6 +256,12 @@ function readDate(value: unknown): Date {
   if (typeof value !== "string") throw new RemoteAppError("invalid_workspace_response", 0);
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) throw new RemoteAppError("invalid_workspace_response", 0);
+  return date;
+}
+
+function readExecutionDate(value: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) throw new RemoteAppError("invalid_execution_response", 0);
   return date;
 }
 
