@@ -3,7 +3,12 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { buildApi, buildHarness, buildLocalApi } from "../dist/build.js";
+import {
+  buildApi,
+  buildHarness,
+  buildLocalApi,
+  watchLocalProject,
+} from "../dist/build.js";
 
 test("buildApi emits a self-contained standard Worker and manifest", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-build-"));
@@ -128,3 +133,43 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.match(source, /bun_entry/);
   assert.match(source, /module_evaluated/);
 });
+
+test("watchLocalProject incrementally rebuilds changed components", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-watch-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const apiEntrypoint = path.join(directory, "api.ts");
+  const harnessEntrypoint = path.join(directory, "harness.ts");
+  const apiOutdir = path.join(directory, "api-artifact");
+  const harnessOutdir = path.join(directory, "harness-artifact");
+  const sdkApi = new URL("../dist/api.js", import.meta.url).pathname;
+  await writeFile(
+    apiEntrypoint,
+    `import { defineApi } from ${JSON.stringify(sdkApi)}; export default defineApi(({ router }) => router.route("GET", "/", () => Response.json({ value: "one" })));`,
+  );
+  await writeFile(harnessEntrypoint, 'process.stdout.write("harness-one");\n');
+
+  const events = [];
+  const watcher = await watchLocalProject({
+    apiEntrypoint,
+    apiOutdir,
+    harnessEntrypoint,
+    harnessOutdir,
+    runtimeOrigin: "http://127.0.0.1:43123",
+    onBuild: (event) => events.push(event),
+  });
+  t.after(() => watcher.dispose());
+  assert.match(await readFile(path.join(apiOutdir, "worker.mjs"), "utf8"), /one/);
+  assert.match(await readFile(path.join(harnessOutdir, "harness.mjs"), "utf8"), /harness-one/);
+
+  await writeFile(harnessEntrypoint, 'process.stdout.write("harness-two");\n');
+  await waitFor(() => events.some((event) => event.component === "harness"));
+  assert.match(await readFile(path.join(harnessOutdir, "harness.mjs"), "utf8"), /harness-two/);
+});
+
+async function waitFor(predicate) {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for incremental build");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}

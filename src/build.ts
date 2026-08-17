@@ -4,7 +4,13 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { build } from "esbuild";
+import {
+  build,
+  context as createBuildContext,
+  type BuildContext,
+  type BuildOptions,
+  type Plugin,
+} from "esbuild";
 
 const MANIFEST_SCHEMA_VERSION = 1;
 const EXECUTION_PROTOCOL_VERSION = 2;
@@ -59,6 +65,26 @@ export interface HarnessArtifact {
   readonly manifest: HarnessArtifactManifest;
 }
 
+export type LocalBuildComponent = "api" | "harness";
+
+export interface LocalBuildEvent {
+  readonly component: LocalBuildComponent;
+  readonly error?: string;
+}
+
+export interface WatchLocalProjectOptions {
+  readonly apiEntrypoint: string;
+  readonly apiOutdir: string;
+  readonly harnessEntrypoint: string;
+  readonly harnessOutdir: string;
+  readonly runtimeOrigin: string;
+  readonly onBuild: (event: LocalBuildEvent) => void;
+}
+
+export interface LocalProjectWatcher {
+  dispose(): Promise<void>;
+}
+
 /**
  * Bundles a customer API definition into a standard module Worker artifact.
  * Deployment credentials and provider-specific upload metadata deliberately
@@ -92,7 +118,25 @@ async function buildApiArtifact(
   await mkdir(outdir, { recursive: true });
 
   const mainModule = path.join(outdir, MAIN_MODULE);
-  await build({
+  await build(apiBuildOptions(entrypoint, mainModule, runtimeOrigin));
+
+  const manifest = await writeApiManifest(outdir);
+  const manifestFile = path.join(outdir, MANIFEST_FILE);
+
+  return Object.freeze({
+    directory: outdir,
+    mainModule,
+    manifestFile,
+    manifest: Object.freeze(manifest),
+  });
+}
+
+function apiBuildOptions(
+  entrypoint: string,
+  mainModule: string,
+  runtimeOrigin?: string,
+): BuildOptions {
+  return {
     stdin: {
       contents: [
         `import definition from ${JSON.stringify(entrypoint)};`,
@@ -120,8 +164,10 @@ async function buildApiArtifact(
     sourcemap: "external",
     legalComments: "none",
     logLevel: "silent",
-  });
+  };
+}
 
+async function writeApiManifest(outdir: string): Promise<ApiArtifactManifest> {
   const manifest: ApiArtifactManifest = {
     schema_version: MANIFEST_SCHEMA_VERSION,
     kind: "cantelop-edge-api",
@@ -133,13 +179,7 @@ async function buildApiArtifact(
     encoding: "utf8",
     mode: 0o644,
   });
-
-  return Object.freeze({
-    directory: outdir,
-    mainModule,
-    manifestFile,
-    manifest: Object.freeze(manifest),
-  });
+  return manifest;
 }
 
 function localRuntimeOrigin(value: string): string {
@@ -182,7 +222,21 @@ export async function buildHarness(
   await mkdir(outdir, { recursive: true });
 
   const mainModule = path.join(outdir, HARNESS_MAIN_MODULE);
-  await build({
+  await build(harnessBuildOptions(entrypoint, mainModule));
+
+  const manifest = await writeHarnessManifest(outdir, mainModule);
+  const manifestFile = path.join(outdir, HARNESS_MANIFEST_FILE);
+
+  return Object.freeze({
+    directory: outdir,
+    mainModule,
+    manifestFile,
+    manifest: Object.freeze(manifest),
+  });
+}
+
+function harnessBuildOptions(entrypoint: string, mainModule: string): BuildOptions {
+  return {
     stdin: {
       contents: [
         `const key = Symbol.for(${JSON.stringify(HARNESS_STARTUP_STATE_KEY)});`,
@@ -212,8 +266,13 @@ export async function buildHarness(
     sourcemap: false,
     legalComments: "none",
     logLevel: "silent",
-  });
+  };
+}
 
+async function writeHarnessManifest(
+  outdir: string,
+  mainModule: string,
+): Promise<HarnessArtifactManifest> {
   const bundledBytes = (await stat(mainModule)).size;
   const manifest: HarnessArtifactManifest = {
     schema_version: MANIFEST_SCHEMA_VERSION,
@@ -227,11 +286,106 @@ export async function buildHarness(
     encoding: "utf8",
     mode: 0o644,
   });
+  return manifest;
+}
 
+export async function watchLocalProject(
+  options: WatchLocalProjectOptions,
+): Promise<LocalProjectWatcher> {
+  const runtimeOrigin = localRuntimeOrigin(options.runtimeOrigin);
+  const apiEntrypoint = path.resolve(options.apiEntrypoint);
+  const apiOutdir = path.resolve(options.apiOutdir);
+  const harnessEntrypoint = path.resolve(options.harnessEntrypoint);
+  const harnessOutdir = path.resolve(options.harnessOutdir);
+  await Promise.all([
+    mkdir(apiOutdir, { recursive: true }),
+    mkdir(harnessOutdir, { recursive: true }),
+  ]);
+
+  const contexts: BuildContext[] = [];
+  try {
+    contexts.push(
+      await watchedContext(
+        "api",
+        apiBuildOptions(
+          apiEntrypoint,
+          path.join(apiOutdir, MAIN_MODULE),
+          runtimeOrigin,
+        ),
+        () => writeApiManifest(apiOutdir),
+        options.onBuild,
+      ),
+    );
+    contexts.push(
+      await watchedContext(
+        "harness",
+        harnessBuildOptions(
+          harnessEntrypoint,
+          path.join(harnessOutdir, HARNESS_MAIN_MODULE),
+        ),
+        () => writeHarnessManifest(
+          harnessOutdir,
+          path.join(harnessOutdir, HARNESS_MAIN_MODULE),
+        ),
+        options.onBuild,
+      ),
+    );
+  } catch (error) {
+    await Promise.all(contexts.map((buildContext) => buildContext.dispose()));
+    throw error;
+  }
   return Object.freeze({
-    directory: outdir,
-    mainModule,
-    manifestFile,
-    manifest: Object.freeze(manifest),
+    async dispose() {
+      await Promise.all(contexts.map((buildContext) => buildContext.dispose()));
+    },
   });
+}
+
+async function watchedContext(
+  component: LocalBuildComponent,
+  options: BuildOptions,
+  finalize: () => Promise<unknown>,
+  onBuild: (event: LocalBuildEvent) => void,
+): Promise<BuildContext> {
+  let initial = true;
+  let resolveInitial!: () => void;
+  let rejectInitial!: (error: Error) => void;
+  const initialBuild = new Promise<void>((resolve, reject) => {
+    resolveInitial = resolve;
+    rejectInitial = reject;
+  });
+  const plugin: Plugin = {
+    name: `cantelop-local-${component}-watch`,
+    setup(build) {
+      build.onEnd(async (result) => {
+        let error = result.errors.map((value) => value.text).join("\n");
+        if (error === "") {
+          try {
+            await finalize();
+          } catch (failure) {
+            error = failure instanceof Error ? failure.message : String(failure);
+          }
+        }
+        if (initial) {
+          initial = false;
+          if (error === "") resolveInitial();
+          else rejectInitial(new Error(error));
+          return;
+        }
+        onBuild(Object.freeze({ component, ...(error === "" ? {} : { error }) }));
+      });
+    },
+  };
+  const buildContext = await createBuildContext({
+    ...options,
+    plugins: [...(options.plugins ?? []), plugin],
+  });
+  await buildContext.watch();
+  try {
+    await initialBuild;
+  } catch (error) {
+    await buildContext.dispose();
+    throw error;
+  }
+  return buildContext;
 }
