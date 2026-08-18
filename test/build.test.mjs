@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -143,6 +145,57 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.match(source, /listener_ready/);
 });
 
+test("a built harness serves executions on the local development port", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-harness-runtime-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const entrypoint = path.join(directory, "harness.ts");
+  const outdir = path.join(directory, "artifact");
+  const sdkHarness = new URL("../dist/harness.js", import.meta.url).pathname;
+  await writeFile(
+    entrypoint,
+    [
+      `import { defineHarness } from ${JSON.stringify(sdkHarness)};`,
+      "export default defineHarness(async ({ input, env }) => ({",
+      "  answer: String(input.prompt).toUpperCase(),",
+      "  model: env.MODEL,",
+      "}));",
+    ].join("\n"),
+  );
+
+  const artifact = await buildHarness({ entrypoint, outdir });
+  const port = await reservePort();
+  const child = spawn(process.execPath, [artifact.mainModule], {
+    env: {
+      ...process.env,
+      CANTELOP_INTERNAL_PORT: String(port),
+      MODEL: "test-model",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let childError = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    childError = (childError + chunk).slice(-16_384);
+  });
+  t.after(async () => stopChild(child));
+
+  const executionId = "exec_0123456789abcdef0123456789abcdef";
+  const response = await waitForHarness(
+    `http://127.0.0.1:${port}/__cantelop/v1/executions/${executionId}`,
+    child,
+    () => childError,
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get("X-Cantelop-SDK-Execution-Complete"),
+    executionId,
+  );
+  assert.deepEqual(await response.json(), {
+    output: { answer: "HELLO", model: "test-model" },
+  });
+});
+
 test("watchLocalProject incrementally rebuilds changed components", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-watch-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -181,4 +234,48 @@ async function waitFor(predicate) {
     if (Date.now() >= deadline) throw new Error("timed out waiting for incremental build");
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+}
+
+async function reservePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  await new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+  return address.port;
+}
+
+async function waitForHarness(url, child, childError) {
+  const deadline = Date.now() + 5_000;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      return await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: { prompt: "hello" } }),
+      });
+    } catch (error) {
+      lastError = error;
+      if (child.exitCode !== null) {
+        throw new Error(
+          `built harness exited with ${child.exitCode} before listening: ${childError()}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw lastError ?? new Error("built harness did not begin listening");
+}
+
+async function stopChild(child) {
+  if (child.exitCode !== null) return;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill("SIGTERM");
+  await exited;
 }
