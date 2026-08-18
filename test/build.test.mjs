@@ -117,8 +117,8 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
     entrypoint,
     [
       'import { greeting } from "./dependency.ts";',
-      'import { createServer } from "node:http";',
-      'createServer((_request, response) => response.end(greeting));',
+      `import { defineHarness } from ${JSON.stringify(new URL("../dist/harness.js", import.meta.url).pathname)};`,
+      'export default defineHarness(async () => ({ greeting }));',
     ].join("\n"),
   );
 
@@ -139,6 +139,8 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.match(source, /harness_startup_stage/);
   assert.match(source, /bun_entry/);
   assert.match(source, /module_evaluated/);
+  assert.match(source, /X-Cantelop-SDK-Execution-Complete/);
+  assert.match(source, /listener_ready/);
 });
 
 test("watchLocalProject incrementally rebuilds changed components", async (t) => {
@@ -153,7 +155,7 @@ test("watchLocalProject incrementally rebuilds changed components", async (t) =>
     apiEntrypoint,
     `import { defineApi } from ${JSON.stringify(sdkApi)}; export default defineApi(({ router }) => router.route("GET", "/", () => Response.json({ value: "one" })));`,
   );
-  await writeFile(harnessEntrypoint, 'process.stdout.write("harness-one");\n');
+  await writeFile(harnessEntrypoint, 'export default async () => "harness-one";\n');
 
   const events = [];
   const watcher = await watchLocalProject({
@@ -168,7 +170,7 @@ test("watchLocalProject incrementally rebuilds changed components", async (t) =>
   assert.match(await readFile(path.join(apiOutdir, "worker.mjs"), "utf8"), /one/);
   assert.match(await readFile(path.join(harnessOutdir, "harness.mjs"), "utf8"), /harness-one/);
 
-  await writeFile(harnessEntrypoint, 'process.stdout.write("harness-two");\n');
+  await writeFile(harnessEntrypoint, 'export default async () => "harness-two";\n');
   await waitFor(() => events.some((event) => event.component === "harness"));
   assert.match(await readFile(path.join(harnessOutdir, "harness.mjs"), "utf8"), /harness-two/);
 });

@@ -19,6 +19,7 @@ const MANIFEST_FILE = "cantelop-api.json";
 const HARNESS_MAIN_MODULE = "harness.mjs";
 const HARNESS_MANIFEST_FILE = "cantelop-harness.json";
 const EDGE_ADAPTER_MODULE = fileURLToPath(new URL("./edge.js", import.meta.url));
+const HARNESS_ADAPTER_MODULE = fileURLToPath(new URL("./harness.js", import.meta.url));
 const HARNESS_STARTUP_STATE_KEY = "dev.cantelop.sdk.harness-startup.v1";
 
 // The CLI checks this exact protocol before using the build module. Increment
@@ -253,8 +254,11 @@ function harnessBuildOptions(entrypoint: string, mainModule: string): BuildOptio
         "  process.stderr.write(`${JSON.stringify({ component: \"cantelop.sdk\", event: \"harness_startup_stage\", stage, elapsed_us: Number((now - state.started) / 1000n) })}\\n`);",
         "};",
         "mark(\"bun_entry\");",
-        `await import(${JSON.stringify(entrypoint)});`,
+        `const { serveHarness } = await import(${JSON.stringify(HARNESS_ADAPTER_MODULE)});`,
+        `const { default: definition } = await import(${JSON.stringify(entrypoint)});`,
         "mark(\"module_evaluated\");",
+        "const harness = serveHarness(definition);",
+        "await harness.ready;",
       ].join("\n"),
       loader: "ts",
       resolveDir: path.dirname(entrypoint),
