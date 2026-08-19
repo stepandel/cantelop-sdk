@@ -1,8 +1,7 @@
 # SDK release boundary
 
-The repository prepares a release candidate without publishing it. The npm
-registry is a production distribution boundary and requires a separate,
-reviewed operation.
+The repository prepares a release without publishing it. The npm registry is a
+production distribution boundary and requires a separate, reviewed operation.
 
 ## Pre-production qualification
 
@@ -33,9 +32,9 @@ The source repository is `stepandel/cantelop-sdk`. Its manual
 only the exact version already present in `package.json`. Prerelease versions
 publish under the `next` dist-tag; stable versions publish under `latest`.
 
-The repository is currently private, so trusted publishing provides OIDC
-authentication but npm will not generate public provenance. After transferring
-the repository, update `package.json`, the local Git remote, and npm's trusted
+The public repository uses npm trusted publishing, so published packages include
+provenance linking them to this workflow and source repository. If the repository
+is transferred, update `package.json`, the local Git remote, and npm's trusted
 publisher owner before the next release.
 
 The workflow never runs automatically. An operator must select it manually,
