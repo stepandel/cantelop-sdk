@@ -19,7 +19,8 @@ Each manifest targets an illustrative App slug. Create that App or change its
 `app` value before running `cantelop deploy`; generated App IDs are never stored
 in the example source.
 
-Run all API and harness type checks from the repository root:
+Run all API and harness type checks plus deployment bundle smoke checks from
+the repository root:
 
 ```bash
 pnpm check:examples

@@ -25,7 +25,7 @@ file:
 
 ```json
 {
-  "$schema": "https://cantelop.dev/schemas/app-v1.json",
+  "$schema": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
   "app": "vera",
   "api": "src/api.ts",
   "harness": "src/harness.ts"
@@ -56,9 +56,10 @@ production App. `cantelop doctor` verifies every entry marked `required`
 against that App's redacted configuration. Secret declarations cannot contain
 defaults, and `CANTELOP_*` names are reserved by the runtime.
 
-The canonical schema is owned by the Cantelop CLI/platform rather than copied
-into this package. The provider examples in this repository each include a
-complete manifest that points to that schema.
+The canonical schema is owned by the Cantelop CLI/platform. This public
+repository mirrors it at `schemas/app-v1.json` so JSON Schema-aware editors can
+load it without platform credentials. The provider examples each include a
+complete manifest that points to that public mirror.
 
 A TypeScript SDK with separate surfaces for Edge API middleware and native
 harness execution.

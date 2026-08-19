@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
+  "title": "Cantelop App",
+  "description": "Build and deployment configuration for one Cantelop App.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["app", "api", "harness"],
+  "properties": {
+    "$schema": {
+      "const": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
+      "description": "Enables editor completion and validation for this manifest."
+    },
+    "app": {
+      "$ref": "#/$defs/appSlug"
+    },
+    "api": {
+      "$ref": "#/$defs/api"
+    },
+    "harness": {
+      "$ref": "#/$defs/harness"
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    }
+  },
+  "$defs": {
+    "appSlug": {
+      "type": "string",
+      "description": "Slug of the existing App that build and deploy commands target.",
+      "pattern": "^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+      "examples": ["vera"]
+    },
+    "projectFile": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path relative to cantelop.json. It must stay inside the project and name a regular file."
+    },
+    "projectDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Directory relative to cantelop.json. It must stay inside the project and cannot be a symbolic link."
+    },
+    "api": {
+      "description": "Edge API entrypoint, as a path or an expanded configuration object.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/projectFile"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entrypoint"],
+          "properties": {
+            "entrypoint": {
+              "$ref": "#/$defs/projectFile"
+            }
+          }
+        }
+      ]
+    },
+    "harness": {
+      "description": "Harness entrypoint, as a path or an expanded configuration object for native system dependencies.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/projectFile"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entrypoint"],
+          "properties": {
+            "entrypoint": {
+              "$ref": "#/$defs/projectFile"
+            },
+            "context": {
+              "$ref": "#/$defs/projectDirectory",
+              "default": "."
+            },
+            "dockerfile": {
+              "$ref": "#/$defs/projectFile",
+              "description": "Optional Dockerfile used only when the harness needs native dependencies or system tools."
+            }
+          }
+        }
+      ]
+    },
+    "environmentName": {
+      "type": "string",
+      "pattern": "^(?!CANTELOP_)[A-Za-z_][A-Za-z0-9_]{0,127}$"
+    },
+    "environment": {
+      "type": "object",
+      "description": "Named App configuration declarations. Values stay outside source control except for non-secret development defaults.",
+      "propertyNames": {
+        "$ref": "#/$defs/environmentName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/environmentDeclaration"
+      }
+    },
+    "environmentDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string",
+          "description": "Non-secret fallback used by local development when .env does not override it."
+        },
+        "secret": {
+          "type": "boolean",
+          "default": false,
+          "description": "Marks the value as secret and redacted. Secret declarations cannot have defaults."
+        },
+        "required": {
+          "type": "boolean",
+          "default": false,
+          "description": "Makes doctor fail when the App does not have this variable or secret configured."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"secret": {"const": true}},
+            "required": ["secret"]
+          },
+          "then": {
+            "not": {"required": ["default"]}
+          }
+        }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "$schema": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
+      "app": "vera",
+      "api": "src/api.ts",
+      "harness": "src/harness.ts"
+    },
+    {
+      "$schema": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
+      "app": "vera",
+      "api": "src/api.ts",
+      "harness": "src/harness.ts",
+      "environment": {
+        "OPENAI_MODEL": {"default": "gpt-4.1-mini"},
+        "OPENAI_API_KEY": {"secret": true, "required": true}
+      }
+    }
+  ]
+}

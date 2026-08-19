@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { buildApi, buildHarness } from "../dist/build.js";
+
+const repositoryRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
+const schemaUrl =
+  "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json";
+const examples = ["openai", "anthropic", "pi"];
+const temporaryRoot = await mkdtemp(
+  path.join(os.tmpdir(), "cantelop-example-check-"),
+);
+
+try {
+  const schema = JSON.parse(
+    await readFile(path.join(repositoryRoot, "schemas/app-v1.json"), "utf8"),
+  );
+  assert.equal(schema.$id, schemaUrl);
+
+  for (const example of examples) {
+    const exampleRoot = path.join(repositoryRoot, "examples", example);
+    const manifest = JSON.parse(
+      await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"),
+    );
+    assert.equal(manifest.$schema, schemaUrl);
+
+    await buildApi({
+      entrypoint: path.join(exampleRoot, "src/api.ts"),
+      outdir: path.join(temporaryRoot, example, "api"),
+    });
+    await buildHarness({
+      entrypoint: path.join(exampleRoot, "src/harness.ts"),
+      outdir: path.join(temporaryRoot, example, "harness"),
+    });
+  }
+} finally {
+  await rm(temporaryRoot, { recursive: true, force: true });
+}

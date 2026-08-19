@@ -1,5 +1,5 @@
 {
-  "$schema": "https://cantelop.dev/schemas/app-v1.json",
+  "$schema": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
   "app": "pi",
   "api": "src/api.ts",
   "harness": "src/harness.ts"
