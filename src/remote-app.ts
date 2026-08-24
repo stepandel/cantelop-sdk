@@ -101,7 +101,6 @@ function createRemoteSession<Input, Output>(
           method: "POST",
           body: {
             id,
-            operation: "execute",
             session: sessionEnvelope(this.id, config),
             input,
           },
@@ -121,22 +120,6 @@ function createRemoteSession<Input, Output>(
         method: "POST",
         body: {
           id: execution,
-          operation: "execute",
-          session: sessionEnvelope(this.id, config),
-          input,
-        },
-      });
-      return readExecutionReceipt(envelope, execution);
-    },
-
-    async steer(input: Input): Promise<ExecutionReceipt> {
-      const execution = executionId();
-      assertExecutionID(execution);
-      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/executions", {
-        method: "POST",
-        body: {
-          id: execution,
-          operation: "steer",
           session: sessionEnvelope(this.id, config),
           input,
         },

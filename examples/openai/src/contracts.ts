@@ -1,4 +1,5 @@
 export interface PromptInput {
+  type: "message" | "steer";
   prompt: string;
 }
 

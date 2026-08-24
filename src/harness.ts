@@ -11,12 +11,9 @@ export type HarnessEnvironment = Readonly<
   Record<string, string | undefined>
 >;
 
-export type HarnessExecutionKind = "execute" | "steer";
-
 export interface HarnessContext<Input, Event = never> {
   readonly execution: Readonly<{
     id: string;
-    kind: HarnessExecutionKind;
   }>;
   readonly session: Session;
   readonly input: Input;
@@ -29,7 +26,6 @@ export type HarnessRuntime<Input, Output, Event = never> =
   | ((context: HarnessContext<Input, Event>) => Awaitable<Output>)
   | {
       run(context: HarnessContext<Input, Event>): Awaitable<Output>;
-      steer?(context: HarnessContext<Input, Event>): Awaitable<Output>;
     };
 
 export interface HarnessExecutorOptions {
@@ -38,7 +34,6 @@ export interface HarnessExecutorOptions {
 
 export interface StartHarnessExecutionOptions extends StartExecutionOptions {
   readonly session: Session;
-  readonly kind?: HarnessExecutionKind;
 }
 
 export interface HarnessExecution<Output, Event = never>
@@ -64,12 +59,6 @@ function invoke<Input, Output, Event>(
   context: HarnessContext<Input, Event>,
 ): Awaitable<Output> {
   if (typeof runtime === "function") return runtime(context);
-  if (context.execution.kind === "steer") {
-    if (runtime.steer === undefined) {
-      throw new Error("Harness does not support steering");
-    }
-    return runtime.steer(context);
-  }
   return runtime.run(context);
 }
 
@@ -219,7 +208,6 @@ export function createHarnessExecutor<
           const output = await invoke(runtime, Object.freeze({
             execution: Object.freeze({
               id,
-              kind: startOptions.kind ?? "execute",
             }),
             session: Object.freeze({ ...startOptions.session }),
             input,

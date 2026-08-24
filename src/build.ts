@@ -13,7 +13,7 @@ import {
 } from "esbuild";
 
 const MANIFEST_SCHEMA_VERSION = 1;
-const EXECUTION_PROTOCOL_VERSION = 3;
+const EXECUTION_PROTOCOL_VERSION = 4;
 const MAIN_MODULE = "worker.mjs";
 const MANIFEST_FILE = "cantelop-api.json";
 const HARNESS_MAIN_MODULE = "harness.mjs";
@@ -40,7 +40,7 @@ export interface ApiArtifactManifest {
   readonly schema_version: 1;
   readonly kind: "cantelop-edge-api";
   readonly main_module: "worker.mjs";
-  readonly execution_protocol_version: 3;
+  readonly execution_protocol_version: 4;
 }
 
 export interface ApiArtifact {
@@ -59,7 +59,7 @@ export interface HarnessArtifactManifest {
   readonly schema_version: 1;
   readonly kind: "cantelop-native-harness";
   readonly main_module: "harness.mjs";
-  readonly execution_protocol_version: 3;
+  readonly execution_protocol_version: 4;
   readonly bundled_bytes: number;
 }
 

@@ -30,7 +30,6 @@ test("a router handles Web requests and can close over the current App", async (
             keepAliveSeconds: config.keepAliveSeconds,
             execute: async (input) => input.toUpperCase(),
             dispatch: async () => { throw new Error("not used"); },
-            steer: async () => { throw new Error("not used"); },
             terminate: async () => undefined,
           };
         },

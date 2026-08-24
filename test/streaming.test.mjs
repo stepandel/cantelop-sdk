@@ -6,7 +6,7 @@ test("a native harness receives VM environment and emits events", async () => {
   const executor = createHarnessExecutor(
     async ({ input, env, session, execution: contextExecution, emit }) => {
       assert.equal(session.id, "thread");
-      assert.equal(contextExecution.kind, "execute");
+      assert.equal(typeof contextExecution.id, "string");
       emit({ type: "delta", value: input.slice(0, 2) });
       emit({ type: "delta", value: input.slice(2) });
       return `${env.PREFIX}${input.toUpperCase()}`;

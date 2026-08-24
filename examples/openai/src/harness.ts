@@ -47,14 +47,6 @@ async function runTurn(
   return output;
 }
 
-async function steerTurn(
-  context: HarnessContext<PromptInput, RuntimeEvent>,
-): Promise<AnswerOutput> {
-  // The Agents SDK models a steer as another turn in the same MemorySession.
-  return runTurn(context);
-}
-
-export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>({
-  run: runTurn,
-  steer: steerTurn,
-});
+// Input meaning is application-owned. Both messages and steer requests become
+// turns in the same MemorySession here; another agent can queue or interrupt.
+export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>({ run: runTurn });

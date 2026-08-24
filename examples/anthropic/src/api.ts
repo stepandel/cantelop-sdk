@@ -25,7 +25,7 @@ export default defineApi<PromptInput, AnswerOutput>(
         workspaceId: input.workspaceId,
         keepAliveSeconds: input.keepAliveSeconds,
       });
-      const receipt = await session.dispatch({ prompt: input.prompt });
+      const receipt = await session.dispatch({ type: "message", prompt: input.prompt });
       return Response.json({ sessionId: session.id, receipt }, { status: 202 });
     });
 
@@ -42,7 +42,7 @@ export default defineApi<PromptInput, AnswerOutput>(
         workspaceId: input.workspaceId,
         keepAliveSeconds: input.keepAliveSeconds,
       });
-      const receipt = await session.steer({ prompt: input.prompt });
+      const receipt = await session.dispatch({ type: "steer", prompt: input.prompt });
       return Response.json({ sessionId: session.id, receipt }, { status: 202 });
     });
   },

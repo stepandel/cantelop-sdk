@@ -46,6 +46,17 @@ async function runTurn(
   const { input, signal, emit } = context;
   const agent = sessionAgent(context);
 
+  if (input.type === "steer") {
+    agent.steer({
+      role: "user",
+      content: input.prompt,
+      timestamp: Date.now(),
+    });
+    const output = { answer: "Steering accepted" };
+    emit({ type: "done", output });
+    return output;
+  }
+
   let answer = "";
   const unsubscribe = agent.subscribe((event) => {
     if (
@@ -71,21 +82,4 @@ async function runTurn(
   }
 }
 
-async function steerTurn(
-  context: HarnessContext<PromptInput, RuntimeEvent>,
-): Promise<AnswerOutput> {
-  const agent = sessionAgent(context);
-  agent.steer({
-    role: "user",
-    content: context.input.prompt,
-    timestamp: Date.now(),
-  });
-  const output = { answer: "Steering accepted" };
-  context.emit({ type: "done", output });
-  return output;
-}
-
-export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>({
-  run: runTurn,
-  steer: steerTurn,
-});
+export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>({ run: runTurn });

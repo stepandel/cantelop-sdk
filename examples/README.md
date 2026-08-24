@@ -14,8 +14,9 @@ incremental events remain confined to the harness entrypoint. Cantelop injects
 the current App into each API definition. Every API exposes exactly three
 routes: `GET /health`, `POST /chat`, and `POST /steer`. Chat creates or reuses a
 Session from an optional ID; steer requires an existing Session ID. Both
-execution routes dispatch asynchronously and return a durable receipt with
-status `202`. The canonical Session is propagated into the native harness:
+routes encode their intent in application input, call the same asynchronous
+`dispatch()` method, and return a durable receipt with status `202`. The
+protocol does not define steering. The canonical Session is propagated into the native harness:
 OpenAI reuses an in-memory conversation store, Anthropic resumes its provider
 session, and Pi retains its stateful Agent and native steering queue for the
 warm Sandbox lifetime. Direct client streaming is configured at the VM.

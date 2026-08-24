@@ -109,9 +109,9 @@ export default defineApi<Input, Output>(({ app, router }) => {
 ```
 
 Every execution belongs to a Session. `app.sessions.open()` creates a local
-Session handle without making a request. The first `execute()`, `dispatch()`,
-or `steer()` atomically creates the logical Session if its ID does not exist and
-starts the operation; otherwise it resumes that Session. Omitting `id`
+Session handle without making a request. The first `execute()` or `dispatch()`
+atomically creates the logical Session if its ID does not exist and starts the
+request; otherwise it resumes that Session. Omitting `id`
 generates one in the SDK, which is immediately available as `session.id`.
 
 `Session` is the canonical read-only identity and configuration shared with the
@@ -149,7 +149,7 @@ const workspace = await app.workspaces.open({ slug: "production" });
 so its Workspace and Sandbox lifetime remain explicit caller decisions.
 
 The Session ID is immutable and App-scoped. Its Workspace is fixed when the
-first execution creates it, while `keepAliveSeconds` applies to each operation.
+first execution creates it, while `keepAliveSeconds` applies to each request.
 Opening an existing ID against a different Workspace conflicts. Termination is
 still final; use a new ID for a distinct logical Session.
 
@@ -286,10 +286,14 @@ secrets to the harness VM and Edge API.
 
 Every harness invocation receives the same canonical Session snapshot exposed
 by its Edge `SessionHandle`: `session.id`, `session.workspaceId`, and the
-operation's `session.keepAliveSeconds`. `execution.id` is the distinct retry
-identity, while `execution.kind` is either `"execute"` or `"steer"`. These
-objects are frozen and constructed by the trusted runtime rather than copied
-from an application request.
+request's `session.keepAliveSeconds`. `execution.id` is the distinct retry
+identity. These objects are frozen and constructed by the trusted runtime
+rather than copied from an application request.
+
+The execution protocol carries only the Session and the developer-defined
+input. It does not assign meaning such as run, steer, queue, or cancel. A
+harness can use an input discriminator and its retained Agent instance to
+interpret each request, including while an earlier request is still running.
 
 The canonical Session lets a harness key provider state consistently, but it
 does not serialize arbitrary in-memory objects. Module-level agents,

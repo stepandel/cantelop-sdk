@@ -80,7 +80,6 @@ test("opening a named Session is lazy and execution atomically opens it", async 
     `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}/executions`);
   assert.deepEqual(await forwarded[0].json(), {
     id: executionId,
-    operation: "execute",
     session: {
       id: namedSessionId,
       workspace_id: workspaceId,
@@ -129,46 +128,12 @@ test("a Session dispatches asynchronously with the same identity and configurati
   assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/executions");
   assert.deepEqual(await forwarded.json(), {
     id: executionId,
-    operation: "execute",
     session: {
       id: namedSessionId,
       workspace_id: workspaceId,
       keep_alive_seconds: 300,
     },
     input: { event: "push" },
-  });
-});
-
-test("a Session steers asynchronously through a distinct operation", async () => {
-  let forwarded;
-  const app = createRemoteApp({
-    executionId: () => executionId,
-    fetch: async (request) => {
-      forwarded = request;
-      return Response.json({
-        id: executionId,
-        status: "queued",
-        accepted_at: "2026-08-17T12:00:00Z",
-      }, { status: 202 });
-    },
-  });
-
-  const receipt = await app.sessions.open({
-    id: namedSessionId,
-    workspaceId,
-    keepAliveSeconds: 60,
-  }).steer({ prompt: "focus on tests" });
-  assert.equal(receipt.id, executionId);
-  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/executions");
-  assert.deepEqual(await forwarded.json(), {
-    id: executionId,
-    operation: "steer",
-    session: {
-      id: namedSessionId,
-      workspace_id: workspaceId,
-      keep_alive_seconds: 60,
-    },
-    input: { prompt: "focus on tests" },
   });
 });
 

@@ -43,7 +43,6 @@ export interface Session {
 export interface SessionHandle<Input, Output> extends Session {
   execute(input: Input, options?: SessionExecuteOptions): Promise<Output>;
   dispatch(input: Input): Promise<ExecutionReceipt>;
-  steer(input: Input): Promise<ExecutionReceipt>;
   terminate(): Promise<void>;
 }
 

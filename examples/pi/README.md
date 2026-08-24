@@ -16,8 +16,9 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 `sessionId`, `workspaceId`, `keepAliveSeconds`, and `prompt` to reuse it. Both
 execution routes return a durable receipt immediately with status `202`.
 
-The harness implements an explicit `steer` handler using Pi's native steering
-queue on the Session's retained Agent.
+Both routes use the harness's single `run` entrypoint. The application input
+identifies chat versus steer intent, and the retained Agent handles steer input
+through Pi's native steering queue.
 
 `cantelop.json` targets an illustrative App with slug `pi`. Change the slug
 when deploying to a different App.

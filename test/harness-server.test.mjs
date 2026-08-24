@@ -38,7 +38,7 @@ test("the native adapter executes the versioned harness protocol", async (t) => 
     executionId,
   );
   assert.deepEqual(await response.json(), { output: { answer: "HELLO" } });
-  assert.deepEqual(received.execution, { id: executionId, kind: "execute" });
+  assert.deepEqual(received.execution, { id: executionId });
   assert.deepEqual(received.session, {
     id: "thread",
     workspaceId: "wsp_0123456789abcdef0123456789abcdef",
@@ -51,33 +51,47 @@ test("the native adapter executes the versioned harness protocol", async (t) => 
   assert.equal(received.signal.aborted, false);
 });
 
-test("the native adapter routes steering to the session-aware handler", async (t) => {
-  let received;
+test("one harness runtime accepts overlapping requests for its bound Session", async (t) => {
+  const started = [];
+  let releaseFirst;
+  const firstReleased = new Promise((resolve) => { releaseFirst = resolve; });
   const server = createServer(
     createHarnessRequestHandler({
-      run: async () => { throw new Error("run must not handle steering"); },
-      steer: async (context) => {
-        received = context;
-        return { accepted: true };
+      async run(context) {
+        started.push(context.input.type);
+        if (context.input.type === "message") await firstReleased;
+        return { handled: context.input.type };
       },
     }),
   );
   await listen(server);
+  t.after(() => releaseFirst());
   t.after(() => close(server));
 
-  const response = await fetch(
+  const first = fetch(
     `${origin(server)}/__cantelop/v1/executions/${executionId}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(executionEnvelope({ prompt: "focus" }, "steer")),
+      body: JSON.stringify(executionEnvelope({ type: "message" })),
+    },
+  );
+  await waitFor(() => started.length === 1);
+  const secondExecutionId = "exec_fedcba9876543210fedcba9876543210";
+  const second = await fetch(
+    `${origin(server)}/__cantelop/v1/executions/${secondExecutionId}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(executionEnvelope({ type: "steer" })),
     },
   );
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { output: { accepted: true } });
-  assert.equal(received.execution.kind, "steer");
-  assert.equal(received.session.id, "thread");
+  assert.equal(second.status, 200);
+  assert.deepEqual(await second.json(), { output: { handled: "steer" } });
+  assert.deepEqual(started, ["message", "steer"]);
+  releaseFirst();
+  assert.deepEqual(await (await first).json(), { output: { handled: "message" } });
 });
 
 test("a harness server is bound to one Session identity", async (t) => {
@@ -96,7 +110,7 @@ test("a harness server is bound to one Session identity", async (t) => {
   const second = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(executionEnvelope({}, "execute", "other-thread")),
+    body: JSON.stringify(executionEnvelope({}, "other-thread")),
   });
 
   assert.equal(first.status, 200);
@@ -286,9 +300,8 @@ function origin(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function executionEnvelope(input, operation = "execute", sessionId = "thread") {
+function executionEnvelope(input, sessionId = "thread") {
   return {
-    operation,
     session: {
       id: sessionId,
       workspace_id: "wsp_0123456789abcdef0123456789abcdef",
@@ -296,4 +309,12 @@ function executionEnvelope(input, operation = "execute", sessionId = "thread") {
     },
     input,
   };
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("condition was not reached");
 }

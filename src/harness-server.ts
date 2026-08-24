@@ -9,7 +9,6 @@ import {
 
 import type {
   HarnessContext,
-  HarnessExecutionKind,
   HarnessEnvironment,
   HarnessRuntime,
 } from "./harness.js";
@@ -150,12 +149,11 @@ async function handleRequest<Input, Output, Event>(
     }
     const session = readSession(envelope.session);
     bindSession(session);
-    const kind = envelope.operation as HarnessExecutionKind;
 
     let output: Output;
     try {
       output = await invokeHarness(runtime, Object.freeze({
-        execution: Object.freeze({ id: executionID, kind }),
+        execution: Object.freeze({ id: executionID }),
         session,
         input: envelope.input as Input,
         env,
@@ -216,10 +214,6 @@ function invokeHarness<Input, Output, Event>(
   context: HarnessContext<Input, Event>,
 ): Output | Promise<Output> {
   if (typeof runtime === "function") return runtime(context);
-  if (context.execution.kind === "steer") {
-    if (runtime.steer === undefined) throw new Error("Harness does not support steering");
-    return runtime.steer(context);
-  }
   return runtime.run(context);
 }
 
@@ -252,8 +246,7 @@ function isJSONContentType(value: string | undefined): boolean {
 
 function hasExecutionEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return keys.length === 3 && keys.includes("operation") && keys.includes("session") &&
-    keys.includes("input") && (value.operation === "execute" || value.operation === "steer") &&
+  return keys.length === 2 && keys.includes("session") && keys.includes("input") &&
     isRecord(value.session);
 }
 
