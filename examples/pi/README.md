@@ -10,10 +10,11 @@ Cantelop injects the current App when it creates the API. The Edge API manages
 Workspaces and reusable Sessions without an API key; provider credentials and
 Pi configuration are supplied only to the harness VM.
 
-Both execution routes accept `workspaceId`, `keepAliveSeconds`, `prompt`, and
-an optional `sessionId`. `POST /execute` waits for output; `POST /dispatch`
-returns a durable receipt immediately with status `202`. The first operation
-atomically creates the Session when its ID does not exist.
+The API exposes only `GET /health`, `POST /chat`, and `POST /steer`. Chat accepts
+`keepAliveSeconds`, `prompt`, and an optional `sessionId`; it creates or reuses
+that Session in the App's injected Workspace. Steer requires `sessionId`,
+`keepAliveSeconds`, and `prompt` to reuse it. Both execution routes dispatch
+asynchronously and return a durable receipt immediately with status `202`.
 
 `cantelop.json` targets an illustrative App with slug `pi`. Change the slug
 when deploying to a different App.

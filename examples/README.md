@@ -11,10 +11,11 @@ cantelop.json   Editor-ready build and deployment manifest
 Each provider directory is a complete, self-contained implementation with its
 own contracts, request validation, and routes. Provider SDKs, credentials, and
 incremental events remain confined to the harness entrypoint. Cantelop injects
-the current App into each API definition. Each API lazily opens a reusable
-Session and demonstrates both synchronous execution (`POST /execute`) and
-durable asynchronous dispatch (`POST /dispatch`) through that same Session;
-direct client streaming is configured at the VM.
+the current App into each API definition. Every API exposes exactly three
+routes: `GET /health`, `POST /chat`, and `POST /steer`. Chat creates or reuses a
+Session from an optional ID; steer requires an existing Session ID. Both
+execution routes dispatch asynchronously and return a durable receipt with
+status `202`; direct client streaming is configured at the VM.
 
 Each manifest targets an illustrative App slug. Create that App or change its
 `app` value before running `cantelop deploy`; generated App IDs are never stored

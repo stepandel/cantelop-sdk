@@ -25,6 +25,10 @@ try {
 
   for (const example of examples) {
     const exampleRoot = path.join(repositoryRoot, "examples", example);
+    const apiSource = await readFile(path.join(exampleRoot, "src/api.ts"), "utf8");
+    const routes = [...apiSource.matchAll(/router\.route\("([A-Z]+)", "([^"]+)"/g)]
+      .map(([, method, route]) => `${method} ${route}`);
+    assert.deepEqual(routes, ["GET /health", "POST /chat", "POST /steer"]);
     const manifest = JSON.parse(
       await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"),
     );

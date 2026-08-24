@@ -2,9 +2,13 @@ export interface PromptInput {
   prompt: string;
 }
 
-export interface SessionExecutionRequest extends PromptInput {
+export interface ChatRequest extends PromptInput {
   sessionId?: string;
-  workspaceId: string;
+  keepAliveSeconds: number;
+}
+
+export interface SteerRequest extends PromptInput {
+  sessionId: string;
   keepAliveSeconds: number;
 }
 
