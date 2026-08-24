@@ -4,6 +4,7 @@ export interface PromptInput {
 
 export interface ChatRequest extends PromptInput {
   sessionId?: string;
+  workspaceId: string;
   keepAliveSeconds: number;
 }
 

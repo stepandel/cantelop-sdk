@@ -16,12 +16,13 @@ export default defineApi<PromptInput, AnswerOutput>(
       const input = (await request.json()) as Partial<ChatRequest>;
       if (!isChatRequest(input)) {
         return Response.json({
-          error: "keepAliveSeconds and prompt are required",
+          error: "workspaceId, keepAliveSeconds, and prompt are required",
         }, { status: 400 });
       }
 
       const session = app.sessions.open({
         ...(input.sessionId === undefined ? {} : { id: input.sessionId }),
+        workspaceId: input.workspaceId,
         keepAliveSeconds: input.keepAliveSeconds,
       });
       const receipt = await session.dispatch({ prompt: input.prompt });
@@ -48,6 +49,7 @@ export default defineApi<PromptInput, AnswerOutput>(
 
 function isChatRequest(input: Partial<ChatRequest>): input is ChatRequest {
   return (input.sessionId === undefined || typeof input.sessionId === "string") &&
+    typeof input.workspaceId === "string" &&
     typeof input.keepAliveSeconds === "number" && Number.isInteger(input.keepAliveSeconds) &&
     typeof input.prompt === "string" && input.prompt.length > 0;
 }
