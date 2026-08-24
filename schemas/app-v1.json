@@ -7,10 +7,6 @@
   "additionalProperties": false,
   "required": ["app", "api", "harness"],
   "properties": {
-    "$schema": {
-      "const": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
-      "description": "Enables editor completion and validation for this manifest."
-    },
     "app": {
       "$ref": "#/$defs/appSlug"
     },
@@ -133,13 +129,11 @@
   },
   "examples": [
     {
-      "$schema": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
       "app": "vera",
       "api": "src/api.ts",
       "harness": "src/harness.ts"
     },
     {
-      "$schema": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
       "app": "vera",
       "api": "src/api.ts",
       "harness": "src/harness.ts",

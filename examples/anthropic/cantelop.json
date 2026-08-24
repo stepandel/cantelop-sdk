@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
   "app": "anthropic",
   "api": "src/api.ts",
   "harness": "src/harness.ts"

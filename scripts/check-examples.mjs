@@ -31,10 +31,7 @@ try {
       .map(([, method, route]) => `${method} ${route}`);
     assert.deepEqual(routes, ["GET /health", "POST /chat", "POST /steer"]);
     assert.match(harnessSource, /steer:\s*steerTurn/);
-    const manifest = JSON.parse(
-      await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"),
-    );
-    assert.equal(manifest.$schema, schemaUrl);
+    JSON.parse(await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"));
 
     await buildApi({
       entrypoint: path.join(exampleRoot, "src/api.ts"),
