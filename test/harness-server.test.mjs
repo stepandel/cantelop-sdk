@@ -28,7 +28,7 @@ test("the native adapter executes the versioned harness protocol", async (t) => 
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: { prompt: "hello" } }),
+      body: JSON.stringify(executionEnvelope({ prompt: "hello" })),
     },
   );
 
@@ -38,10 +38,46 @@ test("the native adapter executes the versioned harness protocol", async (t) => 
     executionId,
   );
   assert.deepEqual(await response.json(), { output: { answer: "HELLO" } });
-  assert.equal(received.id, executionId);
+  assert.deepEqual(received.execution, { id: executionId, kind: "execute" });
+  assert.deepEqual(received.session, {
+    id: "thread",
+    workspaceId: "wsp_0123456789abcdef0123456789abcdef",
+    keepAliveSeconds: 300,
+  });
+  assert.equal(Object.isFrozen(received.execution), true);
+  assert.equal(Object.isFrozen(received.session), true);
   assert.deepEqual(received.input, { prompt: "hello" });
   assert.equal(received.env.MODEL, "test-model");
   assert.equal(received.signal.aborted, false);
+});
+
+test("the native adapter routes steering to the session-aware handler", async (t) => {
+  let received;
+  const server = createServer(
+    createHarnessRequestHandler({
+      run: async () => { throw new Error("run must not handle steering"); },
+      steer: async (context) => {
+        received = context;
+        return { accepted: true };
+      },
+    }),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(
+    `${origin(server)}/__cantelop/v1/executions/${executionId}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(executionEnvelope({ prompt: "focus" }, "steer")),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { output: { accepted: true } });
+  assert.equal(received.execution.kind, "steer");
+  assert.equal(received.session.id, "thread");
 });
 
 test("the native adapter marks a failed user execution as settled", async (t) => {
@@ -58,7 +94,7 @@ test("the native adapter marks a failed user execution as settled", async (t) =>
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: {} }),
+      body: JSON.stringify(executionEnvelope({})),
     },
   );
 
@@ -84,13 +120,13 @@ test("the native adapter rejects malformed protocol requests", async (t) => {
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: {}, extra: true }),
+      body: JSON.stringify({ ...executionEnvelope({}), extra: true }),
     },
   );
   const wrongPath = await fetch(`${origin(server)}/execute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ input: {} }),
+    body: JSON.stringify(executionEnvelope({})),
   });
 
   assert.equal(malformed.status, 400);
@@ -182,7 +218,7 @@ test("serveHarness adopts the platform-prebound listener", async () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: {} }),
+        body: JSON.stringify(executionEnvelope({})),
       },
     );
     assert.equal(response.status, 200);
@@ -224,4 +260,16 @@ function origin(server) {
   const address = server.address();
   assert.equal(typeof address, "object");
   return `http://127.0.0.1:${address.port}`;
+}
+
+function executionEnvelope(input, operation = "execute") {
+  return {
+    operation,
+    session: {
+      id: "thread",
+      workspace_id: "wsp_0123456789abcdef0123456789abcdef",
+      keep_alive_seconds: 300,
+    },
+    input,
+  };
 }

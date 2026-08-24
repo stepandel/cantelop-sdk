@@ -47,6 +47,7 @@ export type {
   ExecutionReceipt,
   Session,
   SessionExecuteOptions,
+  SessionHandle,
   SessionOpenConfig,
   SessionService,
   Workspace,

@@ -33,15 +33,16 @@ export default defineApi<PromptInput, AnswerOutput>(
       const input = (await request.json()) as Partial<SteerRequest>;
       if (!isSteerRequest(input)) {
         return Response.json({
-          error: "sessionId, keepAliveSeconds, and prompt are required",
+          error: "sessionId, workspaceId, keepAliveSeconds, and prompt are required",
         }, { status: 400 });
       }
 
       const session = app.sessions.open({
         id: input.sessionId,
+        workspaceId: input.workspaceId,
         keepAliveSeconds: input.keepAliveSeconds,
       });
-      const receipt = await session.dispatch({ prompt: input.prompt });
+      const receipt = await session.steer({ prompt: input.prompt });
       return Response.json({ sessionId: session.id, receipt }, { status: 202 });
     });
   },
@@ -56,6 +57,7 @@ function isChatRequest(input: Partial<ChatRequest>): input is ChatRequest {
 
 function isSteerRequest(input: Partial<SteerRequest>): input is SteerRequest {
   return typeof input.sessionId === "string" &&
+    typeof input.workspaceId === "string" &&
     typeof input.keepAliveSeconds === "number" && Number.isInteger(input.keepAliveSeconds) &&
     typeof input.prompt === "string" && input.prompt.length > 0;
 }

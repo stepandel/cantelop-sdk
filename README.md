@@ -109,10 +109,15 @@ export default defineApi<Input, Output>(({ app, router }) => {
 ```
 
 Every execution belongs to a Session. `app.sessions.open()` creates a local
-Session handle without making a request. The first `execute()` or `dispatch()`
-atomically creates the logical Session if its ID does not exist and starts the
-execution; otherwise it resumes that Session. Omitting `id` generates one in
-the SDK, which is immediately available as `session.id`.
+Session handle without making a request. The first `execute()`, `dispatch()`,
+or `steer()` atomically creates the logical Session if its ID does not exist and
+starts the operation; otherwise it resumes that Session. Omitting `id`
+generates one in the SDK, which is immediately available as `session.id`.
+
+`Session` is the canonical read-only identity and configuration shared with the
+native harness. `SessionHandle<Input, Output>` extends it with Edge operations.
+Its `id`, `workspaceId`, and `keepAliveSeconds` properties are available before
+the first request.
 
 A Session keeps its Sandbox warm for `keepAliveSeconds` after work completes.
 If the Sandbox has already been released, the platform can reactivate the same
@@ -120,7 +125,7 @@ logical Session on a new Sandbox. Explicitly terminating the Session makes it
 final:
 
 ```ts
-await app.sessions.open({ id: sessionId, keepAliveSeconds: 0 }).terminate();
+await app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 }).terminate();
 ```
 
 Distributed API workers converge on one Session by opening the same
@@ -134,31 +139,14 @@ const session = app.sessions.open({
 });
 ```
 
-Existing Workspaces are addressable by their App-scoped slug:
+Existing Workspaces remain addressable by their App-scoped slug:
 
 ```ts
 const workspace = await app.workspaces.open({ slug: "production" });
 ```
 
-A Session can use either an existing `workspaceId` or an exact App-scoped slug:
-
-```ts
-const session = app.sessions.open({
-  id: threadId,
-  workspace: "production",
-  keepAliveSeconds: 3600,
-});
-
-const defaultSession = app.sessions.open({
-  id: threadId,
-  keepAliveSeconds: 3600,
-});
-```
-
-`keepAliveSeconds` is always required so Sandbox lifetime remains an explicit
-caller decision. Omitting both Workspace selectors uses the App's injected
-initial Workspace. Every string, including `"default"`, is an ordinary exact
-slug; no slug has platform-defined meaning.
+`workspaceId` and `keepAliveSeconds` are always required when opening a Session,
+so its Workspace and Sandbox lifetime remain explicit caller decisions.
 
 The Session ID is immutable and App-scoped. Its Workspace is fixed when the
 first execution creates it, while `keepAliveSeconds` applies to each operation.
@@ -190,8 +178,8 @@ code cannot provide or override an idempotency key. The returned receipt means
 the platform has accepted responsibility for dispatch; it does not contain the
 eventual harness output. Dispatch is at-least-once across a gateway crash: a
 harness doing non-idempotent external work should deduplicate with the
-read-only `id` in its `HarnessContext`. Use ordinary `session.execute()` when
-the HTTP caller needs the output synchronously.
+read-only `execution.id` in its `HarnessContext`. Use ordinary
+`session.execute()` when the HTTP caller needs the output synchronously.
 
 Workspace creation takes a routing `slug`. The current App identity is derived
 by the trusted bridge and cannot be supplied or overridden by application code.
@@ -277,8 +265,10 @@ import { defineHarness } from "@cantelop/sdk/harness";
 import type { Input, Output, RuntimeEvent } from "./contracts.js";
 
 export default defineHarness<Input, Output, RuntimeEvent>(
-  async ({ input, env, signal, emit }) => {
+  async ({ execution, session, input, env, signal, emit }) => {
     const output = await runAgent(input, {
+      executionId: execution.id,
+      sessionId: session.id,
       apiKey: env.MODEL_API_KEY,
       signal,
       onText: (delta) => emit({ type: "text_delta", delta }),
@@ -293,6 +283,19 @@ export default defineHarness<Input, Output, RuntimeEvent>(
 Harnesses may use Node.js, subprocesses, the Linux filesystem, provider SDKs,
 and VM environment variables. Cantelop supplies the same App variables and
 secrets to the harness VM and Edge API.
+
+Every harness invocation receives the same canonical Session snapshot exposed
+by its Edge `SessionHandle`: `session.id`, `session.workspaceId`, and the
+operation's `session.keepAliveSeconds`. `execution.id` is the distinct retry
+identity, while `execution.kind` is either `"execute"` or `"steer"`. These
+objects are frozen and constructed by the trusted runtime rather than copied
+from an application request.
+
+The canonical Session lets a harness key provider state consistently, but it
+does not serialize arbitrary in-memory objects. Module-level agents,
+conversation stores, and provider resume handles survive while the Sandbox is
+warm. Applications that must resume after Sandbox replacement must persist the
+provider's resumable state outside process memory.
 
 Cantelop's generated native bootstrap calls `serveHarness()` from
 `@cantelop/sdk/harness`. It accepts no port argument: the runtime provider

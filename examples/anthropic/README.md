@@ -13,9 +13,8 @@ supplied only to the harness VM.
 The API exposes only `GET /health`, `POST /chat`, and `POST /steer`. Chat
 requires `workspaceId`, `keepAliveSeconds`, and `prompt`, and accepts an
 optional `sessionId`; it creates or reuses that Session. Steer requires
-`sessionId`, `keepAliveSeconds`, and `prompt` to reuse it. Both execution routes
-dispatch asynchronously and return a durable receipt immediately with status
-`202`.
+`sessionId`, `workspaceId`, `keepAliveSeconds`, and `prompt` to reuse it. Both
+execution routes return a durable receipt immediately with status `202`.
 
 `cantelop.json` targets an illustrative App with slug `anthropic`. Change the
 slug when deploying to a different App.

@@ -15,7 +15,10 @@ the current App into each API definition. Every API exposes exactly three
 routes: `GET /health`, `POST /chat`, and `POST /steer`. Chat creates or reuses a
 Session from an optional ID; steer requires an existing Session ID. Both
 execution routes dispatch asynchronously and return a durable receipt with
-status `202`; direct client streaming is configured at the VM.
+status `202`. The canonical Session is propagated into the native harness:
+OpenAI reuses an in-memory conversation store, Anthropic resumes its provider
+session, and Pi retains its stateful Agent and native steering queue for the
+warm Sandbox lifetime. Direct client streaming is configured at the VM.
 
 Each manifest targets an illustrative App slug. Create that App or change its
 `app` value before running `cantelop deploy`; generated App IDs are never stored

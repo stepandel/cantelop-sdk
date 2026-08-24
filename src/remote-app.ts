@@ -1,8 +1,8 @@
 import type {
   CantelopApp,
   ExecutionReceipt,
-  Session,
   SessionExecuteOptions,
+  SessionHandle,
   SessionOpenConfig,
   Workspace,
   WorkspaceCreateConfig,
@@ -45,14 +45,8 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
   const executionId = options.executionId ?? createExecutionID;
 
   const sessions = Object.freeze({
-    open(config: SessionOpenConfig): Session<Input, Output> {
-      const workspaceId = "workspaceId" in config ? config.workspaceId : undefined;
-      const workspace = "workspace" in config ? config.workspace : undefined;
-      if (typeof workspaceId === "string" && typeof workspace === "string") {
-        throw new TypeError("Session open accepts at most one Workspace ID or slug");
-      }
-      if (workspaceId !== undefined) assertWorkspaceID(workspaceId);
-      if (workspace !== undefined) assertWorkspaceSlug(workspace);
+    open(config: SessionOpenConfig): SessionHandle<Input, Output> {
+      assertWorkspaceID(config.workspaceId);
       assertKeepAliveSeconds(config.keepAliveSeconds);
       const id = config.id ?? sessionId();
       assertSessionID(id);
@@ -88,9 +82,11 @@ function createRemoteSession<Input, Output>(
   config: SessionOpenConfig,
   runtimeFetch: RuntimeFetch,
   executionId: IDFactory,
-): Session<Input, Output> {
+): SessionHandle<Input, Output> {
   return Object.freeze({
     id,
+    workspaceId: config.workspaceId,
+    keepAliveSeconds: config.keepAliveSeconds,
 
     async execute(
       input: Input,
@@ -105,7 +101,8 @@ function createRemoteSession<Input, Output>(
           method: "POST",
           body: {
             id,
-            ...sessionConfiguration(config),
+            operation: "execute",
+            session: sessionEnvelope(this.id, config),
             input,
           },
           ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -124,20 +121,27 @@ function createRemoteSession<Input, Output>(
         method: "POST",
         body: {
           id: execution,
-          session_id: this.id,
-          ...sessionConfiguration(config),
+          operation: "execute",
+          session: sessionEnvelope(this.id, config),
           input,
         },
       });
-      if (!isRecord(envelope) || envelope.id !== execution || envelope.status !== "queued" ||
-          typeof envelope.accepted_at !== "string") {
-        throw new RemoteAppError("invalid_execution_response", 0);
-      }
-      return Object.freeze({
-        id: execution,
-        status: "queued" as const,
-        acceptedAt: readExecutionDate(envelope.accepted_at),
+      return readExecutionReceipt(envelope, execution);
+    },
+
+    async steer(input: Input): Promise<ExecutionReceipt> {
+      const execution = executionId();
+      assertExecutionID(execution);
+      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/executions", {
+        method: "POST",
+        body: {
+          id: execution,
+          operation: "steer",
+          session: sessionEnvelope(this.id, config),
+          input,
+        },
       });
+      return readExecutionReceipt(envelope, execution);
     },
 
     async terminate(): Promise<void> {
@@ -150,15 +154,24 @@ function createRemoteSession<Input, Output>(
   });
 }
 
-function sessionConfiguration(config: SessionOpenConfig): Record<string, unknown> {
-  const workspaceId = "workspaceId" in config ? config.workspaceId : undefined;
-  const workspace = "workspace" in config ? config.workspace : undefined;
+function sessionEnvelope(id: string, config: SessionOpenConfig): Record<string, unknown> {
   return {
-    ...(workspaceId !== undefined
-      ? { workspace_id: workspaceId }
-      : workspace !== undefined ? { workspace } : {}),
+    id,
+    workspace_id: config.workspaceId,
     keep_alive_seconds: config.keepAliveSeconds,
   };
+}
+
+function readExecutionReceipt(envelope: unknown, execution: string): ExecutionReceipt {
+  if (!isRecord(envelope) || envelope.id !== execution || envelope.status !== "queued" ||
+      typeof envelope.accepted_at !== "string") {
+    throw new RemoteAppError("invalid_execution_response", 0);
+  }
+  return Object.freeze({
+    id: execution,
+    status: "queued" as const,
+    acceptedAt: readExecutionDate(envelope.accepted_at),
+  });
 }
 
 interface RequestOptions {

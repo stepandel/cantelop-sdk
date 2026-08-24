@@ -1,5 +1,8 @@
-import { Agent, run } from "@openai/agents";
-import { defineHarness } from "@cantelop/sdk/harness";
+import { Agent, MemorySession, run } from "@openai/agents";
+import {
+  defineHarness,
+  type HarnessContext,
+} from "@cantelop/sdk/harness";
 import type {
   AnswerOutput,
   PromptInput,
@@ -9,28 +12,44 @@ type RuntimeEvent =
   | { type: "text_delta"; delta: string }
   | { type: "done"; output: AnswerOutput };
 
-export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>(
-  async ({ input, env, signal, emit }) => {
-    if (!env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not configured in the harness VM");
-    }
-    const agent = new Agent({
-      name: "Cantelop OpenAI example",
-      instructions: "You are a concise, helpful assistant.",
-      model: env.OPENAI_MODEL ?? "gpt-4.1-mini",
-    });
+const sessions = new Map<string, MemorySession>();
 
-    const stream = await run(agent, input.prompt, { stream: true, signal });
-    let answer = "";
+async function runTurn(
+  { session, input, env, signal, emit }: HarnessContext<PromptInput, RuntimeEvent>,
+): Promise<AnswerOutput> {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not configured in the harness VM");
+  }
+  const agent = new Agent({
+    name: "Cantelop OpenAI example",
+    instructions: "You are a concise, helpful assistant.",
+    model: env.OPENAI_MODEL ?? "gpt-4.1-mini",
+  });
+  let providerSession = sessions.get(session.id);
+  if (providerSession === undefined) {
+    providerSession = new MemorySession({ sessionId: session.id });
+    sessions.set(session.id, providerSession);
+  }
 
-    for await (const delta of stream.toTextStream()) {
-      answer += delta;
-      emit({ type: "text_delta", delta });
-    }
-    await stream.completed;
+  const stream = await run(agent, input.prompt, {
+    stream: true,
+    signal,
+    session: providerSession,
+  });
+  let answer = "";
 
-    const output = { answer: stream.finalOutput ?? answer };
-    emit({ type: "done", output });
-    return output;
-  },
-);
+  for await (const delta of stream.toTextStream()) {
+    answer += delta;
+    emit({ type: "text_delta", delta });
+  }
+  await stream.completed;
+
+  const output = { answer: stream.finalOutput ?? answer };
+  emit({ type: "done", output });
+  return output;
+}
+
+export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>({
+  run: runTurn,
+  steer: runTurn,
+});

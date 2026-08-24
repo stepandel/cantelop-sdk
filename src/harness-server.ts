@@ -8,9 +8,12 @@ import {
 } from "node:http";
 
 import type {
+  HarnessContext,
+  HarnessExecutionKind,
   HarnessEnvironment,
   HarnessRuntime,
 } from "./harness.js";
+import type { Session } from "./resources.js";
 import { markHarnessStartup } from "./harness-startup.js";
 
 const EXECUTION_PATH_PATTERN =
@@ -19,6 +22,9 @@ const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
 const INTERNAL_FD_VARIABLE = "CANTELOP_INTERNAL_FD";
 const EXECUTION_COMPLETE_HEADER = "X-Cantelop-SDK-Execution-Complete";
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
+const MAX_KEEP_ALIVE_SECONDS = 604_800;
 
 export interface HarnessRequestHandlerOptions {
   env?: HarnessEnvironment;
@@ -123,20 +129,23 @@ async function handleRequest<Input, Output, Event>(
 
   try {
     const envelope = await readRequestEnvelope(request);
-    if (!isRecord(envelope) || !hasOnlyInput(envelope)) {
+    if (!isRecord(envelope) || !hasExecutionEnvelopeShape(envelope)) {
       writeError(response, 400, "invalid_execution_request");
       return;
     }
+    const session = readSession(envelope.session);
+    const kind = envelope.operation as HarnessExecutionKind;
 
     let output: Output;
     try {
-      output = await invokeHarness(runtime, {
-        id: executionID,
+      output = await invokeHarness(runtime, Object.freeze({
+        execution: Object.freeze({ id: executionID, kind }),
+        session,
         input: envelope.input as Input,
         env,
         signal: controller.signal,
         emit: () => undefined,
-      });
+      }));
     } finally {
       executionSettled = true;
     }
@@ -188,15 +197,14 @@ async function readRequestEnvelope(request: IncomingMessage): Promise<unknown> {
 
 function invokeHarness<Input, Output, Event>(
   runtime: HarnessRuntime<Input, Output, Event>,
-  context: {
-    id: string;
-    input: Input;
-    env: HarnessEnvironment;
-    signal: AbortSignal;
-    emit(event: Event): void;
-  },
+  context: HarnessContext<Input, Event>,
 ): Output | Promise<Output> {
-  return typeof runtime === "function" ? runtime(context) : runtime.run(context);
+  if (typeof runtime === "function") return runtime(context);
+  if (context.execution.kind === "steer") {
+    if (runtime.steer === undefined) throw new Error("Harness does not support steering");
+    return runtime.steer(context);
+  }
+  return runtime.run(context);
 }
 
 function readInternalPort(value: string | undefined): number {
@@ -226,9 +234,27 @@ function isJSONContentType(value: string | undefined): boolean {
   return value !== undefined && /^application\/json(?:\s*;|$)/i.test(value);
 }
 
-function hasOnlyInput(value: Record<string, unknown>): boolean {
+function hasExecutionEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return keys.length === 1 && keys[0] === "input";
+  return keys.length === 3 && keys.includes("operation") && keys.includes("session") &&
+    keys.includes("input") && (value.operation === "execute" || value.operation === "steer") &&
+    isRecord(value.session);
+}
+
+function readSession(value: unknown): Session {
+  if (!isRecord(value) || Object.keys(value).length !== 3 ||
+      typeof value.id !== "string" || !SESSION_ID_PATTERN.test(value.id) ||
+      typeof value.workspace_id !== "string" || !WORKSPACE_ID_PATTERN.test(value.workspace_id) ||
+      typeof value.keep_alive_seconds !== "number" ||
+      !Number.isInteger(value.keep_alive_seconds) || value.keep_alive_seconds < 0 ||
+      value.keep_alive_seconds > MAX_KEEP_ALIVE_SECONDS) {
+    throw new ProtocolError(400, "invalid_execution_request");
+  }
+  return Object.freeze({
+    id: value.id,
+    workspaceId: value.workspace_id,
+    keepAliveSeconds: value.keep_alive_seconds,
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

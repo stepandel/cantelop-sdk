@@ -16,16 +16,11 @@ export interface Workspace {
   readonly archivedAt?: Date;
 }
 
-interface SessionOpenBaseConfig {
+export interface SessionOpenConfig {
   readonly id?: string;
+  readonly workspaceId: string;
   readonly keepAliveSeconds: number;
 }
-
-export type SessionOpenConfig = SessionOpenBaseConfig & (
-  | { readonly workspaceId: string; readonly workspace?: never }
-  | { readonly workspace: string; readonly workspaceId?: never }
-  | { readonly workspace?: never; readonly workspaceId?: never }
-);
 
 export interface SessionExecuteOptions {
   readonly signal?: AbortSignal;
@@ -37,10 +32,18 @@ export interface ExecutionReceipt {
   readonly acceptedAt: Date;
 }
 
-export interface Session<Input, Output> {
+/** Canonical, read-only Session identity and configuration. */
+export interface Session {
   readonly id: string;
+  readonly workspaceId: string;
+  readonly keepAliveSeconds: number;
+}
+
+/** Edge capabilities for operating on a canonical Session. */
+export interface SessionHandle<Input, Output> extends Session {
   execute(input: Input, options?: SessionExecuteOptions): Promise<Output>;
   dispatch(input: Input): Promise<ExecutionReceipt>;
+  steer(input: Input): Promise<ExecutionReceipt>;
   terminate(): Promise<void>;
 }
 
@@ -50,7 +53,7 @@ export interface WorkspaceService {
 }
 
 export interface SessionService<Input, Output> {
-  open(config: SessionOpenConfig): Session<Input, Output>;
+  open(config: SessionOpenConfig): SessionHandle<Input, Output>;
 }
 
 /** Capabilities of the current App, injected by Cantelop. */

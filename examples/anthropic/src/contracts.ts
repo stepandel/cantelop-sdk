@@ -10,6 +10,7 @@ export interface ChatRequest extends PromptInput {
 
 export interface SteerRequest extends PromptInput {
   sessionId: string;
+  workspaceId: string;
   keepAliveSeconds: number;
 }
 

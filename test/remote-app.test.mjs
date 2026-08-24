@@ -71,6 +71,8 @@ test("opening a named Session is lazy and execution atomically opens it", async 
     keepAliveSeconds: 0,
   });
   assert.equal(session.id, namedSessionId);
+  assert.equal(session.workspaceId, workspaceId);
+  assert.equal(session.keepAliveSeconds, 0);
   assert.equal(forwarded.length, 0);
 
   assert.deepEqual(await session.execute({ prompt: "hello" }), { answer: "done" });
@@ -78,8 +80,12 @@ test("opening a named Session is lazy and execution atomically opens it", async 
     `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}/executions`);
   assert.deepEqual(await forwarded[0].json(), {
     id: executionId,
-    workspace_id: workspaceId,
-    keep_alive_seconds: 0,
+    operation: "execute",
+    session: {
+      id: namedSessionId,
+      workspace_id: workspaceId,
+      keep_alive_seconds: 0,
+    },
     input: { prompt: "hello" },
   });
 });
@@ -95,51 +101,6 @@ test("opening an anonymous Session generates its ID without a request", () => {
     keepAliveSeconds: 300,
   });
   assert.equal(session.id, sessionId);
-});
-
-test("a Session treats default as a literal Workspace slug", async () => {
-  let forwarded;
-  const app = createRemoteApp({
-    executionId: () => executionId,
-    fetch: async (request) => {
-      forwarded = request;
-      return Response.json({ output: null });
-    },
-  });
-
-  const session = app.sessions.open({
-    id: "thread",
-    workspace: "default",
-    keepAliveSeconds: 0,
-  });
-  await session.execute({});
-  assert.equal(session.id, "thread");
-  assert.deepEqual(await forwarded.json(), {
-    id: executionId,
-    workspace: "default",
-    keep_alive_seconds: 0,
-    input: {},
-  });
-});
-
-test("a Session uses the injected primary Workspace when its selector is omitted", async () => {
-  let forwarded;
-  const app = createRemoteApp({
-    executionId: () => executionId,
-    fetch: async (request) => {
-      forwarded = request;
-      return Response.json({ output: null });
-    },
-  });
-
-  const session = app.sessions.open({ id: "thread", keepAliveSeconds: 0 });
-  await session.execute({});
-  assert.equal(session.id, "thread");
-  assert.deepEqual(await forwarded.json(), {
-    id: executionId,
-    keep_alive_seconds: 0,
-    input: {},
-  });
 });
 
 test("a Session dispatches asynchronously with the same identity and configuration", async () => {
@@ -168,10 +129,46 @@ test("a Session dispatches asynchronously with the same identity and configurati
   assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/executions");
   assert.deepEqual(await forwarded.json(), {
     id: executionId,
-    session_id: namedSessionId,
-    workspace_id: workspaceId,
-    keep_alive_seconds: 300,
+    operation: "execute",
+    session: {
+      id: namedSessionId,
+      workspace_id: workspaceId,
+      keep_alive_seconds: 300,
+    },
     input: { event: "push" },
+  });
+});
+
+test("a Session steers asynchronously through a distinct operation", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    executionId: () => executionId,
+    fetch: async (request) => {
+      forwarded = request;
+      return Response.json({
+        id: executionId,
+        status: "queued",
+        accepted_at: "2026-08-17T12:00:00Z",
+      }, { status: 202 });
+    },
+  });
+
+  const receipt = await app.sessions.open({
+    id: namedSessionId,
+    workspaceId,
+    keepAliveSeconds: 60,
+  }).steer({ prompt: "focus on tests" });
+  assert.equal(receipt.id, executionId);
+  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/executions");
+  assert.deepEqual(await forwarded.json(), {
+    id: executionId,
+    operation: "steer",
+    session: {
+      id: namedSessionId,
+      workspace_id: workspaceId,
+      keep_alive_seconds: 60,
+    },
+    input: { prompt: "focus on tests" },
   });
 });
 
@@ -184,7 +181,7 @@ test("Session termination targets the logical Session", async () => {
     },
   });
 
-  await app.sessions.open({ id: namedSessionId, keepAliveSeconds: 0 }).terminate();
+  await app.sessions.open({ id: namedSessionId, workspaceId, keepAliveSeconds: 0 }).terminate();
   assert.equal(forwarded.method, "DELETE");
   assert.equal(
     forwarded.url,
@@ -204,18 +201,8 @@ test("resource configuration is validated before transport", async () => {
     /Session ID/,
   );
   assert.throws(
-    () => app.sessions.open({ id: "thread", workspace: "Bad Slug", keepAliveSeconds: 0 }),
-    /Workspace slug/,
-  );
-  assert.throws(
-    () => app.sessions.open({ id: "thread" }),
-    /keepAliveSeconds/,
-  );
-  assert.throws(
-    () => app.sessions.open({
-      id: "thread", workspace: "production", workspaceId, keepAliveSeconds: 0,
-    }),
-    /at most one Workspace/,
+    () => app.sessions.open({ id: "thread", workspaceId: "invalid", keepAliveSeconds: 0 }),
+    /Workspace ID/,
   );
 });
 
@@ -227,7 +214,7 @@ test("remote errors expose stable codes without leaking messages", async () => {
     ),
   });
 
-  const session = app.sessions.open({ id: sessionId, keepAliveSeconds: 0 });
+  const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
   await assert.rejects(session.execute({}), (error) => {
     assert.ok(error instanceof RemoteAppError);
     assert.equal(error.code, "session_terminated");
@@ -248,7 +235,7 @@ test("execution forwards its AbortSignal", async () => {
     },
   });
   const controller = new AbortController();
-  const session = app.sessions.open({ id: sessionId, keepAliveSeconds: 0 });
+  const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
   const result = session.execute({}, { signal: controller.signal });
   controller.abort(new Error("cancelled by test"));
 

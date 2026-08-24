@@ -41,7 +41,7 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
     schema_version: 1,
     kind: "cantelop-edge-api",
     main_module: "worker.mjs",
-    execution_protocol_version: 2,
+    execution_protocol_version: 3,
   });
   assert.deepEqual(
     JSON.parse(await readFile(artifact.manifestFile, "utf8")),
@@ -132,7 +132,7 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.equal(artifact.mainModule, path.join(outdir, "harness.mjs"));
   assert.equal(artifact.manifest.kind, "cantelop-native-harness");
   assert.equal(artifact.manifest.main_module, "harness.mjs");
-  assert.equal(artifact.manifest.execution_protocol_version, 2);
+  assert.equal(artifact.manifest.execution_protocol_version, 3);
   assert.ok(artifact.manifest.bundled_bytes > 0);
   assert.deepEqual(
     JSON.parse(await readFile(artifact.manifestFile, "utf8")),
@@ -262,7 +262,15 @@ async function waitForHarness(url, child, childError) {
       return await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: { prompt: "hello" } }),
+        body: JSON.stringify({
+          operation: "execute",
+          session: {
+            id: "thread",
+            workspace_id: "wsp_0123456789abcdef0123456789abcdef",
+            keep_alive_seconds: 300,
+          },
+          input: { prompt: "hello" },
+        }),
       });
     } catch (error) {
       lastError = error;

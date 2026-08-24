@@ -3,6 +3,7 @@ import type {
   ExecutionStatus,
   StartExecutionOptions,
 } from "./execution.js";
+import type { Session } from "./resources.js";
 
 export type Awaitable<T> = T | Promise<T>;
 
@@ -10,8 +11,14 @@ export type HarnessEnvironment = Readonly<
   Record<string, string | undefined>
 >;
 
+export type HarnessExecutionKind = "execute" | "steer";
+
 export interface HarnessContext<Input, Event = never> {
-  readonly id: string;
+  readonly execution: Readonly<{
+    id: string;
+    kind: HarnessExecutionKind;
+  }>;
+  readonly session: Session;
   readonly input: Input;
   readonly env: HarnessEnvironment;
   readonly signal: AbortSignal;
@@ -22,10 +29,16 @@ export type HarnessRuntime<Input, Output, Event = never> =
   | ((context: HarnessContext<Input, Event>) => Awaitable<Output>)
   | {
       run(context: HarnessContext<Input, Event>): Awaitable<Output>;
+      steer?(context: HarnessContext<Input, Event>): Awaitable<Output>;
     };
 
 export interface HarnessExecutorOptions {
   env?: HarnessEnvironment;
+}
+
+export interface StartHarnessExecutionOptions extends StartExecutionOptions {
+  readonly session: Session;
+  readonly kind?: HarnessExecutionKind;
 }
 
 export interface HarnessExecution<Output, Event = never>
@@ -36,7 +49,7 @@ export interface HarnessExecution<Output, Event = never>
 export interface HarnessExecutor<Input, Output, Event = never> {
   start(
     input: Input,
-    options?: StartExecutionOptions,
+    options: StartHarnessExecutionOptions,
   ): Promise<HarnessExecution<Output, Event>>;
 }
 
@@ -50,9 +63,14 @@ function invoke<Input, Output, Event>(
   runtime: HarnessRuntime<Input, Output, Event>,
   context: HarnessContext<Input, Event>,
 ): Awaitable<Output> {
-  return typeof runtime === "function"
-    ? runtime(context)
-    : runtime.run(context);
+  if (typeof runtime === "function") return runtime(context);
+  if (context.execution.kind === "steer") {
+    if (runtime.steer === undefined) {
+      throw new Error("Harness does not support steering");
+    }
+    return runtime.steer(context);
+  }
+  return runtime.run(context);
 }
 
 interface PendingNext<Event> {
@@ -166,7 +184,7 @@ export function createHarnessExecutor<
   options: HarnessExecutorOptions = {},
 ): HarnessExecutor<Input, Output, Event> {
   return {
-    async start(input, startOptions: StartExecutionOptions = {}) {
+    async start(input, startOptions: StartHarnessExecutionOptions) {
       const id = crypto.randomUUID();
       const controller = new AbortController();
       const eventStream = new ExecutionEventStream<Event>();
@@ -195,13 +213,17 @@ export function createHarnessExecutor<
         handle.startedAt = new Date();
 
         try {
-          const output = await invoke(runtime, {
-            id,
+          const output = await invoke(runtime, Object.freeze({
+            execution: Object.freeze({
+              id,
+              kind: startOptions.kind ?? "execute",
+            }),
+            session: Object.freeze({ ...startOptions.session }),
             input,
             env: options.env ?? {},
             signal: controller.signal,
             emit: (event) => eventStream.emit(event),
-          });
+          }));
 
           if (controller.signal.aborted) {
             throw abortReason(controller.signal);
@@ -232,6 +254,7 @@ export type {
   ExecutionStatus,
   StartExecutionOptions,
 } from "./execution.js";
+export type { Session } from "./resources.js";
 export {
   createHarnessRequestHandler,
   serveHarness,
