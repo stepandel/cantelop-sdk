@@ -1,9 +1,7 @@
 import type {
-  AsyncExecutionDispatch,
-  AsyncExecutionReceipt,
   CantelopApp,
+  ExecutionReceipt,
   Session,
-  SessionCreateConfig,
   SessionExecuteOptions,
   SessionOpenConfig,
   Workspace,
@@ -12,7 +10,7 @@ import type {
 } from "./resources.js";
 
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
-const SESSION_ID_PATTERN = /^ses_[A-Za-z0-9][A-Za-z0-9_-]{0,59}$/;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const EXECUTION_ID_PATTERN = /^exec_[0-9a-f]{32}$/;
 const WORKSPACE_SLUG_PATTERN = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const RUNTIME_ORIGIN = "https://runtime.cantelop.internal";
@@ -47,28 +45,7 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
   const executionId = options.executionId ?? createExecutionID;
 
   const sessions = Object.freeze({
-    async create(config: SessionCreateConfig): Promise<Session<Input, Output>> {
-      assertWorkspaceID(config.workspaceId);
-      assertKeepAliveSeconds(config.keepAliveSeconds);
-      const id = sessionId();
-      assertSessionID(id);
-
-      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/sessions", {
-        method: "POST",
-        body: {
-          id,
-          workspace_id: config.workspaceId,
-          keep_alive_seconds: config.keepAliveSeconds,
-        },
-      });
-      if (!isRecord(envelope) || envelope.id !== id) {
-        throw new RemoteAppError("invalid_session_response", 0);
-      }
-      return createRemoteSession(id, runtimeFetch, executionId);
-    },
-
-    async open(config: SessionOpenConfig): Promise<Session<Input, Output>> {
-      assertSessionKey(config.key);
+    open(config: SessionOpenConfig): Session<Input, Output> {
       const workspaceId = "workspaceId" in config ? config.workspaceId : undefined;
       const workspace = "workspace" in config ? config.workspace : undefined;
       if (typeof workspaceId === "string" && typeof workspace === "string") {
@@ -77,29 +54,9 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
       if (workspaceId !== undefined) assertWorkspaceID(workspaceId);
       if (workspace !== undefined) assertWorkspaceSlug(workspace);
       assertKeepAliveSeconds(config.keepAliveSeconds);
-      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/sessions/open", {
-        method: "POST",
-        body: {
-          key: config.key,
-          ...(workspaceId !== undefined
-            ? { workspace_id: workspaceId }
-            : workspace !== undefined ? { workspace } : {}),
-          keep_alive_seconds: config.keepAliveSeconds,
-        },
-      });
-      if (
-        !isRecord(envelope) ||
-        typeof envelope.id !== "string" ||
-        !SESSION_ID_PATTERN.test(envelope.id)
-      ) {
-        throw new RemoteAppError("invalid_session_response", 0);
-      }
-      return createRemoteSession(envelope.id, runtimeFetch, executionId);
-    },
-
-    connect(id: string): Session<Input, Output> {
+      const id = config.id ?? sessionId();
       assertSessionID(id);
-      return createRemoteSession(id, runtimeFetch, executionId);
+      return createRemoteSession(id, config, runtimeFetch, executionId);
     },
   });
 
@@ -123,40 +80,12 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
     },
   });
 
-  const executions = Object.freeze({
-    async dispatch(config: AsyncExecutionDispatch<Input>): Promise<AsyncExecutionReceipt> {
-      assertWorkspaceID(config.workspaceId);
-      assertSessionKey(config.sessionKey);
-      assertKeepAliveSeconds(config.keepAliveSeconds);
-      const id = executionId();
-      assertExecutionID(id);
-      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/executions", {
-        method: "POST",
-        body: {
-          id,
-          workspace_id: config.workspaceId,
-          session_key: config.sessionKey,
-          keep_alive_seconds: config.keepAliveSeconds,
-          input: config.input,
-        },
-      });
-      if (!isRecord(envelope) || envelope.id !== id || envelope.status !== "queued" ||
-          typeof envelope.accepted_at !== "string") {
-        throw new RemoteAppError("invalid_execution_response", 0);
-      }
-      return Object.freeze({
-        id,
-        status: "queued" as const,
-        acceptedAt: readExecutionDate(envelope.accepted_at),
-      });
-    },
-  });
-
-  return Object.freeze({ executions, sessions, workspaces });
+  return Object.freeze({ sessions, workspaces });
 }
 
 function createRemoteSession<Input, Output>(
   id: string,
+  config: SessionOpenConfig,
   runtimeFetch: RuntimeFetch,
   executionId: IDFactory,
 ): Session<Input, Output> {
@@ -174,7 +103,11 @@ function createRemoteSession<Input, Output>(
         `/__cantelop/v1/sessions/${encodeURIComponent(this.id)}/executions`,
         {
           method: "POST",
-          body: { id, input },
+          body: {
+            id,
+            ...sessionConfiguration(config),
+            input,
+          },
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         },
       );
@@ -182,6 +115,29 @@ function createRemoteSession<Input, Output>(
         throw new RemoteAppError("invalid_execution_response", 0);
       }
       return envelope.output as Output;
+    },
+
+    async dispatch(input: Input): Promise<ExecutionReceipt> {
+      const execution = executionId();
+      assertExecutionID(execution);
+      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/executions", {
+        method: "POST",
+        body: {
+          id: execution,
+          session_id: this.id,
+          ...sessionConfiguration(config),
+          input,
+        },
+      });
+      if (!isRecord(envelope) || envelope.id !== execution || envelope.status !== "queued" ||
+          typeof envelope.accepted_at !== "string") {
+        throw new RemoteAppError("invalid_execution_response", 0);
+      }
+      return Object.freeze({
+        id: execution,
+        status: "queued" as const,
+        acceptedAt: readExecutionDate(envelope.accepted_at),
+      });
     },
 
     async terminate(): Promise<void> {
@@ -192,6 +148,17 @@ function createRemoteSession<Input, Output>(
       );
     },
   });
+}
+
+function sessionConfiguration(config: SessionOpenConfig): Record<string, unknown> {
+  const workspaceId = "workspaceId" in config ? config.workspaceId : undefined;
+  const workspace = "workspace" in config ? config.workspace : undefined;
+  return {
+    ...(workspaceId !== undefined
+      ? { workspace_id: workspaceId }
+      : workspace !== undefined ? { workspace } : {}),
+    keep_alive_seconds: config.keepAliveSeconds,
+  };
 }
 
 interface RequestOptions {
@@ -295,12 +262,8 @@ function assertWorkspaceID(id: string): void {
 }
 
 function assertSessionID(id: string): void {
-  if (!SESSION_ID_PATTERN.test(id)) throw new TypeError("Invalid Cantelop Session ID");
-}
-
-function assertSessionKey(key: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(key)) {
-    throw new TypeError("Invalid Cantelop Session key");
+  if (!SESSION_ID_PATTERN.test(id)) {
+    throw new TypeError("Invalid Cantelop Session ID");
   }
 }
 

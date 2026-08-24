@@ -66,9 +66,9 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
     [
       `import { defineApi } from ${JSON.stringify(sdkApi)};`,
       "export default defineApi(({ app, router }) => {",
-      '  router.route("POST", "/sessions", async () => {',
-      '    const session = await app.sessions.create({ workspaceId: "wsp_0123456789abcdef0123456789abcdef", keepAliveSeconds: 30 });',
-      "    return Response.json({ sessionId: session.id });",
+      '  router.route("POST", "/execute", async () => {',
+      '    const session = app.sessions.open({ id: "local:thread", workspaceId: "wsp_0123456789abcdef0123456789abcdef", keepAliveSeconds: 30 });',
+      '    return Response.json({ sessionId: session.id, output: await session.execute({ prompt: "hello" }) });',
       "  });",
       "});",
     ].join("\n"),
@@ -83,18 +83,22 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
   let forwarded;
   globalThis.fetch = async (request) => {
     forwarded = request;
-    return Response.json({ id: (await request.clone().json()).id }, { status: 202 });
+    return Response.json({ output: { answer: "done" } });
   };
   t.after(() => { globalThis.fetch = originalFetch; });
 
   const worker = (await import(`${new URL(artifact.mainModule, "file:").href}?local`)).default;
-  const response = await worker.fetch(new Request("http://127.0.0.1:8787/sessions", {
+  const response = await worker.fetch(new Request("http://127.0.0.1:8787/execute", {
     method: "POST",
   }));
 
   assert.equal(response.status, 200);
-  assert.match((await response.json()).sessionId, /^ses_/);
-  assert.equal(forwarded.url, "http://127.0.0.1:43123/__cantelop/v1/sessions");
+  assert.deepEqual(await response.json(), {
+    sessionId: "local:thread",
+    output: { answer: "done" },
+  });
+  assert.equal(forwarded.url,
+    "http://127.0.0.1:43123/__cantelop/v1/sessions/local%3Athread/executions");
 });
 
 test("buildLocalApi rejects non-loopback runtime origins", async () => {

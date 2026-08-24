@@ -4,11 +4,13 @@ import { createRemoteApp, RemoteAppError } from "../dist/remote-app.js";
 
 const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
 const sessionId = "ses_0123456789abcdef0123456789abcdef";
+const namedSessionId = "github:repository";
 const executionId = "exec_0123456789abcdef0123456789abcdef";
 
 test("the current App creates Workspaces without a caller-supplied App ID", async () => {
   let forwarded;
   const app = createRemoteApp({
+    executionId: () => executionId,
     fetch: async (request) => {
       forwarded = request;
       return Response.json({
@@ -53,118 +55,94 @@ test("the current App opens an existing Workspace by slug", async () => {
   assert.deepEqual(await forwarded.json(), { slug: "production" });
 });
 
-test("a Session is created with its Workspace and sole keep-alive setting", async () => {
-  let forwarded;
+test("opening a named Session is lazy and execution atomically opens it", async () => {
+  const forwarded = [];
   const app = createRemoteApp({
-    sessionId: () => sessionId,
     fetch: async (request) => {
-      forwarded = request;
-      return Response.json({ id: sessionId }, { status: 202 });
+      forwarded.push(request);
+      return Response.json({ output: { answer: "done" } });
     },
+    executionId: () => executionId,
   });
 
-  const session = await app.sessions.create({
+  const session = app.sessions.open({
+    id: namedSessionId,
     workspaceId,
     keepAliveSeconds: 0,
   });
-  assert.equal(session.id, sessionId);
-  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/sessions");
-  assert.deepEqual(await forwarded.json(), {
-    id: sessionId,
+  assert.equal(session.id, namedSessionId);
+  assert.equal(forwarded.length, 0);
+
+  assert.deepEqual(await session.execute({ prompt: "hello" }), { answer: "done" });
+  assert.equal(forwarded[0].url,
+    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}/executions`);
+  assert.deepEqual(await forwarded[0].json(), {
+    id: executionId,
     workspace_id: workspaceId,
     keep_alive_seconds: 0,
+    input: { prompt: "hello" },
   });
 });
 
-test("a Workspace-scoped key opens a platform-identified Session", async () => {
-  let forwarded;
+test("opening an anonymous Session generates its ID without a request", () => {
   const app = createRemoteApp({
-    sessionId: () => {
-      throw new Error("open must not generate the Session ID in the SDK");
-    },
-    fetch: async (request) => {
-      forwarded = request;
-      return Response.json({ id: sessionId }, { status: 200 });
-    },
+    sessionId: () => sessionId,
+    fetch: async () => { throw new Error("open must not perform transport"); },
   });
 
-  const session = await app.sessions.open({
-    key: "telegram",
+  const session = app.sessions.open({
     workspaceId,
     keepAliveSeconds: 300,
   });
   assert.equal(session.id, sessionId);
-  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/sessions/open");
-  assert.deepEqual(await forwarded.json(), {
-    key: "telegram",
-    workspace_id: workspaceId,
-    keep_alive_seconds: 300,
-  });
 });
 
 test("a Session treats default as a literal Workspace slug", async () => {
   let forwarded;
   const app = createRemoteApp({
+    executionId: () => executionId,
     fetch: async (request) => {
       forwarded = request;
-      return Response.json({ id: sessionId });
+      return Response.json({ output: null });
     },
   });
 
-  const session = await app.sessions.open({
+  const session = app.sessions.open({
+    id: "thread",
     workspace: "default",
-    key: "thread",
     keepAliveSeconds: 0,
   });
-  assert.equal(session.id, sessionId);
+  await session.execute({});
+  assert.equal(session.id, "thread");
   assert.deepEqual(await forwarded.json(), {
-    key: "thread",
+    id: executionId,
     workspace: "default",
     keep_alive_seconds: 0,
+    input: {},
   });
 });
 
 test("a Session uses the injected primary Workspace when its selector is omitted", async () => {
   let forwarded;
   const app = createRemoteApp({
-    fetch: async (request) => {
-      forwarded = request;
-      return Response.json({ id: sessionId });
-    },
-  });
-
-  const session = await app.sessions.open({ key: "thread", keepAliveSeconds: 0 });
-  assert.equal(session.id, sessionId);
-  assert.deepEqual(await forwarded.json(), {
-    key: "thread",
-    keep_alive_seconds: 0,
-  });
-});
-
-test("execution is a child operation of a Session", async () => {
-  let forwarded;
-  const app = createRemoteApp({
     executionId: () => executionId,
     fetch: async (request) => {
       forwarded = request;
-      return Response.json({ output: { answer: "done" } });
+      return Response.json({ output: null });
     },
   });
 
-  const output = await app.sessions.connect(sessionId).execute({ prompt: "hello" });
-  assert.deepEqual(output, { answer: "done" });
-  assert.equal(
-    forwarded.url,
-    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${sessionId}/executions`,
-  );
-  assert.equal(forwarded.headers.get("X-Cantelop-Edge-Workspace-ID"), null);
+  const session = app.sessions.open({ id: "thread", keepAliveSeconds: 0 });
+  await session.execute({});
+  assert.equal(session.id, "thread");
   assert.deepEqual(await forwarded.json(), {
     id: executionId,
-    input: { prompt: "hello" },
+    keep_alive_seconds: 0,
+    input: {},
   });
 });
 
-test("asynchronous dispatch is durably accepted with a system execution identity", async () => {
+test("a Session dispatches asynchronously with the same identity and configuration", async () => {
   let forwarded;
   const app = createRemoteApp({
     executionId: () => executionId,
@@ -178,20 +156,20 @@ test("asynchronous dispatch is durably accepted with a system execution identity
     },
   });
 
-  const receipt = await app.executions.dispatch({
+  const session = app.sessions.open({
+    id: namedSessionId,
     workspaceId,
-    sessionKey: "github:repository",
     keepAliveSeconds: 300,
-    input: { event: "push" },
   });
+  const receipt = await session.dispatch({ event: "push" });
   assert.equal(receipt.id, executionId);
   assert.equal(receipt.status, "queued");
   assert.equal(receipt.acceptedAt.toISOString(), "2026-08-17T12:00:00.000Z");
   assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/executions");
   assert.deepEqual(await forwarded.json(), {
     id: executionId,
+    session_id: namedSessionId,
     workspace_id: workspaceId,
-    session_key: "github:repository",
     keep_alive_seconds: 300,
     input: { event: "push" },
   });
@@ -206,40 +184,39 @@ test("Session termination targets the logical Session", async () => {
     },
   });
 
-  await app.sessions.connect(sessionId).terminate();
+  await app.sessions.open({ id: namedSessionId, keepAliveSeconds: 0 }).terminate();
   assert.equal(forwarded.method, "DELETE");
   assert.equal(
     forwarded.url,
-    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${sessionId}`,
+    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}`,
   );
 });
 
 test("resource configuration is validated before transport", async () => {
   const app = createRemoteApp();
   await assert.rejects(app.workspaces.create({ slug: "Bad Slug" }), /Workspace slug/);
-  await assert.rejects(
-    app.sessions.create({ workspaceId, keepAliveSeconds: -1 }),
+  assert.throws(
+    () => app.sessions.open({ workspaceId, keepAliveSeconds: -1 }),
     /keepAliveSeconds/,
   );
-  await assert.rejects(
-    app.sessions.open({ key: "not a valid key", workspaceId, keepAliveSeconds: 300 }),
-    /Session key/,
+  assert.throws(
+    () => app.sessions.open({ id: "not a valid id", workspaceId, keepAliveSeconds: 300 }),
+    /Session ID/,
   );
-  await assert.rejects(
-    app.sessions.open({ key: "thread", workspace: "Bad Slug", keepAliveSeconds: 0 }),
+  assert.throws(
+    () => app.sessions.open({ id: "thread", workspace: "Bad Slug", keepAliveSeconds: 0 }),
     /Workspace slug/,
   );
-  await assert.rejects(
-    app.sessions.open({ key: "thread" }),
+  assert.throws(
+    () => app.sessions.open({ id: "thread" }),
     /keepAliveSeconds/,
   );
-  await assert.rejects(
-    app.sessions.open({
-      key: "thread", workspace: "production", workspaceId, keepAliveSeconds: 0,
+  assert.throws(
+    () => app.sessions.open({
+      id: "thread", workspace: "production", workspaceId, keepAliveSeconds: 0,
     }),
     /at most one Workspace/,
   );
-  assert.throws(() => app.sessions.connect("sandbox-1"), /Session ID/);
 });
 
 test("remote errors expose stable codes without leaking messages", async () => {
@@ -250,7 +227,8 @@ test("remote errors expose stable codes without leaking messages", async () => {
     ),
   });
 
-  await assert.rejects(app.sessions.connect(sessionId).execute({}), (error) => {
+  const session = app.sessions.open({ id: sessionId, keepAliveSeconds: 0 });
+  await assert.rejects(session.execute({}), (error) => {
     assert.ok(error instanceof RemoteAppError);
     assert.equal(error.code, "session_terminated");
     assert.equal(error.status, 409);
@@ -270,7 +248,8 @@ test("execution forwards its AbortSignal", async () => {
     },
   });
   const controller = new AbortController();
-  const result = app.sessions.connect(sessionId).execute({}, { signal: controller.signal });
+  const session = app.sessions.open({ id: sessionId, keepAliveSeconds: 0 });
+  const result = session.execute({}, { signal: controller.signal });
   controller.abort(new Error("cancelled by test"));
 
   await assert.rejects(result, /cancelled by test/);

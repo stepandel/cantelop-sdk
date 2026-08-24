@@ -43,12 +43,9 @@ export type {
   Router,
 } from "./router.js";
 export type {
-  AsyncExecutionDispatch,
-  AsyncExecutionReceipt,
   CantelopApp,
-  ExecutionService,
+  ExecutionReceipt,
   Session,
-  SessionCreateConfig,
   SessionExecuteOptions,
   SessionOpenConfig,
   SessionService,

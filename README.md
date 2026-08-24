@@ -88,44 +88,47 @@ export default defineApi<Input, Output>(({ app, router }) => {
     return Response.json(workspace, { status: 201 });
   });
 
-  router.route("POST", "/sessions", async ({ request }) => {
-    const config = await request.json() as {
+  router.route("POST", "/execute", async ({ request }) => {
+    const body = await request.json() as {
+      sessionId?: string;
       workspaceId: string;
       keepAliveSeconds: number;
-    };
-    const session = await app.sessions.create(config);
-    return Response.json({ sessionId: session.id }, { status: 201 });
-  });
-
-  router.route("POST", "/execute", async ({ request }) => {
-    const { sessionId, input } = await request.json() as {
-      sessionId: string;
       input: Input;
     };
-    const session = app.sessions.connect(sessionId);
+    const session = app.sessions.open({
+      ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
+      workspaceId: body.workspaceId,
+      keepAliveSeconds: body.keepAliveSeconds,
+    });
     return Response.json({
-      output: await session.execute(input, { signal: request.signal }),
+      sessionId: session.id,
+      output: await session.execute(body.input, { signal: request.signal }),
     });
   });
 });
 ```
 
-Every execution belongs to a Session. A Session keeps its Sandbox warm for
-`keepAliveSeconds` after work completes. If the Sandbox has already been
-released, the platform can reactivate the same logical Session on a new
-Sandbox. Explicitly terminating the Session makes it final:
+Every execution belongs to a Session. `app.sessions.open()` creates a local
+Session handle without making a request. The first `execute()` or `dispatch()`
+atomically creates the logical Session if its ID does not exist and starts the
+execution; otherwise it resumes that Session. Omitting `id` generates one in
+the SDK, which is immediately available as `session.id`.
+
+A Session keeps its Sandbox warm for `keepAliveSeconds` after work completes.
+If the Sandbox has already been released, the platform can reactivate the same
+logical Session on a new Sandbox. Explicitly terminating the Session makes it
+final:
 
 ```ts
-await app.sessions.connect(sessionId).terminate();
+await app.sessions.open({ id: sessionId, keepAliveSeconds: 0 }).terminate();
 ```
 
-Distributed API workers can converge on one Session without storing its ID by
-opening a Workspace-scoped key. Cantelop generates the Session ID and durably
-binds the non-secret key inside that Workspace:
+Distributed API workers converge on one Session by opening the same
+application-defined ID:
 
 ```ts
-const session = await app.sessions.open({
-  key: "telegram",
+const session = app.sessions.open({
+  id: "telegram",
   workspaceId,
   keepAliveSeconds: 300,
 });
@@ -137,18 +140,17 @@ Existing Workspaces are addressable by their App-scoped slug:
 const workspace = await app.workspaces.open({ slug: "production" });
 ```
 
-A keyed Session can use either the existing `workspaceId` form or an exact
-App-scoped slug:
+A Session can use either an existing `workspaceId` or an exact App-scoped slug:
 
 ```ts
-const session = await app.sessions.open({
+const session = app.sessions.open({
+  id: threadId,
   workspace: "production",
-  key: threadKey,
   keepAliveSeconds: 3600,
 });
 
-const defaultSession = await app.sessions.open({
-  key: threadKey,
+const defaultSession = app.sessions.open({
+  id: threadId,
   keepAliveSeconds: 3600,
 });
 ```
@@ -158,23 +160,25 @@ caller decision. Omitting both Workspace selectors uses the App's injected
 initial Workspace. Every string, including `"default"`, is an ordinary exact
 slug; no slug has platform-defined meaning.
 
-Opening the same key with different configuration conflicts. Termination is
-still final; use a new key when a distinct logical Session is required.
+The Session ID is immutable and App-scoped. Its Workspace is fixed when the
+first execution creates it, while `keepAliveSeconds` applies to each operation.
+Opening an existing ID against a different Workspace conflicts. Termination is
+still final; use a new ID for a distinct logical Session.
 
 Webhook handlers that must acknowledge before a Sandbox can start can dispatch
 the execution asynchronously. Cantelop durably accepts the input before the
-promise resolves, then opens the keyed Session and runs the harness in the
+promise resolves, then opens the Session and runs the harness in the
 background:
 
 ```ts
 router.route("POST", "/github", async ({ request }) => {
   const event = await request.json() as Input;
-  const receipt = await app.executions.dispatch({
+  const session = app.sessions.open({
+    id: "github:repository",
     workspaceId,
-    sessionKey: "github:repository",
     keepAliveSeconds: 300,
-    input: event,
   });
+  const receipt = await session.dispatch(event);
   return Response.json({ accepted: true, executionId: receipt.id }, {
     status: 202,
   });

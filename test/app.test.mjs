@@ -10,7 +10,7 @@ test("defineApi owns the public root router", () => {
 test("a router handles Web requests and can close over the current App", async () => {
   const definition = defineApi(({ app, router }) => {
     router.route("POST", "/execute", async ({ request }) => {
-      const session = app.sessions.connect("ses_test");
+      const session = app.sessions.open({ id: "ses_test", keepAliveSeconds: 30 });
       return Response.json({ output: await session.execute(await request.text()) });
     });
   });
@@ -18,12 +18,12 @@ test("a router handles Web requests and can close over the current App", async (
     app: {
       workspaces: { create() { throw new Error("not used"); } },
       sessions: {
-        create() { throw new Error("not used"); },
-        connect(sessionId) {
-          assert.equal(sessionId, "ses_test");
+        open(config) {
+          assert.equal(config.id, "ses_test");
           return {
-            id: sessionId,
+            id: config.id,
             execute: async (input) => input.toUpperCase(),
+            dispatch: async () => { throw new Error("not used"); },
             terminate: async () => undefined,
           };
         },
@@ -52,8 +52,7 @@ test("a router returns Web-standard routing errors", async () => {
     app: {
       workspaces: { create() { throw new Error("not used"); } },
       sessions: {
-        create() { throw new Error("not used"); },
-        connect() { throw new Error("not used"); },
+        open() { throw new Error("not used"); },
       },
     },
     env: {},

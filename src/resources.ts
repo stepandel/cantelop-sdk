@@ -16,13 +16,8 @@ export interface Workspace {
   readonly archivedAt?: Date;
 }
 
-export interface SessionCreateConfig {
-  readonly workspaceId: string;
-  readonly keepAliveSeconds: number;
-}
-
 interface SessionOpenBaseConfig {
-  readonly key: string;
+  readonly id?: string;
   readonly keepAliveSeconds: number;
 }
 
@@ -36,14 +31,7 @@ export interface SessionExecuteOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface AsyncExecutionDispatch<Input> {
-  readonly workspaceId: string;
-  readonly sessionKey: string;
-  readonly keepAliveSeconds: number;
-  readonly input: Input;
-}
-
-export interface AsyncExecutionReceipt {
+export interface ExecutionReceipt {
   readonly id: string;
   readonly status: "queued";
   readonly acceptedAt: Date;
@@ -52,6 +40,7 @@ export interface AsyncExecutionReceipt {
 export interface Session<Input, Output> {
   readonly id: string;
   execute(input: Input, options?: SessionExecuteOptions): Promise<Output>;
+  dispatch(input: Input): Promise<ExecutionReceipt>;
   terminate(): Promise<void>;
 }
 
@@ -61,18 +50,11 @@ export interface WorkspaceService {
 }
 
 export interface SessionService<Input, Output> {
-  create(config: SessionCreateConfig): Promise<Session<Input, Output>>;
-  open(config: SessionOpenConfig): Promise<Session<Input, Output>>;
-  connect(sessionId: string): Session<Input, Output>;
-}
-
-export interface ExecutionService<Input> {
-  dispatch(config: AsyncExecutionDispatch<Input>): Promise<AsyncExecutionReceipt>;
+  open(config: SessionOpenConfig): Session<Input, Output>;
 }
 
 /** Capabilities of the current App, injected by Cantelop. */
 export interface CantelopApp<Input, Output> {
-  readonly executions: ExecutionService<Input>;
   readonly workspaces: WorkspaceService;
   readonly sessions: SessionService<Input, Output>;
 }
