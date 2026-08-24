@@ -2,6 +2,7 @@ import { defineApi } from "@cantelop/sdk/api";
 import type {
   AnswerOutput,
   CreateSessionRequest,
+  DispatchRequest,
   ExecuteRequest,
   PromptInput,
 } from "./contracts.js";
@@ -42,6 +43,25 @@ export default defineApi<PromptInput, AnswerOutput>(
       const session = app.sessions.connect(input.sessionId);
       const output = await session.execute({ prompt: input.prompt }, { signal: request.signal });
       return Response.json(output);
+    });
+
+    router.route("POST", "/dispatch", async ({ request }) => {
+      const input = (await request.json()) as Partial<DispatchRequest>;
+      if (typeof input.workspaceId !== "string" || typeof input.sessionKey !== "string" ||
+          typeof input.keepAliveSeconds !== "number" || !Number.isInteger(input.keepAliveSeconds) ||
+          typeof input.prompt !== "string" || input.prompt.length === 0) {
+        return Response.json({
+          error: "workspaceId, sessionKey, keepAliveSeconds, and prompt are required",
+        }, { status: 400 });
+      }
+
+      const receipt = await app.executions.dispatch({
+        workspaceId: input.workspaceId,
+        sessionKey: input.sessionKey,
+        keepAliveSeconds: input.keepAliveSeconds,
+        input: { prompt: input.prompt },
+      });
+      return Response.json(receipt, { status: 202 });
     });
 
   },
