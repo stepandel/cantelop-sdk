@@ -5,7 +5,7 @@ The OpenAI, Anthropic, and Pi examples each contain two deployment artifacts:
 ```text
 src/api.ts      Edge HTTP middleware
 src/harness.ts  Linux-native agent runtime
-cantelop.json   Editor-ready build and deployment manifest
+cantelop.json   Build and deployment manifest
 ```
 
 Each provider directory is a complete, self-contained implementation with its

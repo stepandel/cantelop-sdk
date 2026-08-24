@@ -25,20 +25,19 @@ file:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
   "app": "vera",
   "api": "src/api.ts",
   "harness": "src/harness.ts"
 }
 ```
 
-The schema URL enables completion, validation, and field documentation in JSON
-Schema-aware editors. It also identifies the configuration format version, so
-there is no separate version field. `app` is the exact human-readable slug of
-an existing App; generated `app_...` IDs do not belong in project source. Use
-the command's `-config`, `-api`, and `-harness` flags for non-default paths. Add
-an expanded harness object with `context` and `dockerfile` only when native
-dependencies or system tools require a custom image.
+The CLI owns parsing, validation, and compatibility for this file; applications
+do not select a schema or tie the manifest format to their installed SDK
+version. `app` is the exact human-readable slug of an existing App; generated
+`app_...` IDs do not belong in project source. Use the command's `-config`,
+`-api`, and `-harness` flags for non-default paths. Add an expanded harness
+object with `context` and `dockerfile` only when native dependencies or system
+tools require a custom image.
 
 Declare configuration requirements by name without committing production
 values:
@@ -58,8 +57,9 @@ defaults, and `CANTELOP_*` names are reserved by the runtime.
 
 The canonical schema is owned by the Cantelop CLI/platform. This public
 repository mirrors it at `schemas/app-v1.json` so JSON Schema-aware editors can
-load it without platform credentials. The provider examples each include a
-complete manifest that points to that public mirror.
+load it without platform credentials. Editor integrations can associate it with
+`cantelop.json` by filename; applications do not need to include the schema URL
+in their manifests.
 
 A TypeScript SDK with separate surfaces for Edge API middleware and native
 harness execution.
