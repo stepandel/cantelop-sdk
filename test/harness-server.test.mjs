@@ -80,6 +80,30 @@ test("the native adapter routes steering to the session-aware handler", async (t
   assert.equal(received.session.id, "thread");
 });
 
+test("a harness server is bound to one Session identity", async (t) => {
+  const server = createServer(
+    createHarnessRequestHandler(async () => ({ ok: true })),
+  );
+  await listen(server);
+  t.after(() => close(server));
+  const url = `${origin(server)}/__cantelop/v1/executions/${executionId}`;
+
+  const first = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(executionEnvelope({})),
+  });
+  const second = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(executionEnvelope({}, "execute", "other-thread")),
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  assert.deepEqual(await second.json(), { error: { code: "session_mismatch" } });
+});
+
 test("the native adapter marks a failed user execution as settled", async (t) => {
   const server = createServer(
     createHarnessRequestHandler(async () => {
@@ -262,11 +286,11 @@ function origin(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function executionEnvelope(input, operation = "execute") {
+function executionEnvelope(input, operation = "execute", sessionId = "thread") {
   return {
     operation,
     session: {
-      id: "thread",
+      id: sessionId,
       workspace_id: "wsp_0123456789abcdef0123456789abcdef",
       keep_alive_seconds: 300,
     },

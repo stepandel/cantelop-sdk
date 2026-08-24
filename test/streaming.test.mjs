@@ -30,4 +30,12 @@ test("a native harness receives VM environment and emits events", async () => {
   ]);
   assert.equal(await execution.wait(), "VM:HELLO");
   assert.equal(execution.status, "succeeded");
+
+  await assert.rejects(executor.start("again", {
+    session: {
+      id: "other-thread",
+      workspaceId: "wsp_0123456789abcdef0123456789abcdef",
+      keepAliveSeconds: 300,
+    },
+  }), /already bound to a different Session/);
 });

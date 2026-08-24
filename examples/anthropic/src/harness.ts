@@ -12,7 +12,7 @@ type RuntimeEvent =
   | { type: "text_delta"; delta: string }
   | { type: "done"; output: AnswerOutput };
 
-const sessions = new Map<string, string>();
+let providerSessionId: string | undefined;
 
 async function runTurn(
   { session, input, env, signal, emit }: HarnessContext<PromptInput, RuntimeEvent>,
@@ -28,7 +28,6 @@ async function runTurn(
   signal.addEventListener("abort", forwardAbort, { once: true });
 
   try {
-    const providerSessionId = sessions.get(session.id);
     for await (const message of query({
       prompt: input.prompt,
       options: {
@@ -40,7 +39,7 @@ async function runTurn(
       },
     })) {
       if (message.type === "system" && message.subtype === "init") {
-        sessions.set(session.id, message.session_id);
+        providerSessionId = message.session_id;
       }
       if (
         message.type === "stream_event" &&

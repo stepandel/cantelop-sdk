@@ -183,8 +183,11 @@ export function createHarnessExecutor<
   runtime: HarnessRuntime<Input, Output, Event>,
   options: HarnessExecutorOptions = {},
 ): HarnessExecutor<Input, Output, Event> {
+  let boundSession: Session | undefined;
   return {
     async start(input, startOptions: StartHarnessExecutionOptions) {
+      assertSessionIdentity(boundSession, startOptions.session);
+      boundSession ??= Object.freeze({ ...startOptions.session });
       const id = crypto.randomUUID();
       const controller = new AbortController();
       const eventStream = new ExecutionEventStream<Event>();
@@ -247,6 +250,13 @@ export function createHarnessExecutor<
       return handle;
     },
   };
+}
+
+function assertSessionIdentity(current: Session | undefined, next: Session): void {
+  if (current !== undefined &&
+      (current.id !== next.id || current.workspaceId !== next.workspaceId)) {
+    throw new Error("Harness executor is already bound to a different Session");
+  }
 }
 
 export type {

@@ -297,6 +297,11 @@ conversation stores, and provider resume handles survive while the Sandbox is
 warm. Applications that must resume after Sandbox replacement must persist the
 provider's resumable state outside process memory.
 
+Each harness runtime and Sandbox is bound to exactly one Session identity.
+Provider state can therefore be held as one module-level value; a per-Session
+map is unnecessary. The native adapter rejects any request for a different
+Session ID or Workspace rather than mixing tenants inside one harness process.
+
 Cantelop's generated native bootstrap calls `serveHarness()` from
 `@cantelop/sdk/harness`. It accepts no port argument: the runtime provider
 injects `CANTELOP_INTERNAL_PORT` from the App's

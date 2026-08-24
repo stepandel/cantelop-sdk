@@ -12,7 +12,7 @@ type RuntimeEvent =
   | { type: "text_delta"; delta: string }
   | { type: "done"; output: AnswerOutput };
 
-const sessions = new Map<string, MemorySession>();
+let providerSession: MemorySession | undefined;
 
 async function runTurn(
   { session, input, env, signal, emit }: HarnessContext<PromptInput, RuntimeEvent>,
@@ -25,10 +25,8 @@ async function runTurn(
     instructions: "You are a concise, helpful assistant.",
     model: env.OPENAI_MODEL ?? "gpt-4.1-mini",
   });
-  let providerSession = sessions.get(session.id);
   if (providerSession === undefined) {
     providerSession = new MemorySession({ sessionId: session.id });
-    sessions.set(session.id, providerSession);
   }
 
   const stream = await run(agent, input.prompt, {

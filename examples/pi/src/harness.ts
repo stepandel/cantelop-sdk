@@ -14,13 +14,12 @@ type RuntimeEvent =
   | { type: "done"; output: AnswerOutput };
 
 const models = builtinModels();
-const sessions = new Map<string, Agent>();
+let agent: Agent | undefined;
 
 function sessionAgent(
   { session, env }: HarnessContext<PromptInput, RuntimeEvent>,
 ): Agent {
-  const existing = sessions.get(session.id);
-  if (existing !== undefined) return existing;
+  if (agent !== undefined) return agent;
 
   const provider = env.PI_PROVIDER ?? "anthropic";
   const modelId = env.PI_MODEL ?? "claude-sonnet-4-6";
@@ -30,7 +29,7 @@ function sessionAgent(
     throw new Error(`Pi model not found: ${provider}/${modelId}`);
   }
 
-  const agent = new Agent({
+  agent = new Agent({
     initialState: {
       systemPrompt: "You are a concise, helpful assistant.",
       model,
@@ -38,7 +37,6 @@ function sessionAgent(
     streamFn: models.streamSimple.bind(models),
     sessionId: session.id,
   });
-  sessions.set(session.id, agent);
   return agent;
 }
 
@@ -76,8 +74,7 @@ async function runTurn(
 async function steerTurn(
   context: HarnessContext<PromptInput, RuntimeEvent>,
 ): Promise<AnswerOutput> {
-  const agent = sessions.get(context.session.id);
-  if (agent === undefined) throw new Error("Cannot steer a Session without an active agent");
+  const agent = sessionAgent(context);
   agent.steer({
     role: "user",
     content: context.input.prompt,

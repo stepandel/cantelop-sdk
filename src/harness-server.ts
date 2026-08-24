@@ -51,8 +51,22 @@ export function createHarnessRequestHandler<Input, Output, Event = never>(
   runtime: HarnessRuntime<Input, Output, Event>,
   options: HarnessRequestHandlerOptions = {},
 ): HarnessRequestHandler {
+  let boundSession: Session | undefined;
   return (request, response) => {
-    void handleRequest(request, response, runtime, options.env ?? process.env);
+    void handleRequest(
+      request,
+      response,
+      runtime,
+      options.env ?? process.env,
+      (session) => {
+        if (boundSession !== undefined &&
+            (boundSession.id !== session.id ||
+              boundSession.workspaceId !== session.workspaceId)) {
+          throw new ProtocolError(409, "session_mismatch");
+        }
+        boundSession ??= session;
+      },
+    );
   };
 }
 
@@ -100,6 +114,7 @@ async function handleRequest<Input, Output, Event>(
   response: ServerResponse,
   runtime: HarnessRuntime<Input, Output, Event>,
   env: HarnessEnvironment,
+  bindSession: (session: Session) => void,
 ): Promise<void> {
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://harness.cantelop.internal");
@@ -134,6 +149,7 @@ async function handleRequest<Input, Output, Event>(
       return;
     }
     const session = readSession(envelope.session);
+    bindSession(session);
     const kind = envelope.operation as HarnessExecutionKind;
 
     let output: Output;
