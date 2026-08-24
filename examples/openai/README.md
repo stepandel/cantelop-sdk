@@ -16,6 +16,9 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 `sessionId`, `workspaceId`, `keepAliveSeconds`, and `prompt` to reuse it. Both
 execution routes return a durable receipt immediately with status `202`.
 
+The harness implements an explicit `steer` handler as another turn in the
+Session's shared OpenAI `MemorySession`.
+
 `cantelop.json` targets an illustrative App with slug `openai`. Change the slug
 when deploying to a different App.
 

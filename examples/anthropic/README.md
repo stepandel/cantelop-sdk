@@ -16,6 +16,9 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 `sessionId`, `workspaceId`, `keepAliveSeconds`, and `prompt` to reuse it. Both
 execution routes return a durable receipt immediately with status `202`.
 
+The harness implements an explicit `steer` handler by resuming the Session's
+Claude provider session and applying the prompt as its next turn.
+
 `cantelop.json` targets an illustrative App with slug `anthropic`. Change the
 slug when deploying to a different App.
 

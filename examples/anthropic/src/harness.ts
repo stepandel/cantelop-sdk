@@ -62,7 +62,14 @@ async function runTurn(
   throw new Error("Claude Agent SDK completed without a result");
 }
 
+async function steerTurn(
+  context: HarnessContext<PromptInput, RuntimeEvent>,
+): Promise<AnswerOutput> {
+  // Claude resumes the provider session and applies the steer as its next turn.
+  return runTurn(context);
+}
+
 export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>({
   run: runTurn,
-  steer: runTurn,
+  steer: steerTurn,
 });
