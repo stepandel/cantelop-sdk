@@ -1,4 +1,7 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import {
   defineSessionLogic,
   type SessionContext,
@@ -8,20 +11,19 @@ import type { SessionEvent, SessionMessage } from "./contracts.js";
 type Context = SessionContext<SessionMessage, SessionEvent>;
 
 let conversationId: string | undefined;
-const promptQueue: string[] = [];
+let input: ClaudeInput | undefined;
 
 export default defineSessionLogic<SessionMessage, SessionEvent>({
   receive(context) {
     const command = context.message.payload;
 
     if (command.type === "cancel") {
-      promptQueue.length = 0;
       context.activity.cancel();
       return;
     }
 
     if (context.activity.active) {
-      promptQueue.push(command.prompt);
+      input?.send(command.prompt, command.type === "steer" ? "now" : "later");
       return;
     }
 
@@ -36,13 +38,20 @@ function startPrompt(context: Context, prompt: string): void {
     );
   }
 
-  context.activity.start(async ({ signal, send }) => {
+  input = new ClaudeInput();
+  input.send(prompt);
+
+  context.activity.start(async ({ signal }) => {
     const abortController = new AbortController();
-    const abort = () => abortController.abort(signal.reason);
+    const currentInput = input!;
+    const abort = () => {
+      currentInput.close();
+      abortController.abort(signal.reason);
+    };
     signal.addEventListener("abort", abort, { once: true });
 
     const messages = query({
-      prompt,
+      prompt: currentInput,
       options: {
         abortController,
         includePartialMessages: true,
@@ -64,17 +73,59 @@ function startPrompt(context: Context, prompt: string): void {
           context.emit({ type: "text_delta", delta: message.event.delta.text });
         } else if (message.type === "result" && "result" in message) {
           context.emit({ type: "done", answer: message.result });
-          return;
         }
       }
-      throw new Error("Claude Agent SDK completed without a result");
+      if (!signal.aborted) {
+        throw new Error("Claude Agent SDK input stream ended unexpectedly");
+      }
     } finally {
       signal.removeEventListener("abort", abort);
+      currentInput.close();
       messages.close();
-      const nextPrompt = promptQueue.shift();
-      if (!signal.aborted && nextPrompt !== undefined) {
-        send({ type: "prompt", prompt: nextPrompt });
-      }
+      if (input === currentInput) input = undefined;
     }
   });
+}
+
+class ClaudeInput implements AsyncIterable<SDKUserMessage> {
+  private readonly messages: SDKUserMessage[] = [];
+  private readonly readers: Array<(
+    result: IteratorResult<SDKUserMessage>,
+  ) => void> = [];
+  private closed = false;
+
+  send(prompt: string, priority?: SDKUserMessage["priority"]): void {
+    if (this.closed) return;
+    const message: SDKUserMessage = {
+      type: "user",
+      message: { role: "user", content: prompt },
+      parent_tool_use_id: null,
+      ...(priority === undefined ? {} : { priority }),
+    };
+    const reader = this.readers.shift();
+    if (reader === undefined) this.messages.push(message);
+    else reader({ value: message, done: false });
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const reader of this.readers) reader({ value: undefined, done: true });
+    this.readers.length = 0;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    return {
+      next: () => {
+        const message = this.messages.shift();
+        if (message !== undefined) {
+          return Promise.resolve({ value: message, done: false });
+        }
+        if (this.closed) {
+          return Promise.resolve({ value: undefined, done: true });
+        }
+        return new Promise((resolve) => this.readers.push(resolve));
+      },
+    };
+  }
 }
