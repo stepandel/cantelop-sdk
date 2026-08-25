@@ -22,6 +22,10 @@ try {
     await readFile(path.join(repositoryRoot, "schemas/app-v1.json"), "utf8"),
   );
   assert.equal(schema.$id, schemaUrl);
+  assert.ok(schema.examples.length > 0);
+  for (const example of schema.examples) {
+    assert.equal(example.harness, "src/session.ts");
+  }
 
   for (const example of examples) {
     const exampleRoot = path.join(repositoryRoot, "examples", example);

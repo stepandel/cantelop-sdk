@@ -56,7 +56,7 @@
       ]
     },
     "harness": {
-      "description": "Harness entrypoint, as a path or an expanded configuration object for native system dependencies.",
+      "description": "Native Session logic entrypoint, as a path or an expanded harness configuration object for native system dependencies.",
       "oneOf": [
         {
           "$ref": "#/$defs/projectFile"
@@ -131,12 +131,12 @@
     {
       "app": "vera",
       "api": "src/api.ts",
-      "harness": "src/harness.ts"
+      "harness": "src/session.ts"
     },
     {
       "app": "vera",
       "api": "src/api.ts",
-      "harness": "src/harness.ts",
+      "harness": "src/session.ts",
       "environment": {
         "OPENAI_MODEL": {"default": "gpt-4.1-mini"},
         "OPENAI_API_KEY": {"secret": true, "required": true}

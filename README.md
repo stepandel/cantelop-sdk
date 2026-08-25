@@ -27,7 +27,7 @@ file:
 {
   "app": "vera",
   "api": "src/api.ts",
-  "harness": "src/harness.ts"
+  "harness": "src/session.ts"
 }
 ```
 
@@ -397,7 +397,8 @@ Each provider example contains two independently checked entrypoints:
 - [`examples/anthropic`](./examples/anthropic)
 - [`examples/pi`](./examples/pi)
 
-In every example, `src/api.ts` is Edge-only and `src/harness.ts` is native.
+In every example, `src/api.ts` is Edge-only and `src/session.ts` defines the
+native Session logic.
 
 ## Development
 
