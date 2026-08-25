@@ -4,12 +4,13 @@ import type {
   HarnessTasks,
 } from "./harness.js";
 
-interface ActiveTask {
+interface ActiveTask<Message> {
   readonly controller: AbortController;
+  readonly messages: Message[];
 }
 
 export class InMemoryTasks<Message> implements HarnessTasks<Message> {
-  private readonly active = new Map<string, ActiveTask>();
+  private readonly active = new Map<string, ActiveTask<Message>>();
   private readonly idleWaiters = new Set<() => void>();
 
   constructor(private readonly sendMessage: (payload: Message) => void) {}
@@ -21,10 +22,11 @@ export class InMemoryTasks<Message> implements HarnessTasks<Message> {
     }
 
     const controller = new AbortController();
-    this.active.set(id, { controller });
+    const task: ActiveTask<Message> = { controller, messages: [] };
+    this.active.set(id, task);
     const context: HarnessTaskContext<Message> = Object.freeze({
       signal: controller.signal,
-      send: this.sendMessage,
+      send: (payload: Message) => task.messages.push(payload),
     });
     const result = Promise.resolve().then(() => work(context));
     void result.then(
@@ -56,7 +58,10 @@ export class InMemoryTasks<Message> implements HarnessTasks<Message> {
   }
 
   private settle(id: string): void {
+    const task = this.active.get(id);
+    if (task === undefined) return;
     this.active.delete(id);
+    for (const payload of task.messages) this.sendMessage(payload);
     if (!this.isIdle) return;
     for (const resolve of this.idleWaiters) resolve();
     this.idleWaiters.clear();

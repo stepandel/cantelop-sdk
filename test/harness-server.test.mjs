@@ -73,6 +73,8 @@ test("runtime tasks keep the Session active while steer and cancel messages run"
         assert.equal(context.tasks.has(payload.operationId), true);
       } else if (payload.type === "cancel") {
         assert.equal(context.tasks.cancel(payload.operationId), true);
+      } else if (payload.type === "cancelled") {
+        assert.equal(context.tasks.has(payload.operationId), false);
       }
     }),
   );
