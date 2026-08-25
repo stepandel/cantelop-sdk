@@ -42,19 +42,20 @@ function sessionAgent(
 
 async function runTurn(
   context: HarnessContext<PromptInput, RuntimeEvent>,
-): Promise<AnswerOutput> {
-  const { input, signal, emit } = context;
+): Promise<void> {
+  const { payload } = context.message;
+  const { emit } = context;
   const agent = sessionAgent(context);
 
-  if (input.type === "steer") {
+  if (payload.type === "steer") {
     agent.steer({
       role: "user",
-      content: input.prompt,
+      content: payload.prompt,
       timestamp: Date.now(),
     });
     const output = { answer: "Steering accepted" };
     emit({ type: "done", output });
-    return output;
+    return;
   }
 
   let answer = "";
@@ -68,18 +69,13 @@ async function runTurn(
       emit({ type: "text_delta", delta });
     }
   });
-  const forwardAbort = () => agent.abort();
-  signal.addEventListener("abort", forwardAbort, { once: true });
-
   try {
-    await agent.prompt(input.prompt);
+    await agent.prompt(payload.prompt);
     const output = { answer };
     emit({ type: "done", output });
-    return output;
   } finally {
-    signal.removeEventListener("abort", forwardAbort);
     unsubscribe();
   }
 }
 
-export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>({ run: runTurn });
+export default defineHarness<PromptInput, RuntimeEvent>({ receive: runTurn });

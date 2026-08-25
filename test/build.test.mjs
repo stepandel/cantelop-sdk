@@ -84,7 +84,7 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
   globalThis.fetch = async (request) => {
     forwarded = request;
     const body = await request.clone().json();
-    return Response.json({ id: body.id, status: "queued", accepted_at: "2026-08-17T12:00:00Z" }, { status: 202 });
+    return Response.json({ id: body.message.id, status: "queued", accepted_at: "2026-08-17T12:00:00Z" }, { status: 202 });
   };
   t.after(() => { globalThis.fetch = originalFetch; });
 
@@ -97,7 +97,7 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
   assert.deepEqual(await response.json(), {
     sessionId: "local:thread",
     receipt: {
-      id: (await forwarded.clone().json()).id,
+      id: (await forwarded.clone().json()).message.id,
       status: "queued",
       acceptedAt: "2026-08-17T12:00:00.000Z",
     },
@@ -164,8 +164,8 @@ test("a built harness receives messages on the local development port", async (t
     entrypoint,
     [
       `import { defineHarness } from ${JSON.stringify(sdkHarness)};`,
-      "export default defineHarness(async ({ input, env }) => {",
-      '  if (`${String(input.prompt).toUpperCase()}:${env.MODEL}` !== "HELLO:test-model") throw new Error("unexpected message");',
+      "export default defineHarness(async ({ message, env }) => {",
+      '  if (`${String(message.payload.prompt).toUpperCase()}:${env.MODEL}` !== "HELLO:test-model") throw new Error("unexpected message");',
       "});",
     ].join("\n"),
   );
@@ -189,7 +189,7 @@ test("a built harness receives messages on the local development port", async (t
 
   const messageId = "msg_0123456789abcdef0123456789abcdef";
   const response = await waitForHarness(
-    `http://127.0.0.1:${port}/__cantelop/v1/messages/${messageId}`,
+    `http://127.0.0.1:${port}/__cantelop/v1/messages`,
     child,
     () => childError,
   );
@@ -269,7 +269,10 @@ async function waitForHarness(url, child, childError) {
             workspace_id: "wsp_0123456789abcdef0123456789abcdef",
             keep_alive_seconds: 300,
           },
-          input: { prompt: "hello" },
+          message: {
+            id: "msg_0123456789abcdef0123456789abcdef",
+            payload: { prompt: "hello" },
+          },
         }),
       });
     } catch (error) {

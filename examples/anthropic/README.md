@@ -14,9 +14,9 @@ The API exposes only `GET /health`, `POST /chat`, and `POST /steer`. Chat
 requires `workspaceId`, `keepAliveSeconds`, and `prompt`, and accepts an
 optional `sessionId`; it creates or reuses that Session. Steer requires
 `sessionId`, `workspaceId`, `keepAliveSeconds`, and `prompt` to reuse it. Both
-execution routes return an in-memory acceptance receipt with status `202`.
+message routes return an in-memory acceptance receipt with status `202`.
 
-Both routes use the harness's single `run` entrypoint. The application input
+Both routes use the harness's single `receive` entrypoint. The application input
 identifies chat versus steer intent; this example resumes the Session's Claude
 provider session and applies either prompt as its next turn. FIFO processing
 means the steer request waits for any earlier handler to settle.

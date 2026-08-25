@@ -93,9 +93,11 @@ function createRemoteSession<Input>(
       const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/messages", {
         method: "POST",
         body: {
-          id: message,
           session: sessionEnvelope(this.id, config),
-          input,
+          message: {
+            id: message,
+            payload: input,
+          },
         },
       });
       return readMessageReceipt(envelope, message);
@@ -140,7 +142,6 @@ function readMessageReceipt(
 interface RequestOptions {
   readonly method: "DELETE" | "POST";
   readonly body?: unknown;
-  readonly signal?: AbortSignal;
 }
 
 async function requestJSON(
@@ -160,7 +161,6 @@ async function requestJSON(
       headers: { "Content-Type": "application/json" },
       body,
     }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
   }));
   const envelope = await readEnvelope(response);
   if (!response.ok) {

@@ -62,6 +62,6 @@ test("provider API entrypoints do not import native dependencies", async () => {
     assert.doesNotMatch(source, /\b(?:Buffer|process)\b/);
     assert.doesNotMatch(source, /from\s+["']\.\.\//);
     assert.doesNotMatch(source, /\.events\(\)/);
-    assert.doesNotMatch(source, /\/execute\/stream/);
+    assert.doesNotMatch(source, /\/message\/stream/);
   }
 });

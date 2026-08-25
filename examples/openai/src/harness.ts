@@ -15,8 +15,8 @@ type RuntimeEvent =
 let providerSession: MemorySession | undefined;
 
 async function runTurn(
-  { session, input, env, signal, emit }: HarnessContext<PromptInput, RuntimeEvent>,
-): Promise<AnswerOutput> {
+  { session, message, env, emit }: HarnessContext<PromptInput, RuntimeEvent>,
+): Promise<void> {
   if (!env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is not configured in the harness VM");
   }
@@ -29,9 +29,8 @@ async function runTurn(
     providerSession = new MemorySession({ sessionId: session.id });
   }
 
-  const stream = await run(agent, input.prompt, {
+  const stream = await run(agent, message.payload.prompt, {
     stream: true,
-    signal,
     session: providerSession,
   });
   let answer = "";
@@ -44,9 +43,8 @@ async function runTurn(
 
   const output = { answer: stream.finalOutput ?? answer };
   emit({ type: "done", output });
-  return output;
 }
 
 // Input meaning is application-owned. Both messages and steer requests become
-// turns in the same MemorySession here; another agent can queue or interrupt.
-export default defineHarness<PromptInput, AnswerOutput, RuntimeEvent>({ run: runTurn });
+// turns in the same MemorySession here and are processed in FIFO order.
+export default defineHarness<PromptInput, RuntimeEvent>({ receive: runTurn });

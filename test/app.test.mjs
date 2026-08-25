@@ -51,7 +51,7 @@ test("a router handles Web requests and can close over the current App", async (
 
 test("a router returns Web-standard routing errors", async () => {
   const definition = defineApi(({ router }) => {
-    router.route("POST", "/execute", () => new Response());
+    router.route("POST", "/dispatch", () => new Response());
   });
   const router = definition.create({
     app: {
@@ -64,7 +64,7 @@ test("a router returns Web-standard routing errors", async () => {
   });
 
   const methodNotAllowed = await router.handle(
-    new Request("https://example.test/execute"),
+    new Request("https://example.test/dispatch"),
   );
   const notFound = await router.handle(
     new Request("https://example.test/missing"),

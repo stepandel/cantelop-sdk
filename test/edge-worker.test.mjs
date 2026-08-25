@@ -67,13 +67,15 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
   );
   assert.equal(runtimeRequests[0].headers.get("X-Cantelop-Edge-Workspace-ID"), null);
   assert.deepEqual(await runtimeRequests[0].json(), {
-    id: messageId,
     session: {
       id: sessionId,
       workspace_id: workspaceId,
       keep_alive_seconds: 300,
     },
-    input: { prompt: "hello" },
+    message: {
+      id: messageId,
+      payload: { prompt: "hello" },
+    },
   });
   assert.deepEqual({ ...receivedEnvironment }, {
     LOG_LEVEL: "debug",

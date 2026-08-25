@@ -15,7 +15,7 @@ test("the native adapter receives the versioned message protocol", async (t) => 
     createHarnessRequestHandler(
       async (context) => {
         received = context;
-        assert.equal(String(context.input.prompt).toUpperCase(), "HELLO");
+        assert.equal(String(context.message.payload.prompt).toUpperCase(), "HELLO");
       },
       { env: { MODEL: "test-model" } },
     ),
@@ -24,7 +24,7 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   t.after(() => close(server));
 
   const response = await fetch(
-    `${origin(server)}/__cantelop/v1/messages/${messageId}`,
+    `${origin(server)}/__cantelop/v1/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -37,7 +37,7 @@ test("the native adapter receives the versioned message protocol", async (t) => 
     response.headers.get("X-Cantelop-SDK-Message-Complete"),
     messageId,
   );
-  assert.deepEqual(received.message, { id: messageId });
+  assert.deepEqual(received.message, { id: messageId, payload: { prompt: "hello" } });
   assert.deepEqual(received.session, {
     id: "thread",
     workspaceId: "wsp_0123456789abcdef0123456789abcdef",
@@ -45,7 +45,6 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   });
   assert.equal(Object.isFrozen(received.message), true);
   assert.equal(Object.isFrozen(received.session), true);
-  assert.deepEqual(received.input, { prompt: "hello" });
   assert.equal(received.env.MODEL, "test-model");
 });
 
@@ -56,8 +55,8 @@ test("one harness runtime processes its Session mailbox in FIFO order", async (t
   const server = createServer(
     createHarnessRequestHandler({
       async receive(context) {
-        started.push(context.input.type);
-        if (context.input.type === "message") await firstReleased;
+        started.push(context.message.payload.type);
+        if (context.message.payload.type === "message") await firstReleased;
       },
     }),
   );
@@ -66,7 +65,7 @@ test("one harness runtime processes its Session mailbox in FIFO order", async (t
   t.after(() => close(server));
 
   const first = fetch(
-    `${origin(server)}/__cantelop/v1/messages/${messageId}`,
+    `${origin(server)}/__cantelop/v1/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -76,11 +75,11 @@ test("one harness runtime processes its Session mailbox in FIFO order", async (t
   await waitFor(() => started.length === 1);
   const secondMessageId = "msg_fedcba9876543210fedcba9876543210";
   const second = fetch(
-    `${origin(server)}/__cantelop/v1/messages/${secondMessageId}`,
+    `${origin(server)}/__cantelop/v1/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(messageEnvelope({ type: "steer" })),
+      body: JSON.stringify(messageEnvelope({ type: "steer" }, "thread", secondMessageId)),
     },
   );
 
@@ -105,7 +104,7 @@ test("one harness runtime deduplicates a message ID for its activation", async (
   await listen(server);
   t.after(() => release());
   t.after(() => close(server));
-  const url = `${origin(server)}/__cantelop/v1/messages/${messageId}`;
+  const url = `${origin(server)}/__cantelop/v1/messages`;
   const request = () => fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -131,7 +130,7 @@ test("a harness server is bound to one Session identity", async (t) => {
   );
   await listen(server);
   t.after(() => close(server));
-  const url = `${origin(server)}/__cantelop/v1/messages/${messageId}`;
+  const url = `${origin(server)}/__cantelop/v1/messages`;
 
   const first = await fetch(url, {
     method: "POST",
@@ -159,7 +158,7 @@ test("the native adapter marks a failed user message as settled", async (t) => {
   t.after(() => close(server));
 
   const response = await fetch(
-    `${origin(server)}/__cantelop/v1/messages/${messageId}`,
+    `${origin(server)}/__cantelop/v1/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -185,14 +184,14 @@ test("the native adapter rejects malformed protocol requests", async (t) => {
   t.after(() => close(server));
 
   const malformed = await fetch(
-    `${origin(server)}/__cantelop/v1/messages/${messageId}`,
+    `${origin(server)}/__cantelop/v1/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...messageEnvelope({}), extra: true }),
     },
   );
-  const wrongPath = await fetch(`${origin(server)}/execute`, {
+  const wrongPath = await fetch(`${origin(server)}/receive`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(messageEnvelope({})),
@@ -283,7 +282,7 @@ test("serveHarness adopts the platform-prebound listener", async () => {
       });
     });
     const response = await fetch(
-      `http://127.0.0.1:${address.port}/__cantelop/v1/messages/${messageId}`,
+      `http://127.0.0.1:${address.port}/__cantelop/v1/messages`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -330,14 +329,14 @@ function origin(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function messageEnvelope(input, sessionId = "thread") {
+function messageEnvelope(payload, sessionId = "thread", id = messageId) {
   return {
     session: {
       id: sessionId,
       workspace_id: "wsp_0123456789abcdef0123456789abcdef",
       keep_alive_seconds: 300,
     },
-    input,
+    message: { id, payload },
   };
 }
 

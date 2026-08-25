@@ -16,8 +16,8 @@ import type { Session } from "./resources.js";
 import { markHarnessStartup } from "./harness-startup.js";
 import { InMemoryMailbox } from "./mailbox.js";
 
-const MESSAGE_PATH_PATTERN =
-  /^\/__cantelop\/v1\/messages\/(msg_[0-9a-f]{32})$/;
+const MESSAGE_PATH = "/__cantelop/v1/messages";
+const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
 const INTERNAL_FD_VARIABLE = "CANTELOP_INTERNAL_FD";
@@ -121,8 +121,7 @@ async function handleRequest<Input, Event>(
 ): Promise<void> {
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://harness.cantelop.internal");
-  const match = MESSAGE_PATH_PATTERN.exec(url.pathname);
-  if (match === null || url.search !== "") {
+  if (url.pathname !== MESSAGE_PATH || url.search !== "") {
     writeError(response, 404, "not_found");
     return;
   }
@@ -135,8 +134,8 @@ async function handleRequest<Input, Event>(
     writeError(response, 415, "unsupported_media_type");
     return;
   }
-  const messageID = match[1] as string;
   let messageSettled = false;
+  let acceptedMessageID: string | undefined;
 
   try {
     const envelope = await readRequestEnvelope(request);
@@ -144,15 +143,16 @@ async function handleRequest<Input, Event>(
       writeError(response, 400, "invalid_message_request");
       return;
     }
+    const message = readMessage<Input>(envelope.message);
+    acceptedMessageID = message.id;
     const session = readSession(envelope.session);
     bindSession(session);
 
     try {
-      await mailbox.enqueue(messageID, async () =>
+      await mailbox.enqueue(message.id, async () =>
         invokeHarness(runtime, Object.freeze({
-          message: Object.freeze({ id: messageID }),
+          message,
           session,
-          input: envelope.input as Input,
           env,
           emit: () => undefined,
         })));
@@ -160,13 +160,13 @@ async function handleRequest<Input, Event>(
       messageSettled = true;
     }
     if (response.destroyed) return;
-    response.setHeader(MESSAGE_COMPLETE_HEADER, messageID);
+    response.setHeader(MESSAGE_COMPLETE_HEADER, message.id);
     response.statusCode = 204;
     response.end();
   } catch (error) {
     if (response.destroyed) return;
-    if (messageSettled) {
-      response.setHeader(MESSAGE_COMPLETE_HEADER, messageID);
+    if (messageSettled && acceptedMessageID !== undefined) {
+      response.setHeader(MESSAGE_COMPLETE_HEADER, acceptedMessageID);
     }
     if (error instanceof ProtocolError) {
       writeError(response, error.status, error.code);
@@ -241,8 +241,17 @@ function isJSONContentType(value: string | undefined): boolean {
 
 function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return keys.length === 2 && keys.includes("session") && keys.includes("input") &&
-    isRecord(value.session);
+  return keys.length === 2 && keys.includes("session") && keys.includes("message") &&
+    isRecord(value.session) && isRecord(value.message);
+}
+
+function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Input }> {
+  if (!isRecord(value) || Object.keys(value).length !== 2 ||
+      typeof value.id !== "string" || !MESSAGE_ID_PATTERN.test(value.id) ||
+      !("payload" in value)) {
+    throw new ProtocolError(400, "invalid_message_request");
+  }
+  return Object.freeze({ id: value.id, payload: value.payload as Input });
 }
 
 function readSession(value: unknown): Session {

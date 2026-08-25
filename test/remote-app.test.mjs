@@ -108,13 +108,15 @@ test("a Session dispatches asynchronously with the same identity and configurati
   assert.equal(receipt.acceptedAt.toISOString(), "2026-08-17T12:00:00.000Z");
   assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/messages");
   assert.deepEqual(await forwarded.json(), {
-    id: messageId,
     session: {
       id: namedSessionId,
       workspace_id: workspaceId,
       keep_alive_seconds: 300,
     },
-    input: { event: "push" },
+    message: {
+      id: messageId,
+      payload: { event: "push" },
+    },
   });
 });
 

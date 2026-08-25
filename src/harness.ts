@@ -9,9 +9,9 @@ export type HarnessEnvironment = Readonly<
 export interface HarnessContext<Input, Event = never> {
   readonly message: Readonly<{
     id: string;
+    payload: Input;
   }>;
   readonly session: Session;
-  readonly input: Input;
   readonly env: HarnessEnvironment;
   emit(event: Event): void;
 }
