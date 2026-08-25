@@ -15,8 +15,10 @@ the current App into each API definition. Every API exposes exactly three
 routes: `GET /health`, `POST /chat`, and `POST /steer`. Chat creates or reuses a
 Session from an optional ID; steer requires an existing Session ID. Both
 routes encode their intent in application input, call the same asynchronous
-`dispatch()` method, and return a durable receipt with status `202`. The
-protocol does not define steering. The canonical Session is propagated into the native harness:
+`dispatch()` method, and return an in-memory acceptance receipt with status
+`202`. The protocol does not define steering, and the FIFO mailbox processes a
+steer message only after earlier handlers settle. The canonical Session is
+propagated into the native harness:
 OpenAI reuses an in-memory conversation store, Anthropic resumes its provider
 session, and Pi retains its stateful Agent and native steering queue for the
 warm Sandbox lifetime. Direct client streaming is configured at the VM.
