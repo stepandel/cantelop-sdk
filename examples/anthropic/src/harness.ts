@@ -1,8 +1,8 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import {
-  defineHarness,
-  type HarnessContext,
-} from "@cantelop/sdk/harness";
+  defineSessionLogic,
+  type SessionContext,
+} from "@cantelop/sdk/session";
 import type {
   AnswerOutput,
   PromptInput,
@@ -16,7 +16,7 @@ const queuedPrompts: string[] = [];
 let providerSessionId: string | undefined;
 
 function startTurn(
-  context: HarnessContext<PromptInput, RuntimeEvent>,
+  context: SessionContext<PromptInput, RuntimeEvent>,
   prompt: string,
 ): void {
   const { env, activity, emit } = context;
@@ -71,7 +71,7 @@ function startTurn(
 }
 
 async function receive(
-  context: HarnessContext<PromptInput, RuntimeEvent>,
+  context: SessionContext<PromptInput, RuntimeEvent>,
 ): Promise<void> {
   const command = context.message.payload;
 
@@ -89,4 +89,4 @@ async function receive(
   startTurn(context, command.prompt);
 }
 
-export default defineHarness<PromptInput, RuntimeEvent>({ receive });
+export default defineSessionLogic<PromptInput, RuntimeEvent>({ receive });

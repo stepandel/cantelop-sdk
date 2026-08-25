@@ -1,9 +1,9 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
-  defineHarness,
-  type HarnessContext,
-} from "@cantelop/sdk/harness";
+  defineSessionLogic,
+  type SessionContext,
+} from "@cantelop/sdk/session";
 import type {
   AnswerOutput,
   PromptInput,
@@ -17,7 +17,7 @@ const models = builtinModels();
 let agent: Agent | undefined;
 
 function sessionAgent(
-  { session, env }: HarnessContext<PromptInput, RuntimeEvent>,
+  { session, env }: SessionContext<PromptInput, RuntimeEvent>,
 ): Agent {
   if (agent !== undefined) return agent;
 
@@ -41,7 +41,7 @@ function sessionAgent(
 }
 
 async function runTurn(
-  context: HarnessContext<PromptInput, RuntimeEvent>,
+  context: SessionContext<PromptInput, RuntimeEvent>,
 ): Promise<void> {
   const { payload } = context.message;
   const { activity, emit } = context;
@@ -97,4 +97,4 @@ async function runTurn(
   });
 }
 
-export default defineHarness<PromptInput, RuntimeEvent>({ receive: runTurn });
+export default defineSessionLogic<PromptInput, RuntimeEvent>({ receive: runTurn });

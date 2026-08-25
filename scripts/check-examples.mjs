@@ -39,6 +39,7 @@ try {
     assert.match(apiSource, /type:\s*"steer"/);
     assert.match(apiSource, /type:\s*"cancel"/);
     assert.match(harnessSource, /activity\.start\(/);
+    assert.match(harnessSource, /defineSessionLogic/);
     JSON.parse(await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"));
 
     await buildApi({
