@@ -29,9 +29,16 @@ try {
     const harnessSource = await readFile(path.join(exampleRoot, "src/harness.ts"), "utf8");
     const routes = [...apiSource.matchAll(/router\.route\("([A-Z]+)", "([^"]+)"/g)]
       .map(([, method, route]) => `${method} ${route}`);
-    assert.deepEqual(routes, ["GET /health", "POST /chat", "POST /steer"]);
+    assert.deepEqual(routes, [
+      "GET /health",
+      "POST /chat",
+      "POST /steer",
+      "POST /cancel",
+    ]);
     assert.doesNotMatch(harnessSource, /steer:\s*steerTurn/);
     assert.match(apiSource, /type:\s*"steer"/);
+    assert.match(apiSource, /type:\s*"cancel"/);
+    assert.match(harnessSource, /tasks\.start\(/);
     JSON.parse(await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"));
 
     await buildApi({

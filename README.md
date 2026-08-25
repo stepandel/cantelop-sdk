@@ -336,7 +336,9 @@ duplicate active ID fails the current message. `tasks.cancel()` returns `false`
 when no active task has that ID; cancellation is cooperative through the task's
 `AbortSignal`. Task failures are contained by the runtime, so task code should
 catch failures and send an application-defined failure message when the actor
-must observe them.
+must observe them. `send()` calls made inside a task are buffered until that
+task settles, then enter the mailbox in call order; actor-level `context.send()`
+enters the mailbox immediately.
 
 The native delivery response remains pending until both the mailbox and task
 registry are idle. This keeps the in-memory activation owned while background
