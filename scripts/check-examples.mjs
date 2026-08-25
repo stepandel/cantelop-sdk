@@ -43,6 +43,9 @@ try {
     assert.doesNotMatch(sessionSource, /steer:\s*steerTurn/);
     assert.doesNotMatch(sessionSource, /queuedPrompts|PromptInput|AnswerOutput/);
     assert.doesNotMatch(sessionSource, /type:\s*"message"/);
+    assert.doesNotMatch(sessionSource, /No active .* to steer|already processing a prompt/);
+    assert.match(sessionSource, /promptQueue\.push\(command\.prompt\)/);
+    assert.match(sessionSource, /send\(\{ type: "prompt", prompt: nextPrompt \}\)/);
     assert.match(apiSource, /type:\s*"prompt"/);
     assert.match(apiSource, /type:\s*"steer"/);
     assert.match(apiSource, /type:\s*"cancel"/);

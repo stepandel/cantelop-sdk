@@ -18,12 +18,13 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 requires the same Session fields without a prompt. All message routes return an
 in-memory acceptance receipt with status `202`.
 
-The App has one Session logic with an explicit actor protocol: `prompt` starts
-one OpenAI run, `steer` records at most one follow-up prompt while that run is
-active, and `cancel` aborts it. The actor owns one OpenAI `Agent` and
-`MemorySession`; no per-Session registry is needed because the native runtime is
-already bound to one Session. The run lives in the Session activity so the FIFO
-mailbox remains available for steer and cancel commands.
+The App has one Session logic with an explicit actor protocol. `prompt` and an
+idle `steer` start an OpenAI run. Prompts and steer commands received while a
+run is active enter a FIFO queue, and `cancel` aborts the run and clears that
+queue. The actor owns one OpenAI `Agent` and `MemorySession`; no per-Session
+registry is needed because the native runtime is already bound to one Session.
+The run lives in the Session activity so the mailbox remains available for new
+commands.
 
 `cantelop.json` targets an illustrative App with slug `openai`. Change the slug
 when deploying to a different App.
