@@ -55,14 +55,9 @@ test("the current App opens an existing Workspace by slug", async () => {
   assert.deepEqual(await forwarded.json(), { slug: "production" });
 });
 
-test("opening a named Session is lazy and execution atomically opens it", async () => {
-  const forwarded = [];
+test("opening a named Session is lazy", () => {
   const app = createRemoteApp({
-    fetch: async (request) => {
-      forwarded.push(request);
-      return Response.json({ output: { answer: "done" } });
-    },
-    executionId: () => executionId,
+    fetch: async () => { throw new Error("open must not perform transport"); },
   });
 
   const session = app.sessions.open({
@@ -73,20 +68,6 @@ test("opening a named Session is lazy and execution atomically opens it", async 
   assert.equal(session.id, namedSessionId);
   assert.equal(session.workspaceId, workspaceId);
   assert.equal(session.keepAliveSeconds, 0);
-  assert.equal(forwarded.length, 0);
-
-  assert.deepEqual(await session.execute({ prompt: "hello" }), { answer: "done" });
-  assert.equal(forwarded[0].url,
-    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}/executions`);
-  assert.deepEqual(await forwarded[0].json(), {
-    id: executionId,
-    session: {
-      id: namedSessionId,
-      workspace_id: workspaceId,
-      keep_alive_seconds: 0,
-    },
-    input: { prompt: "hello" },
-  });
 });
 
 test("opening an anonymous Session generates its ID without a request", () => {
@@ -180,30 +161,11 @@ test("remote errors expose stable codes without leaking messages", async () => {
   });
 
   const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
-  await assert.rejects(session.execute({}), (error) => {
+  await assert.rejects(session.dispatch({}), (error) => {
     assert.ok(error instanceof RemoteAppError);
     assert.equal(error.code, "session_terminated");
     assert.equal(error.status, 409);
     assert.doesNotMatch(error.message, /private detail/);
     return true;
   });
-});
-
-test("execution forwards its AbortSignal", async () => {
-  let observedSignal;
-  const app = createRemoteApp({
-    fetch: (request) => {
-      observedSignal = request.signal;
-      return new Promise((resolve, reject) => {
-        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
-      });
-    },
-  });
-  const controller = new AbortController();
-  const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
-  const result = session.execute({}, { signal: controller.signal });
-  controller.abort(new Error("cancelled by test"));
-
-  await assert.rejects(result, /cancelled by test/);
-  assert.equal(observedSignal.aborted, true);
 });

@@ -66,9 +66,9 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
     [
       `import { defineApi } from ${JSON.stringify(sdkApi)};`,
       "export default defineApi(({ app, router }) => {",
-      '  router.route("POST", "/execute", async () => {',
+      '  router.route("POST", "/dispatch", async () => {',
       '    const session = app.sessions.open({ id: "local:thread", workspaceId: "wsp_0123456789abcdef0123456789abcdef", keepAliveSeconds: 30 });',
-      '    return Response.json({ sessionId: session.id, output: await session.execute({ prompt: "hello" }) });',
+      '    return Response.json({ sessionId: session.id, receipt: await session.dispatch({ prompt: "hello" }) }, { status: 202 });',
       "  });",
       "});",
     ].join("\n"),
@@ -83,22 +83,27 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
   let forwarded;
   globalThis.fetch = async (request) => {
     forwarded = request;
-    return Response.json({ output: { answer: "done" } });
+    const body = await request.clone().json();
+    return Response.json({ id: body.id, status: "queued", accepted_at: "2026-08-17T12:00:00Z" }, { status: 202 });
   };
   t.after(() => { globalThis.fetch = originalFetch; });
 
   const worker = (await import(`${new URL(artifact.mainModule, "file:").href}?local`)).default;
-  const response = await worker.fetch(new Request("http://127.0.0.1:8787/execute", {
+  const response = await worker.fetch(new Request("http://127.0.0.1:8787/dispatch", {
     method: "POST",
   }));
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 202);
   assert.deepEqual(await response.json(), {
     sessionId: "local:thread",
-    output: { answer: "done" },
+    receipt: {
+      id: (await forwarded.clone().json()).id,
+      status: "queued",
+      acceptedAt: "2026-08-17T12:00:00.000Z",
+    },
   });
   assert.equal(forwarded.url,
-    "http://127.0.0.1:43123/__cantelop/v1/sessions/local%3Athread/executions");
+    "http://127.0.0.1:43123/__cantelop/v1/executions");
 });
 
 test("buildLocalApi rejects non-loopback runtime origins", async () => {

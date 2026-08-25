@@ -1,7 +1,6 @@
 import type {
   CantelopApp,
   ExecutionReceipt,
-  SessionExecuteOptions,
   SessionHandle,
   SessionOpenConfig,
   Workspace,
@@ -37,15 +36,15 @@ export class RemoteAppError extends Error {
   }
 }
 
-export function createRemoteApp<Input = unknown, Output = unknown>(
+export function createRemoteApp<Input = unknown>(
   options: RemoteAppOptions = {},
-): CantelopApp<Input, Output> {
+): CantelopApp<Input> {
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
   const sessionId = options.sessionId ?? createSessionID;
   const executionId = options.executionId ?? createExecutionID;
 
   const sessions = Object.freeze({
-    open(config: SessionOpenConfig): SessionHandle<Input, Output> {
+    open(config: SessionOpenConfig): SessionHandle<Input> {
       assertWorkspaceID(config.workspaceId);
       assertKeepAliveSeconds(config.keepAliveSeconds);
       const id = config.id ?? sessionId();
@@ -77,41 +76,16 @@ export function createRemoteApp<Input = unknown, Output = unknown>(
   return Object.freeze({ sessions, workspaces });
 }
 
-function createRemoteSession<Input, Output>(
+function createRemoteSession<Input>(
   id: string,
   config: SessionOpenConfig,
   runtimeFetch: RuntimeFetch,
   executionId: IDFactory,
-): SessionHandle<Input, Output> {
+): SessionHandle<Input> {
   return Object.freeze({
     id,
     workspaceId: config.workspaceId,
     keepAliveSeconds: config.keepAliveSeconds,
-
-    async execute(
-      input: Input,
-      options: SessionExecuteOptions = {},
-    ): Promise<Output> {
-      const id = executionId();
-      assertExecutionID(id);
-      const envelope = await requestJSON(
-        runtimeFetch,
-        `/__cantelop/v1/sessions/${encodeURIComponent(this.id)}/executions`,
-        {
-          method: "POST",
-          body: {
-            id,
-            session: sessionEnvelope(this.id, config),
-            input,
-          },
-          ...(options.signal === undefined ? {} : { signal: options.signal }),
-        },
-      );
-      if (!isRecord(envelope) || !("output" in envelope)) {
-        throw new RemoteAppError("invalid_execution_response", 0);
-      }
-      return envelope.output as Output;
-    },
 
     async dispatch(input: Input): Promise<ExecutionReceipt> {
       const execution = executionId();

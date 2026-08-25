@@ -22,10 +22,6 @@ export interface SessionOpenConfig {
   readonly keepAliveSeconds: number;
 }
 
-export interface SessionExecuteOptions {
-  readonly signal?: AbortSignal;
-}
-
 export interface ExecutionReceipt {
   readonly id: string;
   readonly status: "queued";
@@ -40,8 +36,7 @@ export interface Session {
 }
 
 /** Edge capabilities for operating on a canonical Session. */
-export interface SessionHandle<Input, Output> extends Session {
-  execute(input: Input, options?: SessionExecuteOptions): Promise<Output>;
+export interface SessionHandle<Input> extends Session {
   dispatch(input: Input): Promise<ExecutionReceipt>;
   terminate(): Promise<void>;
 }
@@ -51,12 +46,12 @@ export interface WorkspaceService {
   open(config: WorkspaceOpenConfig): Promise<Workspace>;
 }
 
-export interface SessionService<Input, Output> {
-  open(config: SessionOpenConfig): SessionHandle<Input, Output>;
+export interface SessionService<Input> {
+  open(config: SessionOpenConfig): SessionHandle<Input>;
 }
 
 /** Capabilities of the current App, injected by Cantelop. */
-export interface CantelopApp<Input, Output> {
+export interface CantelopApp<Input> {
   readonly workspaces: WorkspaceService;
-  readonly sessions: SessionService<Input, Output>;
+  readonly sessions: SessionService<Input>;
 }

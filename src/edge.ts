@@ -17,8 +17,8 @@ const RESERVED_BINDING_PREFIX = "CANTELOP_";
  * Cantelop's generated deployment bootstrap calls this function; customer API
  * modules remain provider-neutral.
  */
-export function createApiWorker<Input = unknown, Output = unknown>(
-  definition: ApiDefinition<Input, Output>,
+export function createApiWorker<Input = unknown>(
+  definition: ApiDefinition<Input>,
   options: RemoteAppOptions = {},
 ): EdgeApiWorker {
   if (
@@ -29,7 +29,7 @@ export function createApiWorker<Input = unknown, Output = unknown>(
     throw new TypeError("Invalid Cantelop API definition");
   }
 
-  const app = createRemoteApp<Input, Output>(options);
+  const app = createRemoteApp<Input>(options);
   const routers = new WeakMap<object, Router>();
   let routerWithoutBindings: Router | undefined;
 

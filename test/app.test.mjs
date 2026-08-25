@@ -9,13 +9,13 @@ test("defineApi owns the public root router", () => {
 
 test("a router handles Web requests and can close over the current App", async () => {
   const definition = defineApi(({ app, router }) => {
-    router.route("POST", "/execute", async ({ request }) => {
+    router.route("POST", "/dispatch", async ({ request }) => {
       const session = app.sessions.open({
         id: "ses_test",
         workspaceId: "wsp_0123456789abcdef0123456789abcdef",
         keepAliveSeconds: 30,
       });
-      return Response.json({ output: await session.execute(await request.text()) });
+      return Response.json({ receipt: await session.dispatch(await request.text()) });
     });
   });
   const router = definition.create({
@@ -28,8 +28,7 @@ test("a router handles Web requests and can close over the current App", async (
             id: config.id,
             workspaceId: config.workspaceId,
             keepAliveSeconds: config.keepAliveSeconds,
-            execute: async (input) => input.toUpperCase(),
-            dispatch: async () => { throw new Error("not used"); },
+            dispatch: async (input) => ({ id: input, status: "queued" }),
             terminate: async () => undefined,
           };
         },
@@ -39,7 +38,7 @@ test("a router handles Web requests and can close over the current App", async (
   });
 
   const response = await router.handle(
-    new Request("https://example.test/execute", {
+    new Request("https://example.test/dispatch", {
       body: "hello",
       method: "POST",
     }),
@@ -47,7 +46,7 @@ test("a router handles Web requests and can close over the current App", async (
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(body.output, "HELLO");
+  assert.deepEqual(body.receipt, { id: "hello", status: "queued" });
 });
 
 test("a router returns Web-standard routing errors", async () => {

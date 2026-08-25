@@ -1,12 +1,11 @@
 import { defineApi } from "@cantelop/sdk/api";
 import type {
-  AnswerOutput,
   ChatRequest,
   PromptInput,
   SteerRequest,
 } from "./contracts.js";
 
-export default defineApi<PromptInput, AnswerOutput>(
+export default defineApi<PromptInput>(
   ({ app, router }) => {
     router.route("GET", "/health", () =>
       Response.json({ status: "ok", runtime: "pi" }),
