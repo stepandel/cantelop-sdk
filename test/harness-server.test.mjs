@@ -6,6 +6,7 @@ import {
   createHarnessRequestHandler,
   serveHarness,
 } from "../dist/harness.js";
+import { InMemoryMailbox } from "../dist/mailbox.js";
 
 const messageId = "msg_0123456789abcdef0123456789abcdef";
 
@@ -55,10 +56,11 @@ test("the native adapter receives the versioned message protocol", async (t) => 
 test("runtime activity keeps the Session active while steer and cancel messages run", async (t) => {
   const handled = [];
   const sequences = [];
-  let firstSettled = false;
+  let activity;
   const server = createServer(
     createHarnessRequestHandler(async (context) => {
       const { payload } = context.message;
+      activity = context.activity;
       handled.push(payload.type);
       sequences.push(context.message.sequence);
 
@@ -88,10 +90,8 @@ test("runtime activity keeps the Session active while steer and cancel messages 
   });
 
   const first = send(messageId, { type: "start" });
-  void first.then(() => { firstSettled = true; });
-  await waitFor(() => handled.length === 1);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(firstSettled, false);
+  assert.equal((await first).status, 204);
+  assert.equal(activity.active, true);
 
   const steer = send(
     "msg_11111111111111111111111111111111",
@@ -103,11 +103,39 @@ test("runtime activity keeps the Session active while steer and cancel messages 
     { type: "cancel" },
   );
 
-  assert.equal((await first).status, 204);
   assert.equal((await steer).status, 204);
   assert.equal((await cancel).status, 204);
+  await waitFor(() => handled.length === 4);
   assert.deepEqual(handled, ["start", "steer", "cancel", "cancelled"]);
   assert.deepEqual(sequences, [1, 2, 3, 4]);
+});
+
+test("the mailbox records internal queue timing without exposing a queued state", async () => {
+  const events = [];
+  let releaseFirst;
+  const firstReleased = new Promise((resolve) => { releaseFirst = resolve; });
+  const mailbox = new InMemoryMailbox((event) => events.push(event));
+
+  const first = mailbox.enqueue("first", async () => firstReleased);
+  const second = mailbox.enqueue("second", async () => undefined);
+  assert.equal(mailbox.enqueue("second", async () => undefined), second);
+  await waitFor(() => events.some((event) => event.type === "handling"));
+  releaseFirst();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(events.map((event) => event.type), [
+    "enqueued",
+    "enqueued",
+    "deduplicated",
+    "handling",
+    "handled",
+    "handling",
+    "handled",
+  ]);
+  assert.equal(events[0].depth, 1);
+  assert.equal(events[1].depth, 2);
+  assert.equal(Number.isInteger(events[3].queueWaitMicroseconds), true);
+  assert.equal(Number.isInteger(events[4].handlingMicroseconds), true);
 });
 
 test("one harness runtime processes its Session mailbox in FIFO order", async (t) => {

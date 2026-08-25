@@ -14,7 +14,7 @@ import type {
   SessionLogic,
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
-import { markHarnessStartup } from "./harness-startup.js";
+import { markHarnessStartup, markMessageLifecycle } from "./harness-startup.js";
 import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
 
@@ -54,7 +54,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
   options: HarnessRequestHandlerOptions = {},
 ): HarnessRequestHandler {
   let boundSession: SessionIdentity | undefined;
-  const mailbox = new InMemoryMailbox<void>();
+  const mailbox = new InMemoryMailbox<void>(markMessageLifecycle);
   let activity: InMemoryActivity<Input>;
 
   const receiveMessage = (
@@ -83,8 +83,6 @@ export function createHarnessRequestHandler<Input, Event = never>(
     void handleRequest(
       request,
       response,
-      mailbox,
-      activity,
       receiveMessage,
       (session) => {
         if (boundSession !== undefined &&
@@ -140,8 +138,6 @@ function listen(server: Server, port: number, inheritedFD: number | undefined): 
 async function handleRequest<Input, Event>(
   request: IncomingMessage,
   response: ServerResponse,
-  mailbox: InMemoryMailbox<void>,
-  activity: InMemoryActivity<Input>,
   receiveMessage: (
     message: Readonly<{ id: string; payload: Input }>,
     session: SessionIdentity,
@@ -179,7 +175,6 @@ async function handleRequest<Input, Event>(
 
     try {
       await receiveMessage(message, session);
-      await waitForActorIdle(mailbox, activity);
     } finally {
       messageSettled = true;
     }
@@ -197,15 +192,6 @@ async function handleRequest<Input, Event>(
       return;
     }
     writeError(response, 500, "message_failed");
-  }
-}
-
-async function waitForActorIdle<Message>(
-  mailbox: InMemoryMailbox<void>,
-  activity: InMemoryActivity<Message>,
-): Promise<void> {
-  while (!mailbox.isIdle || !activity.isIdle) {
-    await Promise.all([mailbox.waitForIdle(), activity.waitForIdle()]);
   }
 }
 
