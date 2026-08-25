@@ -118,6 +118,39 @@ test("a Session dispatches asynchronously with the same identity and configurati
   });
 });
 
+test("a Session forwards a stable idempotency key for dispatch retries", async () => {
+  const retryExecutionId = "exec_fedcba9876543210fedcba9876543210";
+  const forwarded = [];
+  let generated = 0;
+  const app = createRemoteApp({
+    executionId: () => [executionId, retryExecutionId][generated++],
+    fetch: async (request) => {
+      forwarded.push(request);
+      return Response.json({
+        id: executionId,
+        status: "queued",
+        accepted_at: "2026-08-17T12:00:00Z",
+      }, { status: 202 });
+    },
+  });
+  const session = app.sessions.open({
+    id: namedSessionId,
+    workspaceId,
+    keepAliveSeconds: 300,
+  });
+
+  const first = await session.dispatch({ event: "push" }, { idempotencyKey: "delivery-42" });
+  const duplicate = await session.dispatch(
+    { event: "push" },
+    { idempotencyKey: "delivery-42" },
+  );
+
+  assert.equal(first.id, executionId);
+  assert.equal(duplicate.id, executionId);
+  assert.equal((await forwarded[0].json()).idempotency_key, "delivery-42");
+  assert.equal((await forwarded[1].json()).idempotency_key, "delivery-42");
+});
+
 test("Session termination targets the logical Session", async () => {
   let forwarded;
   const app = createRemoteApp({
@@ -149,6 +182,11 @@ test("resource configuration is validated before transport", async () => {
   assert.throws(
     () => app.sessions.open({ id: "thread", workspaceId: "invalid", keepAliveSeconds: 0 }),
     /Workspace ID/,
+  );
+  const session = app.sessions.open({ id: "thread", workspaceId, keepAliveSeconds: 0 });
+  await assert.rejects(
+    session.dispatch({}, { idempotencyKey: "" }),
+    /idempotency key/,
   );
 });
 

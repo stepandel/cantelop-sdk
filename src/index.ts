@@ -14,6 +14,7 @@ export type {
   RouteHandler,
   Router,
   Session,
+  SessionDispatchOptions,
   SessionHandle,
   SessionOpenConfig,
   SessionService,
