@@ -15,7 +15,7 @@ the current App into each API definition. Every API exposes four routes:
 `GET /health`, `POST /chat`, `POST /steer`, and `POST /cancel`. Chat creates or
 reuses a Session from an optional ID; steer and cancel require an existing
 Session ID. All message routes call the same asynchronous
-`dispatch()` method, and return an in-memory acceptance receipt with status
+`dispatch()` method and return an accepted message reference with HTTP status
 `202`. Each example defines an explicit `SessionMessage` protocol with
 `prompt`, `steer`, and `cancel` commands, plus a `SessionEvent` stream for text
 deltas and completion. A steer received while idle starts a provider turn.

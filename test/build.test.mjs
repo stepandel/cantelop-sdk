@@ -68,7 +68,7 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
       "export default defineApi(({ app, router }) => {",
       '  router.route("POST", "/dispatch", async () => {',
       '    const session = app.sessions.open({ id: "local:thread", workspaceId: "wsp_0123456789abcdef0123456789abcdef", keepAliveSeconds: 30 });',
-      '    return Response.json({ sessionId: session.id, receipt: await session.dispatch({ prompt: "hello" }) }, { status: 202 });',
+      '    return Response.json({ sessionId: session.id, message: await session.dispatch({ prompt: "hello" }) }, { status: 202 });',
       "  });",
       "});",
     ].join("\n"),
@@ -84,7 +84,7 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
   globalThis.fetch = async (request) => {
     forwarded = request;
     const body = await request.clone().json();
-    return Response.json({ id: body.message.id, status: "queued", accepted_at: "2026-08-17T12:00:00Z" }, { status: 202 });
+    return Response.json({ id: body.message.id, status: "accepted", accepted_at: "2026-08-17T12:00:00Z" }, { status: 202 });
   };
   t.after(() => { globalThis.fetch = originalFetch; });
 
@@ -96,9 +96,9 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
   assert.equal(response.status, 202);
   assert.deepEqual(await response.json(), {
     sessionId: "local:thread",
-    receipt: {
+    message: {
       id: (await forwarded.clone().json()).message.id,
-      status: "queued",
+      state: "accepted",
       acceptedAt: "2026-08-17T12:00:00.000Z",
     },
   });
@@ -148,6 +148,7 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.match(source, /ready/);
   assert.doesNotMatch(source, /from ["']\.\/dependency\.ts["']/);
   assert.match(source, /harness_startup_stage/);
+  assert.match(source, /message_lifecycle/);
   assert.match(source, /bun_entry/);
   assert.match(source, /module_evaluated/);
   assert.match(source, /X-Cantelop-SDK-Message-Complete/);

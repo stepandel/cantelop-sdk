@@ -15,7 +15,7 @@ Chat requires `workspaceId`, `keepAliveSeconds`, and `prompt`, and accepts an
 optional `sessionId`; it creates or reuses that Session. Steer requires
 `sessionId`, `workspaceId`, `keepAliveSeconds`, and `prompt` to reuse it. Cancel
 requires the same Session fields without a prompt. All message routes return an
-in-memory acceptance receipt with status `202`.
+accepted message reference with HTTP status `202`.
 
 The App has one Session logic with an explicit actor protocol. `prompt` and an
 idle `steer` start a Pi run. A prompt received while busy enters a FIFO queue,

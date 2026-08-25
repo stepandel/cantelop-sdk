@@ -25,8 +25,8 @@ export default defineApi<SessionMessage>(
         workspaceId: input.workspaceId,
         keepAliveSeconds: input.keepAliveSeconds,
       });
-      const receipt = await session.dispatch({ type: "prompt", prompt: input.prompt });
-      return Response.json({ sessionId: session.id, receipt }, { status: 202 });
+      const message = await session.dispatch({ type: "prompt", prompt: input.prompt });
+      return Response.json({ sessionId: session.id, message }, { status: 202 });
     });
 
     router.route("POST", "/steer", async ({ request }) => {
@@ -42,8 +42,8 @@ export default defineApi<SessionMessage>(
         workspaceId: input.workspaceId,
         keepAliveSeconds: input.keepAliveSeconds,
       });
-      const receipt = await session.dispatch({ type: "steer", prompt: input.prompt });
-      return Response.json({ sessionId: session.id, receipt }, { status: 202 });
+      const message = await session.dispatch({ type: "steer", prompt: input.prompt });
+      return Response.json({ sessionId: session.id, message }, { status: 202 });
     });
 
     router.route("POST", "/cancel", async ({ request }) => {
@@ -59,8 +59,8 @@ export default defineApi<SessionMessage>(
         workspaceId: input.workspaceId,
         keepAliveSeconds: input.keepAliveSeconds,
       });
-      const receipt = await session.dispatch({ type: "cancel" });
-      return Response.json({ sessionId: session.id, receipt }, { status: 202 });
+      const message = await session.dispatch({ type: "cancel" });
+      return Response.json({ sessionId: session.id, message }, { status: 202 });
     });
   },
 );

@@ -15,7 +15,7 @@ test("a router handles Web requests and can close over the current App", async (
         workspaceId: "wsp_0123456789abcdef0123456789abcdef",
         keepAliveSeconds: 30,
       });
-      return Response.json({ receipt: await session.dispatch(await request.text()) });
+      return Response.json({ message: await session.dispatch(await request.text()) });
     });
   });
   const router = definition.create({
@@ -28,7 +28,12 @@ test("a router handles Web requests and can close over the current App", async (
             id: config.id,
             workspaceId: config.workspaceId,
             keepAliveSeconds: config.keepAliveSeconds,
-            dispatch: async (input) => ({ id: input, status: "queued" }),
+            dispatch: async (input) => ({
+              id: input,
+              state: "accepted",
+              acceptedAt: new Date("2026-08-17T12:00:00Z"),
+              status: async () => ({ state: "unknown" }),
+            }),
             terminate: async () => undefined,
           };
         },
@@ -46,7 +51,11 @@ test("a router handles Web requests and can close over the current App", async (
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body.receipt, { id: "hello", status: "queued" });
+  assert.deepEqual(body.message, {
+    id: "hello",
+    state: "accepted",
+    acceptedAt: "2026-08-17T12:00:00.000Z",
+  });
 });
 
 test("a router returns Web-standard routing errors", async () => {

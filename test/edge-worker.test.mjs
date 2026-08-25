@@ -20,8 +20,8 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
         workspaceId,
         keepAliveSeconds: 300,
       });
-      const receipt = await session.dispatch(await request.json());
-      return Response.json({ sessionId: session.id, receipt }, { status: 202 });
+      const message = await session.dispatch(await request.json());
+      return Response.json({ sessionId: session.id, message }, { status: 202 });
     });
   });
   const worker = createApiWorker(definition, {
@@ -31,7 +31,7 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
       runtimeRequests.push(request);
       return Response.json({
         id: messageId,
-        status: "queued",
+        status: "accepted",
         accepted_at: "2026-08-17T12:00:00Z",
       }, { status: 202 });
     },
@@ -54,9 +54,9 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
 
   assert.deepEqual(await response.json(), {
     sessionId,
-    receipt: {
+    message: {
       id: messageId,
-      status: "queued",
+      state: "accepted",
       acceptedAt: "2026-08-17T12:00:00.000Z",
     },
   });
