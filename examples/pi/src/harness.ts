@@ -46,6 +46,12 @@ async function runTurn(
 ): Promise<void> {
   const { payload } = context.message;
   const { emit, tasks } = context;
+
+  if (payload.type === "cancel") {
+    tasks.cancel(ACTIVE_AGENT_TASK);
+    return;
+  }
+
   const agent = sessionAgent(context);
 
   if (payload.type === "steer") {
