@@ -51,7 +51,7 @@ test("the native adapter executes the versioned harness protocol", async (t) => 
   assert.equal(received.signal.aborted, false);
 });
 
-test("one harness runtime accepts overlapping requests for its bound Session", async (t) => {
+test("one harness runtime processes its Session mailbox in FIFO order", async (t) => {
   const started = [];
   let releaseFirst;
   const firstReleased = new Promise((resolve) => { releaseFirst = resolve; });
@@ -78,7 +78,7 @@ test("one harness runtime accepts overlapping requests for its bound Session", a
   );
   await waitFor(() => started.length === 1);
   const secondExecutionId = "exec_fedcba9876543210fedcba9876543210";
-  const second = await fetch(
+  const second = fetch(
     `${origin(server)}/__cantelop/v1/executions/${secondExecutionId}`,
     {
       method: "POST",
@@ -87,11 +87,46 @@ test("one harness runtime accepts overlapping requests for its bound Session", a
     },
   );
 
-  assert.equal(second.status, 200);
-  assert.deepEqual(await second.json(), { output: { handled: "steer" } });
-  assert.deepEqual(started, ["message", "steer"]);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(started, ["message"]);
   releaseFirst();
   assert.deepEqual(await (await first).json(), { output: { handled: "message" } });
+  assert.deepEqual(await (await second).json(), { output: { handled: "steer" } });
+  assert.deepEqual(started, ["message", "steer"]);
+});
+
+test("one harness runtime deduplicates an execution ID for its activation", async (t) => {
+  let calls = 0;
+  let release;
+  const released = new Promise((resolve) => { release = resolve; });
+  const server = createServer(
+    createHarnessRequestHandler(async () => {
+      calls += 1;
+      await released;
+      return { calls };
+    }),
+  );
+  await listen(server);
+  t.after(() => release());
+  t.after(() => close(server));
+  const url = `${origin(server)}/__cantelop/v1/executions/${executionId}`;
+  const request = () => fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(executionEnvelope({ type: "message" })),
+  });
+
+  const first = request();
+  await waitFor(() => calls === 1);
+  const duplicate = request();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(calls, 1);
+
+  release();
+  assert.deepEqual(await (await first).json(), { output: { calls: 1 } });
+  assert.deepEqual(await (await duplicate).json(), { output: { calls: 1 } });
+  assert.deepEqual(await (await request()).json(), { output: { calls: 1 } });
+  assert.equal(calls, 1);
 });
 
 test("a harness server is bound to one Session identity", async (t) => {

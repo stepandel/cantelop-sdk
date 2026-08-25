@@ -4,6 +4,7 @@ import type {
   StartExecutionOptions,
 } from "./execution.js";
 import type { Session } from "./resources.js";
+import { InMemoryMailbox } from "./mailbox.js";
 
 export type Awaitable<T> = T | Promise<T>;
 
@@ -173,6 +174,7 @@ export function createHarnessExecutor<
   options: HarnessExecutorOptions = {},
 ): HarnessExecutor<Input, Output, Event> {
   let boundSession: Session | undefined;
+  const mailbox = new InMemoryMailbox<Output>();
   return {
     async start(input, startOptions: StartHarnessExecutionOptions) {
       assertSessionIdentity(boundSession, startOptions.session);
@@ -194,7 +196,7 @@ export function createHarnessExecutor<
       }
 
       let handle: ExecutionHandle<Output, Event>;
-      const result = Promise.resolve().then(async () => {
+      const result = mailbox.enqueue(id, async () => {
         if (controller.signal.aborted) {
           handle.status = "cancelled";
           handle.finishedAt = new Date();

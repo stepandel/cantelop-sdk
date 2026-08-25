@@ -14,6 +14,7 @@ import type {
 } from "./harness.js";
 import type { Session } from "./resources.js";
 import { markHarnessStartup } from "./harness-startup.js";
+import { InMemoryMailbox } from "./mailbox.js";
 
 const EXECUTION_PATH_PATTERN =
   /^\/__cantelop\/v1\/executions\/(exec_[0-9a-f]{32})$/;
@@ -51,12 +52,14 @@ export function createHarnessRequestHandler<Input, Output, Event = never>(
   options: HarnessRequestHandlerOptions = {},
 ): HarnessRequestHandler {
   let boundSession: Session | undefined;
+  const mailbox = new InMemoryMailbox<Output>();
   return (request, response) => {
     void handleRequest(
       request,
       response,
       runtime,
       options.env ?? process.env,
+      mailbox,
       (session) => {
         if (boundSession !== undefined &&
             (boundSession.id !== session.id ||
@@ -113,6 +116,7 @@ async function handleRequest<Input, Output, Event>(
   response: ServerResponse,
   runtime: HarnessRuntime<Input, Output, Event>,
   env: HarnessEnvironment,
+  mailbox: InMemoryMailbox<Output>,
   bindSession: (session: Session) => void,
 ): Promise<void> {
   setBaseHeaders(response);
@@ -152,14 +156,15 @@ async function handleRequest<Input, Output, Event>(
 
     let output: Output;
     try {
-      output = await invokeHarness(runtime, Object.freeze({
-        execution: Object.freeze({ id: executionID }),
-        session,
-        input: envelope.input as Input,
-        env,
-        signal: controller.signal,
-        emit: () => undefined,
-      }));
+      output = await mailbox.enqueue(executionID, async () =>
+        invokeHarness(runtime, Object.freeze({
+          execution: Object.freeze({ id: executionID }),
+          session,
+          input: envelope.input as Input,
+          env,
+          signal: controller.signal,
+          emit: () => undefined,
+        })));
     } finally {
       executionSettled = true;
     }
