@@ -3,7 +3,7 @@
 This example has two deployment artifacts:
 
 - `src/api.ts` is Edge middleware and imports no provider SDK.
-- `src/session.ts` defines Session logic that runs Pi Agent Core and provider
+- `src/session.ts` defines Session behaviour that runs Pi Agent Core and provider
   integrations in a Linux-native VM.
 
 Cantelop injects the current App when it creates the API. The Edge API manages
@@ -17,7 +17,7 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 requires the same Session fields without a prompt. All message routes return an
 accepted message reference with HTTP status `202`.
 
-The App has one Session logic with an explicit actor protocol. `prompt` and an
+The App has one Session behaviour with an explicit actor protocol. `prompt` and an
 idle `steer` start a Pi run. A prompt received while busy enters a FIFO queue,
 an active `steer` enters the Agent's native steering queue, and `cancel` aborts
 the run and clears queued prompts. The actor owns one Pi `Agent`; no per-Session

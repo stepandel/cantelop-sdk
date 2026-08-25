@@ -7,17 +7,19 @@ import {
   serveHarness,
 } from "../dist/harness.js";
 import { InMemoryMailbox } from "../dist/mailbox.js";
+import { defineSessionBehaviour } from "../dist/session.js";
 
 const messageId = "msg_0123456789abcdef0123456789abcdef";
+const behaviour = defineSessionBehaviour;
 
 test("the native adapter receives the versioned message protocol", async (t) => {
   let received;
   const server = createServer(
-    createHarnessRequestHandler(
+    createHarnessRequestHandler(behaviour(
       async (context) => {
         received = context;
         assert.equal(String(context.message.payload.prompt).toUpperCase(), "HELLO");
-      },
+      }),
       { env: { MODEL: "test-model" } },
     ),
   );
@@ -58,7 +60,7 @@ test("runtime activity keeps the Session active while steer and cancel messages 
   const sequences = [];
   let activity;
   const server = createServer(
-    createHarnessRequestHandler(async (context) => {
+    createHarnessRequestHandler(behaviour(async (context) => {
       const { payload } = context.message;
       activity = context.activity;
       handled.push(payload.type);
@@ -78,7 +80,7 @@ test("runtime activity keeps the Session active while steer and cancel messages 
       } else if (payload.type === "cancelled") {
         assert.equal(context.activity.active, false);
       }
-    }),
+    })),
   );
   await listen(server);
   t.after(() => close(server));
@@ -186,10 +188,10 @@ test("one harness runtime deduplicates a message ID for its activation", async (
   let release;
   const released = new Promise((resolve) => { release = resolve; });
   const server = createServer(
-    createHarnessRequestHandler(async () => {
+    createHarnessRequestHandler(behaviour(async () => {
       calls += 1;
       await released;
-    }),
+    })),
   );
   await listen(server);
   t.after(() => release());
@@ -216,7 +218,7 @@ test("one harness runtime deduplicates a message ID for its activation", async (
 
 test("a harness server is bound to one Session identity", async (t) => {
   const server = createServer(
-    createHarnessRequestHandler(async () => ({ ok: true })),
+    createHarnessRequestHandler(behaviour(async () => ({ ok: true }))),
   );
   await listen(server);
   t.after(() => close(server));
@@ -240,9 +242,9 @@ test("a harness server is bound to one Session identity", async (t) => {
 
 test("the native adapter marks a failed user message as settled", async (t) => {
   const server = createServer(
-    createHarnessRequestHandler(async () => {
+    createHarnessRequestHandler(behaviour(async () => {
       throw new Error("user message failed");
-    }),
+    })),
   );
   await listen(server);
   t.after(() => close(server));
@@ -266,9 +268,9 @@ test("the native adapter marks a failed user message as settled", async (t) => {
 test("the native adapter rejects malformed protocol requests", async (t) => {
   let calls = 0;
   const server = createServer(
-    createHarnessRequestHandler(async () => {
+    createHarnessRequestHandler(behaviour(async () => {
       calls += 1;
-    }),
+    })),
   );
   await listen(server);
   t.after(() => close(server));
@@ -304,7 +306,7 @@ test("serveHarness requires the platform-owned internal port", () => {
   delete process.env.CANTELOP_INTERNAL_PORT;
   try {
     assert.throws(
-      () => serveHarness(async () => undefined),
+      () => serveHarness(behaviour(async () => undefined)),
       /CANTELOP_INTERNAL_PORT is not configured/,
     );
   } finally {
@@ -324,7 +326,7 @@ test("serveHarness exposes an explicit listener-ready signal", async (t) => {
   process.env.CANTELOP_INTERNAL_PORT = String(port);
 
   try {
-    const harness = serveHarness(async () => undefined);
+    const harness = serveHarness(behaviour(async () => undefined));
     t.after(() => harness.close());
     await harness.ready;
     assert.equal(harness.server.listening, true);
@@ -348,7 +350,7 @@ test("serveHarness adopts the platform-prebound listener", async () => {
     "--eval",
     [
       'import { serveHarness } from "./dist/harness.js";',
-      "const harness = serveHarness(async () => undefined);",
+      "const harness = serveHarness({ receive: async () => undefined });",
       "await harness.ready;",
       'process.stdout.write("READY\\n");',
       "setTimeout(() => {}, 30_000);",
@@ -392,7 +394,7 @@ test("serveHarness rejects an invalid inherited listener descriptor", () => {
   process.env.CANTELOP_INTERNAL_FD = "socket";
   try {
     assert.throws(
-      () => serveHarness(async () => undefined),
+      () => serveHarness(behaviour(async () => undefined)),
       /CANTELOP_INTERNAL_FD must be an inherited file descriptor/,
     );
   } finally {

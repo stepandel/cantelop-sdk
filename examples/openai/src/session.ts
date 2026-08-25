@@ -1,6 +1,6 @@
 import { Agent, MemorySession, run } from "@openai/agents";
 import {
-  defineSessionLogic,
+  defineSessionBehaviour,
   type SessionContext,
 } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
@@ -11,23 +11,21 @@ let agent: Agent | undefined;
 let conversation: MemorySession | undefined;
 const promptQueue: string[] = [];
 
-export default defineSessionLogic<SessionMessage, SessionEvent>({
-  receive(context) {
-    const command = context.message.payload;
+export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) => {
+  const command = context.message.payload;
 
-    if (command.type === "cancel") {
-      promptQueue.length = 0;
-      context.activity.cancel();
-      return;
-    }
+  if (command.type === "cancel") {
+    promptQueue.length = 0;
+    context.activity.cancel();
+    return;
+  }
 
-    if (context.activity.active) {
-      promptQueue.push(command.prompt);
-      return;
-    }
+  if (context.activity.active) {
+    promptQueue.push(command.prompt);
+    return;
+  }
 
-    startPrompt(context, command.prompt);
-  },
+  startPrompt(context, command.prompt);
 });
 
 function startPrompt(context: Context, prompt: string): void {

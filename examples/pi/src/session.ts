@@ -1,7 +1,7 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
-  defineSessionLogic,
+  defineSessionBehaviour,
   type SessionContext,
 } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
@@ -36,32 +36,30 @@ function sessionAgent(
   return agent;
 }
 
-export default defineSessionLogic<SessionMessage, SessionEvent>({
-  receive(context) {
-    const command = context.message.payload;
+export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) => {
+  const command = context.message.payload;
 
-    if (command.type === "cancel") {
-      promptQueue.length = 0;
-      context.activity.cancel();
-      return;
-    }
+  if (command.type === "cancel") {
+    promptQueue.length = 0;
+    context.activity.cancel();
+    return;
+  }
 
-    if (command.type === "steer" && context.activity.active && agent !== undefined) {
-      agent.steer({
-        role: "user",
-        content: command.prompt,
-        timestamp: Date.now(),
-      });
-      return;
-    }
+  if (command.type === "steer" && context.activity.active && agent !== undefined) {
+    agent.steer({
+      role: "user",
+      content: command.prompt,
+      timestamp: Date.now(),
+    });
+    return;
+  }
 
-    if (context.activity.active) {
-      promptQueue.push(command.prompt);
-      return;
-    }
+  if (context.activity.active) {
+    promptQueue.push(command.prompt);
+    return;
+  }
 
-    startPrompt(context, command.prompt);
-  },
+  startPrompt(context, command.prompt);
 });
 
 function startPrompt(context: Context, prompt: string): void {

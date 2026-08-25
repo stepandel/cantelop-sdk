@@ -58,7 +58,7 @@ try {
     assert.match(contractsSource, /SessionMessage/);
     assert.match(contractsSource, /SessionEvent/);
     assert.match(sessionSource, /activity\.start\(/);
-    assert.match(sessionSource, /defineSessionLogic/);
+    assert.match(sessionSource, /defineSessionBehaviour/);
     JSON.parse(await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"));
 
     await buildApi({

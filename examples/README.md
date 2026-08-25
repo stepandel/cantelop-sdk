@@ -4,13 +4,13 @@ The OpenAI, Anthropic, and Pi examples each contain two deployment artifacts:
 
 ```text
 src/api.ts      Edge HTTP middleware
-src/session.ts  Linux-native Session logic
+src/session.ts  Linux-native Session behaviour
 cantelop.json   Build and deployment manifest
 ```
 
 Each provider directory is a complete, self-contained implementation with its
 own contracts, request validation, and routes. Provider SDKs, credentials, and
-incremental events remain confined to the native Session logic entrypoint. Cantelop injects
+incremental events remain confined to the native Session behaviour entrypoint. Cantelop injects
 the current App into each API definition. Every API exposes four routes:
 `GET /health`, `POST /chat`, `POST /steer`, and `POST /cancel`. Chat creates or
 reuses a Session from an optional ID; steer and cancel require an existing

@@ -128,8 +128,8 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
     entrypoint,
     [
       'import { greeting } from "./dependency.ts";',
-      `import { defineSessionLogic } from ${JSON.stringify(new URL("../dist/session.js", import.meta.url).pathname)};`,
-      'export default defineSessionLogic(async () => { void greeting; });',
+      `import { defineSessionBehaviour } from ${JSON.stringify(new URL("../dist/session.js", import.meta.url).pathname)};`,
+      'export default defineSessionBehaviour(async () => { void greeting; });',
     ].join("\n"),
   );
 
@@ -163,8 +163,8 @@ test("a built harness receives messages on the local development port", async (t
   await writeFile(
     entrypoint,
     [
-      `import { defineSessionLogic } from ${JSON.stringify(new URL("../dist/session.js", import.meta.url).pathname)};`,
-      "export default defineSessionLogic(async ({ message, env }) => {",
+      `import { defineSessionBehaviour } from ${JSON.stringify(new URL("../dist/session.js", import.meta.url).pathname)};`,
+      "export default defineSessionBehaviour(async ({ message, env }) => {",
       '  if (`${String(message.payload.prompt).toUpperCase()}:${env.MODEL}` !== "HELLO:test-model") throw new Error("unexpected message");',
       "});",
     ].join("\n"),

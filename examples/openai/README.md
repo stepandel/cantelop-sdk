@@ -3,7 +3,7 @@
 This example has two deployment artifacts:
 
 - `src/api.ts` is Edge middleware and imports no provider SDK.
-- `src/session.ts` defines Session logic that runs in a Linux-native VM with
+- `src/session.ts` defines Session behaviour that runs in a Linux-native VM with
   the OpenAI Agents SDK.
 
 Cantelop injects the current App when it creates the API. The Edge API manages
@@ -18,7 +18,7 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 requires the same Session fields without a prompt. All message routes return an
 accepted message reference with HTTP status `202`.
 
-The App has one Session logic with an explicit actor protocol. `prompt` and an
+The App has one Session behaviour with an explicit actor protocol. `prompt` and an
 idle `steer` start an OpenAI run. Prompts and steer commands received while a
 run is active enter a FIFO queue, and `cancel` aborts the run and clears that
 queue. The actor owns one OpenAI `Agent` and `MemorySession`; no per-Session

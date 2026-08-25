@@ -56,7 +56,7 @@
       ]
     },
     "harness": {
-      "description": "Native Session logic entrypoint, as a path or an expanded harness configuration object for native system dependencies.",
+      "description": "Native Session behaviour entrypoint, as a path or an expanded harness configuration object for native system dependencies.",
       "oneOf": [
         {
           "$ref": "#/$defs/projectFile"

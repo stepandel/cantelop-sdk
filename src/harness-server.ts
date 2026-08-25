@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import type {
   SessionContext,
   SessionEnvironment,
-  SessionLogic,
+  SessionBehaviour,
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
 import { markHarnessStartup, markMessageLifecycle } from "./harness-startup.js";
@@ -50,7 +50,7 @@ type HarnessRequestHandler = (
  * primarily useful to platform integration tests and custom native launchers.
  */
 export function createHarnessRequestHandler<Input, Event = never>(
-  runtime: SessionLogic<Input, Event>,
+  behaviour: SessionBehaviour<Input, Event>,
   options: HarnessRequestHandlerOptions = {},
 ): HarnessRequestHandler {
   let boundSession: SessionIdentity | undefined;
@@ -61,7 +61,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
     message: Readonly<{ id: string; payload: Input }>,
     session: SessionIdentity,
   ): Promise<void> => mailbox.enqueue(message.id, async (sequence) =>
-    invokeHarness(runtime, Object.freeze({
+    invokeBehaviour(behaviour, Object.freeze({
       message: Object.freeze({ ...message, sequence }),
       session,
       env: options.env ?? process.env,
@@ -102,11 +102,11 @@ export function createHarnessRequestHandler<Input, Event = never>(
  * supplies a deployment port.
  */
 export function serveHarness<Input, Event = never>(
-  runtime: SessionLogic<Input, Event>,
+  behaviour: SessionBehaviour<Input, Event>,
 ): HarnessServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
-  const server = createServer(createHarnessRequestHandler(runtime));
+  const server = createServer(createHarnessRequestHandler(behaviour));
   markHarnessStartup("server_created");
   const ready = listen(server, port, inheritedFD);
   return {
@@ -223,12 +223,11 @@ async function readRequestEnvelope(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-function invokeHarness<Input, Event>(
-  runtime: SessionLogic<Input, Event>,
+function invokeBehaviour<Input, Event>(
+  behaviour: SessionBehaviour<Input, Event>,
   context: SessionContext<Input, Event>,
 ): void | Promise<void> {
-  if (typeof runtime === "function") return runtime(context);
-  return runtime.receive(context);
+  return behaviour.receive(context);
 }
 
 function createMessageID(): string {

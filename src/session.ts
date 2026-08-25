@@ -34,16 +34,14 @@ export interface SessionContext<Message, Event = never> {
   emit(event: Event): void;
 }
 
-export type SessionLogic<Message, Event = never> =
-  | ((context: SessionContext<Message, Event>) => Awaitable<void>)
-  | {
-      receive(context: SessionContext<Message, Event>): Awaitable<void>;
-    };
+export interface SessionBehaviour<Message, Event = never> {
+  receive(context: SessionContext<Message, Event>): Awaitable<void>;
+}
 
-export function defineSessionLogic<Message, Event = never>(
-  logic: SessionLogic<Message, Event>,
-): SessionLogic<Message, Event> {
-  return logic;
+export function defineSessionBehaviour<Message, Event = never>(
+  receive: SessionBehaviour<Message, Event>["receive"],
+): SessionBehaviour<Message, Event> {
+  return Object.freeze({ receive });
 }
 
 export type { SessionIdentity } from "./resources.js";

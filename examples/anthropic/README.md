@@ -3,7 +3,7 @@
 This example has two deployment artifacts:
 
 - `src/api.ts` is Edge middleware and imports no provider SDK.
-- `src/session.ts` defines Session logic that runs the Claude Agent SDK and its
+- `src/session.ts` defines Session behaviour that runs the Claude Agent SDK and its
   subprocess in a Linux-native VM.
 
 Cantelop injects the current App when it creates the API. The Edge API manages
@@ -17,7 +17,7 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 requires the same Session fields without a prompt. All message routes return an
 accepted message reference with HTTP status `202`.
 
-The App has one Session logic with an explicit actor protocol. `prompt` and an
+The App has one Session behaviour with an explicit actor protocol. `prompt` and an
 idle `steer` start one streaming-input Claude query. While it is active, actor
 messages are written directly to the SDK's `AsyncIterable<SDKUserMessage>`:
 ordinary prompts use native `later` priority and steer commands use `now`.

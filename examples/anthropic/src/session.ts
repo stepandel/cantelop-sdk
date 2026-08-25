@@ -3,7 +3,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
-  defineSessionLogic,
+  defineSessionBehaviour,
   type SessionContext,
 } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
@@ -13,22 +13,20 @@ type Context = SessionContext<SessionMessage, SessionEvent>;
 let conversationId: string | undefined;
 let input: ClaudeInput | undefined;
 
-export default defineSessionLogic<SessionMessage, SessionEvent>({
-  receive(context) {
-    const command = context.message.payload;
+export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) => {
+  const command = context.message.payload;
 
-    if (command.type === "cancel") {
-      context.activity.cancel();
-      return;
-    }
+  if (command.type === "cancel") {
+    context.activity.cancel();
+    return;
+  }
 
-    if (context.activity.active) {
-      input?.send(command.prompt, command.type === "steer" ? "now" : "later");
-      return;
-    }
+  if (context.activity.active) {
+    input?.send(command.prompt, command.type === "steer" ? "now" : "later");
+    return;
+  }
 
-    startPrompt(context, command.prompt);
-  },
+  startPrompt(context, command.prompt);
 });
 
 function startPrompt(context: Context, prompt: string): void {
