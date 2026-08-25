@@ -22,10 +22,49 @@ export interface SessionOpenConfig {
   readonly keepAliveSeconds: number;
 }
 
-export interface MessageReceipt {
-  readonly id: string;
-  readonly status: "queued";
+export interface AcceptedMessageStatus {
+  readonly state: "accepted";
   readonly acceptedAt: Date;
+}
+
+export interface HandlingMessageStatus {
+  readonly state: "handling";
+  readonly acceptedAt: Date;
+  readonly startedAt: Date;
+}
+
+export interface HandledMessageStatus {
+  readonly state: "handled";
+  readonly acceptedAt: Date;
+  readonly startedAt: Date;
+  readonly handledAt: Date;
+}
+
+export interface FailedMessageStatus {
+  readonly state: "failed";
+  readonly acceptedAt: Date;
+  readonly startedAt: Date;
+  readonly failedAt: Date;
+  readonly error: Readonly<{ code: string }>;
+}
+
+export interface UnknownMessageStatus {
+  readonly state: "unknown";
+}
+
+export type MessageStatus =
+  | AcceptedMessageStatus
+  | HandlingMessageStatus
+  | HandledMessageStatus
+  | FailedMessageStatus
+  | UnknownMessageStatus;
+
+/** A reference to an accepted message. */
+export interface MessageRef {
+  readonly id: string;
+  readonly state: "accepted";
+  readonly acceptedAt: Date;
+  status(): Promise<MessageStatus>;
 }
 
 /** Canonical, read-only identity and configuration for a Session actor. */
@@ -37,7 +76,7 @@ export interface SessionIdentity {
 
 /** A reference to a Session actor. */
 export interface Session<Message> extends SessionIdentity {
-  dispatch(message: Message): Promise<MessageReceipt>;
+  dispatch(message: Message): Promise<MessageRef>;
   terminate(): Promise<void>;
 }
 

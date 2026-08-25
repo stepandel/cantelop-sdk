@@ -1,6 +1,7 @@
 import type {
   CantelopApp,
-  MessageReceipt,
+  MessageRef,
+  MessageStatus,
   Session,
   SessionOpenConfig,
   Workspace,
@@ -87,7 +88,7 @@ function createRemoteSession<Input>(
     workspaceId: config.workspaceId,
     keepAliveSeconds: config.keepAliveSeconds,
 
-    async dispatch(input: Input): Promise<MessageReceipt> {
+    async dispatch(input: Input): Promise<MessageRef> {
       const message = messageId();
       assertMessageID(message);
       const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/messages", {
@@ -100,7 +101,7 @@ function createRemoteSession<Input>(
           },
         },
       });
-      return readMessageReceipt(envelope, message);
+      return readMessageRef(envelope, message, this.id, runtimeFetch);
     },
 
     async terminate(): Promise<void> {
@@ -121,26 +122,84 @@ function sessionEnvelope(id: string, config: SessionOpenConfig): Record<string, 
   };
 }
 
-function readMessageReceipt(
+function readMessageRef(
   envelope: unknown,
   expectedMessage: string,
-): MessageReceipt {
+  sessionId: string,
+  runtimeFetch: RuntimeFetch,
+): MessageRef {
   if (!isRecord(envelope) || typeof envelope.id !== "string" ||
       !MESSAGE_ID_PATTERN.test(envelope.id) ||
       envelope.id !== expectedMessage ||
-      envelope.status !== "queued" ||
+      envelope.status !== "accepted" ||
       typeof envelope.accepted_at !== "string") {
     throw new RemoteAppError("invalid_message_response", 0);
   }
+  const id = envelope.id;
   return Object.freeze({
-    id: envelope.id,
-    status: "queued" as const,
+    id,
+    state: "accepted" as const,
     acceptedAt: readMessageDate(envelope.accepted_at),
+    async status(): Promise<MessageStatus> {
+      const statusEnvelope = await requestJSON(
+        runtimeFetch,
+        `/__cantelop/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(id)}`,
+        { method: "GET" },
+      );
+      return readMessageStatus(statusEnvelope, id);
+    },
   });
 }
 
+function readMessageStatus(envelope: unknown, expectedMessage: string): MessageStatus {
+  if (!isRecord(envelope) || envelope.id !== expectedMessage ||
+      typeof envelope.state !== "string") {
+    throw new RemoteAppError("invalid_message_status_response", 0);
+  }
+
+  if (envelope.state === "unknown") {
+    return Object.freeze({ state: "unknown" as const });
+  }
+
+  if (typeof envelope.accepted_at !== "string") {
+    throw new RemoteAppError("invalid_message_status_response", 0);
+  }
+  const acceptedAt = readMessageStatusDate(envelope.accepted_at);
+  if (envelope.state === "accepted") {
+    return Object.freeze({ state: "accepted" as const, acceptedAt });
+  }
+
+  if (typeof envelope.started_at !== "string") {
+    throw new RemoteAppError("invalid_message_status_response", 0);
+  }
+  const startedAt = readMessageStatusDate(envelope.started_at);
+  if (envelope.state === "handling") {
+    return Object.freeze({ state: "handling" as const, acceptedAt, startedAt });
+  }
+  if (envelope.state === "handled" && typeof envelope.handled_at === "string") {
+    return Object.freeze({
+      state: "handled" as const,
+      acceptedAt,
+      startedAt,
+      handledAt: readMessageStatusDate(envelope.handled_at),
+    });
+  }
+  if (envelope.state === "failed" && typeof envelope.failed_at === "string" &&
+      isRecord(envelope.error) && typeof envelope.error.code === "string" &&
+      envelope.error.code.length > 0) {
+    return Object.freeze({
+      state: "failed" as const,
+      acceptedAt,
+      startedAt,
+      failedAt: readMessageStatusDate(envelope.failed_at),
+      error: Object.freeze({ code: envelope.error.code }),
+    });
+  }
+  throw new RemoteAppError("invalid_message_status_response", 0);
+}
+
 interface RequestOptions {
-  readonly method: "DELETE" | "POST";
+  readonly method: "DELETE" | "GET" | "POST";
   readonly body?: unknown;
 }
 
@@ -223,6 +282,14 @@ function readDate(value: unknown): Date {
 function readMessageDate(value: string): Date {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) throw new RemoteAppError("invalid_message_response", 0);
+  return date;
+}
+
+function readMessageStatusDate(value: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) {
+    throw new RemoteAppError("invalid_message_status_response", 0);
+  }
   return date;
 }
 

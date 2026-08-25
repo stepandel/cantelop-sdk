@@ -44,7 +44,12 @@ export type {
 } from "./router.js";
 export type {
   CantelopApp,
-  MessageReceipt,
+  AcceptedMessageStatus,
+  FailedMessageStatus,
+  HandledMessageStatus,
+  HandlingMessageStatus,
+  MessageRef,
+  MessageStatus,
   Session,
   SessionIdentity,
   SessionOpenConfig,
@@ -53,5 +58,6 @@ export type {
   WorkspaceCreateConfig,
   WorkspaceOpenConfig,
   WorkspaceService,
+  UnknownMessageStatus,
 } from "./resources.js";
 export { RemoteAppError } from "./remote-app.js";

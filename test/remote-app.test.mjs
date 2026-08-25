@@ -84,14 +84,23 @@ test("opening an anonymous Session generates its ID without a request", () => {
 });
 
 test("a Session dispatches asynchronously with the same identity and configuration", async () => {
-  let forwarded;
+  const forwarded = [];
   const app = createRemoteApp({
     messageId: () => messageId,
     fetch: async (request) => {
-      forwarded = request;
+      forwarded.push(request);
+      if (request.method === "GET") {
+        return Response.json({
+          id: messageId,
+          state: "handled",
+          accepted_at: "2026-08-17T12:00:00Z",
+          started_at: "2026-08-17T12:00:01Z",
+          handled_at: "2026-08-17T12:00:02Z",
+        });
+      }
       return Response.json({
         id: messageId,
-        status: "queued",
+        status: "accepted",
         accepted_at: "2026-08-17T12:00:00Z",
       }, { status: 202 });
     },
@@ -102,12 +111,12 @@ test("a Session dispatches asynchronously with the same identity and configurati
     workspaceId,
     keepAliveSeconds: 300,
   });
-  const receipt = await session.dispatch({ event: "push" });
-  assert.equal(receipt.id, messageId);
-  assert.equal(receipt.status, "queued");
-  assert.equal(receipt.acceptedAt.toISOString(), "2026-08-17T12:00:00.000Z");
-  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/messages");
-  assert.deepEqual(await forwarded.json(), {
+  const message = await session.dispatch({ event: "push" });
+  assert.equal(message.id, messageId);
+  assert.equal(message.state, "accepted");
+  assert.equal(message.acceptedAt.toISOString(), "2026-08-17T12:00:00.000Z");
+  assert.equal(forwarded[0].url, "https://runtime.cantelop.internal/__cantelop/v1/messages");
+  assert.deepEqual(await forwarded[0].json(), {
     session: {
       id: namedSessionId,
       workspace_id: workspaceId,
@@ -118,6 +127,66 @@ test("a Session dispatches asynchronously with the same identity and configurati
       payload: { event: "push" },
     },
   });
+
+  const status = await message.status();
+  assert.deepEqual(status, {
+    state: "handled",
+    acceptedAt: new Date("2026-08-17T12:00:00Z"),
+    startedAt: new Date("2026-08-17T12:00:01Z"),
+    handledAt: new Date("2026-08-17T12:00:02Z"),
+  });
+  assert.equal(forwarded[1].method, "GET");
+  assert.equal(
+    forwarded[1].url,
+    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}/messages/${messageId}`,
+  );
+});
+
+test("a Message reference reads each observable lifecycle state", async () => {
+  const states = [
+    { id: messageId, state: "accepted", accepted_at: "2026-08-17T12:00:00Z" },
+    {
+      id: messageId,
+      state: "handling",
+      accepted_at: "2026-08-17T12:00:00Z",
+      started_at: "2026-08-17T12:00:01Z",
+    },
+    {
+      id: messageId,
+      state: "failed",
+      accepted_at: "2026-08-17T12:00:00Z",
+      started_at: "2026-08-17T12:00:01Z",
+      failed_at: "2026-08-17T12:00:02Z",
+      error: { code: "message_handler_failed", message: "private detail" },
+    },
+    { id: messageId, state: "unknown" },
+  ];
+  const app = createRemoteApp({
+    messageId: () => messageId,
+    fetch: async (request) => request.method === "POST"
+      ? Response.json({
+        id: messageId,
+        status: "accepted",
+        accepted_at: "2026-08-17T12:00:00Z",
+      }, { status: 202 })
+      : Response.json(states.shift()),
+  });
+  const message = await app.sessions.open({
+    id: namedSessionId,
+    workspaceId,
+    keepAliveSeconds: 0,
+  }).dispatch({});
+
+  assert.equal((await message.status()).state, "accepted");
+  assert.equal((await message.status()).state, "handling");
+  assert.deepEqual(await message.status(), {
+    state: "failed",
+    acceptedAt: new Date("2026-08-17T12:00:00Z"),
+    startedAt: new Date("2026-08-17T12:00:01Z"),
+    failedAt: new Date("2026-08-17T12:00:02Z"),
+    error: { code: "message_handler_failed" },
+  });
+  assert.deepEqual(await message.status(), { state: "unknown" });
 });
 
 test("Session termination targets the logical Session", async () => {
