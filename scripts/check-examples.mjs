@@ -30,6 +30,7 @@ try {
   for (const example of examples) {
     const exampleRoot = path.join(repositoryRoot, "examples", example);
     const apiSource = await readFile(path.join(exampleRoot, "src/api.ts"), "utf8");
+    const contractsSource = await readFile(path.join(exampleRoot, "src/contracts.ts"), "utf8");
     const sessionSource = await readFile(path.join(exampleRoot, "src/session.ts"), "utf8");
     const routes = [...apiSource.matchAll(/router\.route\("([A-Z]+)", "([^"]+)"/g)]
       .map(([, method, route]) => `${method} ${route}`);
@@ -40,8 +41,13 @@ try {
       "POST /cancel",
     ]);
     assert.doesNotMatch(sessionSource, /steer:\s*steerTurn/);
+    assert.doesNotMatch(sessionSource, /queuedPrompts|PromptInput|AnswerOutput/);
+    assert.doesNotMatch(sessionSource, /type:\s*"message"/);
+    assert.match(apiSource, /type:\s*"prompt"/);
     assert.match(apiSource, /type:\s*"steer"/);
     assert.match(apiSource, /type:\s*"cancel"/);
+    assert.match(contractsSource, /SessionMessage/);
+    assert.match(contractsSource, /SessionEvent/);
     assert.match(sessionSource, /activity\.start\(/);
     assert.match(sessionSource, /defineSessionLogic/);
     JSON.parse(await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"));

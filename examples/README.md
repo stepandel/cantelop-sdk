@@ -16,11 +16,13 @@ the current App into each API definition. Every API exposes four routes:
 reuses a Session from an optional ID; steer and cancel require an existing
 Session ID. All message routes call the same asynchronous
 `dispatch()` method, and return an in-memory acceptance receipt with status
-`202`. The protocol does not define steering or cancellation semantics. OpenAI
-and Anthropic queue steer prompts as later provider turns; Pi applies steer to
-its active Agent. All three propagate cancel through the Session activity's
-`AbortSignal`. The Session identity is propagated into the native harness,
-and direct client streaming is configured at the VM.
+`202`. Each example defines an explicit `SessionMessage` protocol with
+`prompt`, `steer`, and `cancel` commands, plus a `SessionEvent` stream for text
+deltas and completion. OpenAI and Anthropic retain the latest steer as the next
+provider turn because their active runs are not steerable; Pi applies steer
+directly to its active Agent. All three propagate cancel through the Session
+activity's `AbortSignal`. The Session identity is propagated into the native
+harness, and direct client streaming is configured at the VM.
 
 Each manifest targets an illustrative App slug. Create that App or change its
 `app` value before running `cantelop deploy`; generated App IDs are never stored

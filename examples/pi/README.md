@@ -17,13 +17,12 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 requires the same Session fields without a prompt. All message routes return an
 in-memory acceptance receipt with status `202`.
 
-The message routes target the App's single Session logic. Its `receive`
-entrypoint handles each message. The
-application message identifies chat, steer, or cancel intent, and the retained
-Agent handles steer input
-through Pi's native steering queue. The Agent prompt runs as the runtime-managed
-Session activity, so steer reaches it while active and cancel aborts it through
-the activity signal.
+The App has one Session logic with an explicit actor protocol: `prompt` starts
+one Pi run, `steer` enters the active Agent's native steering queue, and
+`cancel` aborts it. The actor owns one Pi `Agent`; no per-Session registry is
+needed because the native runtime is already bound to one Session. The prompt
+lives in the Session activity so the FIFO mailbox remains available for steer
+and cancel commands.
 
 `cantelop.json` targets an illustrative App with slug `pi`. Change the slug
 when deploying to a different App.

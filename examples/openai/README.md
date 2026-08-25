@@ -18,14 +18,12 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 requires the same Session fields without a prompt. All message routes return an
 in-memory acceptance receipt with status `202`.
 
-The message routes target the App's single Session logic. Its `receive`
-entrypoint handles each message. The
-application message identifies chat, steer, or cancel intent; this example adds
-either prompt as another
-turn in the Session's shared OpenAI `MemorySession`. The active run is a
-runtime-managed Session activity: steer queues the next turn without blocking
-the mailbox, while cancel aborts the run through its activity signal and clears
-queued prompts.
+The App has one Session logic with an explicit actor protocol: `prompt` starts
+one OpenAI run, `steer` records at most one follow-up prompt while that run is
+active, and `cancel` aborts it. The actor owns one OpenAI `Agent` and
+`MemorySession`; no per-Session registry is needed because the native runtime is
+already bound to one Session. The run lives in the Session activity so the FIFO
+mailbox remains available for steer and cancel commands.
 
 `cantelop.json` targets an illustrative App with slug `openai`. Change the slug
 when deploying to a different App.
