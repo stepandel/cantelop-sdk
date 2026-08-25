@@ -28,11 +28,6 @@ export interface ExecutionReceipt {
   readonly acceptedAt: Date;
 }
 
-export interface SessionDispatchOptions {
-  /** Stable key reused when dispatching the same logical message again. */
-  readonly idempotencyKey?: string;
-}
-
 /** Canonical, read-only Session identity and configuration. */
 export interface Session {
   readonly id: string;
@@ -42,7 +37,7 @@ export interface Session {
 
 /** Edge capabilities for operating on a canonical Session. */
 export interface SessionHandle<Input> extends Session {
-  dispatch(input: Input, options?: SessionDispatchOptions): Promise<ExecutionReceipt>;
+  dispatch(input: Input): Promise<ExecutionReceipt>;
   terminate(): Promise<void>;
 }
 

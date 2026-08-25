@@ -1,7 +1,6 @@
 import type {
   CantelopApp,
   ExecutionReceipt,
-  SessionDispatchOptions,
   SessionHandle,
   SessionOpenConfig,
   Workspace,
@@ -88,11 +87,7 @@ function createRemoteSession<Input>(
     workspaceId: config.workspaceId,
     keepAliveSeconds: config.keepAliveSeconds,
 
-    async dispatch(
-      input: Input,
-      options: SessionDispatchOptions = {},
-    ): Promise<ExecutionReceipt> {
-      assertIdempotencyKey(options.idempotencyKey);
+    async dispatch(input: Input): Promise<ExecutionReceipt> {
       const execution = executionId();
       assertExecutionID(execution);
       const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/executions", {
@@ -101,15 +96,9 @@ function createRemoteSession<Input>(
           id: execution,
           session: sessionEnvelope(this.id, config),
           input,
-          ...(options.idempotencyKey === undefined ? {} : {
-            idempotency_key: options.idempotencyKey,
-          }),
         },
       });
-      return readExecutionReceipt(
-        envelope,
-        options.idempotencyKey === undefined ? execution : undefined,
-      );
+      return readExecutionReceipt(envelope, execution);
     },
 
     async terminate(): Promise<void> {
@@ -132,11 +121,11 @@ function sessionEnvelope(id: string, config: SessionOpenConfig): Record<string, 
 
 function readExecutionReceipt(
   envelope: unknown,
-  expectedExecution: string | undefined,
+  expectedExecution: string,
 ): ExecutionReceipt {
   if (!isRecord(envelope) || typeof envelope.id !== "string" ||
       !EXECUTION_ID_PATTERN.test(envelope.id) ||
-      (expectedExecution !== undefined && envelope.id !== expectedExecution) ||
+      envelope.id !== expectedExecution ||
       envelope.status !== "queued" ||
       typeof envelope.accepted_at !== "string") {
     throw new RemoteAppError("invalid_execution_response", 0);
@@ -146,13 +135,6 @@ function readExecutionReceipt(
     status: "queued" as const,
     acceptedAt: readExecutionDate(envelope.accepted_at),
   });
-}
-
-function assertIdempotencyKey(value: string | undefined): void {
-  if (value === undefined) return;
-  if (typeof value !== "string" || value.length === 0 || byteLength(value) > 256) {
-    throw new TypeError("Invalid Cantelop idempotency key");
-  }
 }
 
 interface RequestOptions {

@@ -46,7 +46,6 @@ export type {
   CantelopApp,
   ExecutionReceipt,
   Session,
-  SessionDispatchOptions,
   SessionHandle,
   SessionOpenConfig,
   SessionService,
