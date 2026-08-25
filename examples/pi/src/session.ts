@@ -10,6 +10,7 @@ type Context = SessionContext<SessionMessage, SessionEvent>;
 
 const models = builtinModels();
 let agent: Agent | undefined;
+const promptQueue: string[] = [];
 
 function sessionAgent(
   { session, env }: Context,
@@ -40,14 +41,12 @@ export default defineSessionLogic<SessionMessage, SessionEvent>({
     const command = context.message.payload;
 
     if (command.type === "cancel") {
+      promptQueue.length = 0;
       context.activity.cancel();
       return;
     }
 
-    if (command.type === "steer") {
-      if (!context.activity.active || agent === undefined) {
-        throw new Error("No active Pi agent to steer");
-      }
+    if (command.type === "steer" && context.activity.active && agent !== undefined) {
       agent.steer({
         role: "user",
         content: command.prompt,
@@ -57,7 +56,8 @@ export default defineSessionLogic<SessionMessage, SessionEvent>({
     }
 
     if (context.activity.active) {
-      throw new Error("The Session is already processing a prompt");
+      promptQueue.push(command.prompt);
+      return;
     }
 
     startPrompt(context, command.prompt);
@@ -67,7 +67,7 @@ export default defineSessionLogic<SessionMessage, SessionEvent>({
 function startPrompt(context: Context, prompt: string): void {
   const currentAgent = sessionAgent(context);
 
-  context.activity.start(async ({ signal }) => {
+  context.activity.start(async ({ signal, send }) => {
     let answer = "";
     const unsubscribe = currentAgent.subscribe((event) => {
       if (
@@ -88,6 +88,10 @@ function startPrompt(context: Context, prompt: string): void {
     } finally {
       signal.removeEventListener("abort", abort);
       unsubscribe();
+      const nextPrompt = promptQueue.shift();
+      if (!signal.aborted && nextPrompt !== undefined) {
+        send({ type: "prompt", prompt: nextPrompt });
+      }
     }
   });
 }

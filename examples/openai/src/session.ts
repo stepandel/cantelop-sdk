@@ -9,28 +9,21 @@ type Context = SessionContext<SessionMessage, SessionEvent>;
 
 let agent: Agent | undefined;
 let conversation: MemorySession | undefined;
-let pendingSteer: string | undefined;
+const promptQueue: string[] = [];
 
 export default defineSessionLogic<SessionMessage, SessionEvent>({
   receive(context) {
     const command = context.message.payload;
 
     if (command.type === "cancel") {
-      pendingSteer = undefined;
+      promptQueue.length = 0;
       context.activity.cancel();
       return;
     }
 
-    if (command.type === "steer") {
-      if (!context.activity.active) {
-        throw new Error("No active OpenAI run to steer");
-      }
-      pendingSteer = command.prompt;
-      return;
-    }
-
     if (context.activity.active) {
-      throw new Error("The Session is already processing a prompt");
+      promptQueue.push(command.prompt);
+      return;
     }
 
     startPrompt(context, command.prompt);
@@ -52,7 +45,6 @@ function startPrompt(context: Context, prompt: string): void {
   const currentConversation = conversation;
 
   context.activity.start(async ({ signal, send }) => {
-    let completed = false;
     try {
       const result = await run(currentAgent, prompt, {
         session: currentConversation,
@@ -67,12 +59,10 @@ function startPrompt(context: Context, prompt: string): void {
       }
       await result.completed;
       context.emit({ type: "done", answer: result.finalOutput ?? answer });
-      completed = true;
     } finally {
-      const steer = pendingSteer;
-      pendingSteer = undefined;
-      if (completed && steer !== undefined) {
-        send({ type: "prompt", prompt: steer });
+      const nextPrompt = promptQueue.shift();
+      if (!signal.aborted && nextPrompt !== undefined) {
+        send({ type: "prompt", prompt: nextPrompt });
       }
     }
   });
