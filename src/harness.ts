@@ -6,19 +6,19 @@ export type HarnessEnvironment = Readonly<
   Record<string, string | undefined>
 >;
 
-export interface HarnessTaskContext<Message> {
+export interface HarnessActivityContext<Message> {
   readonly signal: AbortSignal;
   send(payload: Message): void;
 }
 
-export type HarnessTaskFunction<Message> = (
-  context: HarnessTaskContext<Message>,
+export type HarnessActivityFunction<Message> = (
+  context: HarnessActivityContext<Message>,
 ) => Awaitable<void>;
 
-export interface HarnessTasks<Message> {
-  start(id: string, work: HarnessTaskFunction<Message>): void;
-  cancel(id: string, reason?: unknown): boolean;
-  has(id: string): boolean;
+export interface HarnessActivity<Message> {
+  readonly active: boolean;
+  start(work: HarnessActivityFunction<Message>): void;
+  cancel(reason?: unknown): boolean;
 }
 
 export interface HarnessContext<Input, Event = never> {
@@ -29,7 +29,7 @@ export interface HarnessContext<Input, Event = never> {
   }>;
   readonly session: Session;
   readonly env: HarnessEnvironment;
-  readonly tasks: HarnessTasks<Input>;
+  readonly activity: HarnessActivity<Input>;
   send(payload: Input): void;
   emit(event: Event): void;
 }

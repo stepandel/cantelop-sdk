@@ -15,8 +15,8 @@ import type {
 } from "./harness.js";
 import type { Session } from "./resources.js";
 import { markHarnessStartup } from "./harness-startup.js";
+import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
-import { InMemoryTasks } from "./tasks.js";
 
 const MESSAGE_PATH = "/__cantelop/v1/messages";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
@@ -55,7 +55,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
 ): HarnessRequestHandler {
   let boundSession: Session | undefined;
   const mailbox = new InMemoryMailbox<void>();
-  let tasks: InMemoryTasks<Input>;
+  let activity: InMemoryActivity<Input>;
 
   const receiveMessage = (
     message: Readonly<{ id: string; payload: Input }>,
@@ -65,7 +65,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
       message: Object.freeze({ ...message, sequence }),
       session,
       env: options.env ?? process.env,
-      tasks,
+      activity,
       send: sendMessage,
       emit: () => undefined,
     })));
@@ -78,13 +78,13 @@ export function createHarnessRequestHandler<Input, Event = never>(
     void receiveMessage(message, boundSession).catch(() => undefined);
   };
 
-  tasks = new InMemoryTasks(sendMessage);
+  activity = new InMemoryActivity(sendMessage);
   return (request, response) => {
     void handleRequest(
       request,
       response,
       mailbox,
-      tasks,
+      activity,
       receiveMessage,
       (session) => {
         if (boundSession !== undefined &&
@@ -141,7 +141,7 @@ async function handleRequest<Input, Event>(
   request: IncomingMessage,
   response: ServerResponse,
   mailbox: InMemoryMailbox<void>,
-  tasks: InMemoryTasks<Input>,
+  activity: InMemoryActivity<Input>,
   receiveMessage: (
     message: Readonly<{ id: string; payload: Input }>,
     session: Session,
@@ -179,7 +179,7 @@ async function handleRequest<Input, Event>(
 
     try {
       await receiveMessage(message, session);
-      await waitForActorIdle(mailbox, tasks);
+      await waitForActorIdle(mailbox, activity);
     } finally {
       messageSettled = true;
     }
@@ -202,10 +202,10 @@ async function handleRequest<Input, Event>(
 
 async function waitForActorIdle<Message>(
   mailbox: InMemoryMailbox<void>,
-  tasks: InMemoryTasks<Message>,
+  activity: InMemoryActivity<Message>,
 ): Promise<void> {
-  while (!mailbox.isIdle || !tasks.isIdle) {
-    await Promise.all([mailbox.waitForIdle(), tasks.waitForIdle()]);
+  while (!mailbox.isIdle || !activity.isIdle) {
+    await Promise.all([mailbox.waitForIdle(), activity.waitForIdle()]);
   }
 }
 

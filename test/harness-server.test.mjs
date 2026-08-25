@@ -52,7 +52,7 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.equal(received.env.MODEL, "test-model");
 });
 
-test("runtime tasks keep the Session active while steer and cancel messages run", async (t) => {
+test("runtime activity keeps the Session active while steer and cancel messages run", async (t) => {
   const handled = [];
   const sequences = [];
   let firstSettled = false;
@@ -63,18 +63,18 @@ test("runtime tasks keep the Session active while steer and cancel messages run"
       sequences.push(context.message.sequence);
 
       if (payload.type === "start") {
-        context.tasks.start(payload.operationId, async ({ signal, send }) => {
+        context.activity.start(async ({ signal, send }) => {
           await new Promise((resolve) => {
             signal.addEventListener("abort", resolve, { once: true });
           });
-          send({ type: "cancelled", operationId: payload.operationId });
+          send({ type: "cancelled" });
         });
       } else if (payload.type === "steer") {
-        assert.equal(context.tasks.has(payload.operationId), true);
+        assert.equal(context.activity.active, true);
       } else if (payload.type === "cancel") {
-        assert.equal(context.tasks.cancel(payload.operationId), true);
+        assert.equal(context.activity.cancel(), true);
       } else if (payload.type === "cancelled") {
-        assert.equal(context.tasks.has(payload.operationId), false);
+        assert.equal(context.activity.active, false);
       }
     }),
   );
@@ -87,7 +87,7 @@ test("runtime tasks keep the Session active while steer and cancel messages run"
     body: JSON.stringify(messageEnvelope(payload, "thread", id)),
   });
 
-  const first = send(messageId, { type: "start", operationId: "agent" });
+  const first = send(messageId, { type: "start" });
   void first.then(() => { firstSettled = true; });
   await waitFor(() => handled.length === 1);
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -95,12 +95,12 @@ test("runtime tasks keep the Session active while steer and cancel messages run"
 
   const steer = send(
     "msg_11111111111111111111111111111111",
-    { type: "steer", operationId: "agent" },
+    { type: "steer" },
   );
   await waitFor(() => handled.length === 2);
   const cancel = send(
     "msg_22222222222222222222222222222222",
-    { type: "cancel", operationId: "agent" },
+    { type: "cancel" },
   );
 
   assert.equal((await first).status, 204);
