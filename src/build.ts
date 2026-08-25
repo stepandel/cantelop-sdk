@@ -13,7 +13,7 @@ import {
 } from "esbuild";
 
 const MANIFEST_SCHEMA_VERSION = 1;
-const EXECUTION_PROTOCOL_VERSION = 4;
+const MESSAGE_PROTOCOL_VERSION = 1;
 const MAIN_MODULE = "worker.mjs";
 const MANIFEST_FILE = "cantelop-api.json";
 const HARNESS_MAIN_MODULE = "harness.mjs";
@@ -40,7 +40,7 @@ export interface ApiArtifactManifest {
   readonly schema_version: 1;
   readonly kind: "cantelop-edge-api";
   readonly main_module: "worker.mjs";
-  readonly execution_protocol_version: 4;
+  readonly message_protocol_version: 1;
 }
 
 export interface ApiArtifact {
@@ -59,7 +59,7 @@ export interface HarnessArtifactManifest {
   readonly schema_version: 1;
   readonly kind: "cantelop-native-harness";
   readonly main_module: "harness.mjs";
-  readonly execution_protocol_version: 4;
+  readonly message_protocol_version: 1;
   readonly bundled_bytes: number;
 }
 
@@ -177,7 +177,7 @@ async function writeApiManifest(outdir: string): Promise<ApiArtifactManifest> {
     schema_version: MANIFEST_SCHEMA_VERSION,
     kind: "cantelop-edge-api",
     main_module: MAIN_MODULE,
-    execution_protocol_version: EXECUTION_PROTOCOL_VERSION,
+    message_protocol_version: MESSAGE_PROTOCOL_VERSION,
   };
   const manifestFile = path.join(outdir, MANIFEST_FILE);
   await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, {
@@ -286,7 +286,7 @@ async function writeHarnessManifest(
     schema_version: MANIFEST_SCHEMA_VERSION,
     kind: "cantelop-native-harness",
     main_module: HARNESS_MAIN_MODULE,
-    execution_protocol_version: EXECUTION_PROTOCOL_VERSION,
+    message_protocol_version: MESSAGE_PROTOCOL_VERSION,
     bundled_bytes: bundledBytes,
   };
   const manifestFile = path.join(outdir, HARNESS_MANIFEST_FILE);

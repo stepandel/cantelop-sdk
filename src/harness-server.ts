@@ -16,12 +16,12 @@ import type { Session } from "./resources.js";
 import { markHarnessStartup } from "./harness-startup.js";
 import { InMemoryMailbox } from "./mailbox.js";
 
-const EXECUTION_PATH_PATTERN =
-  /^\/__cantelop\/v1\/executions\/(exec_[0-9a-f]{32})$/;
+const MESSAGE_PATH_PATTERN =
+  /^\/__cantelop\/v1\/messages\/(msg_[0-9a-f]{32})$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
 const INTERNAL_FD_VARIABLE = "CANTELOP_INTERNAL_FD";
-const EXECUTION_COMPLETE_HEADER = "X-Cantelop-SDK-Execution-Complete";
+const MESSAGE_COMPLETE_HEADER = "X-Cantelop-SDK-Message-Complete";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
@@ -33,7 +33,7 @@ export interface HarnessRequestHandlerOptions {
 export interface HarnessServer {
   readonly server: Server;
   readonly port: number;
-  /** Resolves only after the platform-owned execution socket is accepting connections. */
+  /** Resolves only after the platform-owned message socket is accepting connections. */
   readonly ready: Promise<void>;
   close(): Promise<void>;
 }
@@ -47,12 +47,12 @@ type HarnessRequestHandler = (
  * Creates the native HTTP protocol adapter. This lower-level entrypoint is
  * primarily useful to platform integration tests and custom native launchers.
  */
-export function createHarnessRequestHandler<Input, Output, Event = never>(
-  runtime: HarnessRuntime<Input, Output, Event>,
+export function createHarnessRequestHandler<Input, Event = never>(
+  runtime: HarnessRuntime<Input, Event>,
   options: HarnessRequestHandlerOptions = {},
 ): HarnessRequestHandler {
   let boundSession: Session | undefined;
-  const mailbox = new InMemoryMailbox<Output>();
+  const mailbox = new InMemoryMailbox<void>();
   return (request, response) => {
     void handleRequest(
       request,
@@ -77,8 +77,8 @@ export function createHarnessRequestHandler<Input, Output, Event = never>(
  * harness.runtime.internal_port is the source of truth; customer code never
  * supplies a deployment port.
  */
-export function serveHarness<Input, Output, Event = never>(
-  runtime: HarnessRuntime<Input, Output, Event>,
+export function serveHarness<Input, Event = never>(
+  runtime: HarnessRuntime<Input, Event>,
 ): HarnessServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
@@ -111,17 +111,17 @@ function listen(server: Server, port: number, inheritedFD: number | undefined): 
   });
 }
 
-async function handleRequest<Input, Output, Event>(
+async function handleRequest<Input, Event>(
   request: IncomingMessage,
   response: ServerResponse,
-  runtime: HarnessRuntime<Input, Output, Event>,
+  runtime: HarnessRuntime<Input, Event>,
   env: HarnessEnvironment,
-  mailbox: InMemoryMailbox<Output>,
+  mailbox: InMemoryMailbox<void>,
   bindSession: (session: Session) => void,
 ): Promise<void> {
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://harness.cantelop.internal");
-  const match = EXECUTION_PATH_PATTERN.exec(url.pathname);
+  const match = MESSAGE_PATH_PATTERN.exec(url.pathname);
   if (match === null || url.search !== "") {
     writeError(response, 404, "not_found");
     return;
@@ -135,54 +135,44 @@ async function handleRequest<Input, Output, Event>(
     writeError(response, 415, "unsupported_media_type");
     return;
   }
-  const executionID = match[1] as string;
-
-  const controller = new AbortController();
-  let executionSettled = false;
-  const abort = () => controller.abort(new DOMException("Request cancelled", "AbortError"));
-  request.once("aborted", abort);
-  response.once("close", () => {
-    if (!response.writableEnded) abort();
-  });
+  const messageID = match[1] as string;
+  let messageSettled = false;
 
   try {
     const envelope = await readRequestEnvelope(request);
-    if (!isRecord(envelope) || !hasExecutionEnvelopeShape(envelope)) {
-      writeError(response, 400, "invalid_execution_request");
+    if (!isRecord(envelope) || !hasMessageEnvelopeShape(envelope)) {
+      writeError(response, 400, "invalid_message_request");
       return;
     }
     const session = readSession(envelope.session);
     bindSession(session);
 
-    let output: Output;
     try {
-      output = await mailbox.enqueue(executionID, async () =>
+      await mailbox.enqueue(messageID, async () =>
         invokeHarness(runtime, Object.freeze({
-          execution: Object.freeze({ id: executionID }),
+          message: Object.freeze({ id: messageID }),
           session,
           input: envelope.input as Input,
           env,
-          signal: controller.signal,
           emit: () => undefined,
         })));
     } finally {
-      executionSettled = true;
+      messageSettled = true;
     }
-    if (controller.signal.aborted || response.destroyed) return;
-    response.setHeader(EXECUTION_COMPLETE_HEADER, executionID);
-    writeJSON(response, 200, { output });
+    if (response.destroyed) return;
+    response.setHeader(MESSAGE_COMPLETE_HEADER, messageID);
+    response.statusCode = 204;
+    response.end();
   } catch (error) {
-    if (controller.signal.aborted || response.destroyed) return;
-    if (executionSettled) {
-      response.setHeader(EXECUTION_COMPLETE_HEADER, executionID);
+    if (response.destroyed) return;
+    if (messageSettled) {
+      response.setHeader(MESSAGE_COMPLETE_HEADER, messageID);
     }
     if (error instanceof ProtocolError) {
       writeError(response, error.status, error.code);
       return;
     }
-    writeError(response, 500, "execution_failed");
-  } finally {
-    request.removeListener("aborted", abort);
+    writeError(response, 500, "message_failed");
   }
 }
 
@@ -192,7 +182,7 @@ async function readRequestEnvelope(request: IncomingMessage): Promise<unknown> {
     declaredLength !== undefined &&
     (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_ENVELOPE_BYTES)
   ) {
-    throw new ProtocolError(413, "execution_input_too_large");
+    throw new ProtocolError(413, "message_input_too_large");
   }
 
   const chunks: Uint8Array[] = [];
@@ -201,7 +191,7 @@ async function readRequestEnvelope(request: IncomingMessage): Promise<unknown> {
     const bytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
     length += bytes.byteLength;
     if (length > MAX_ENVELOPE_BYTES) {
-      throw new ProtocolError(413, "execution_input_too_large");
+      throw new ProtocolError(413, "message_input_too_large");
     }
     chunks.push(bytes);
   }
@@ -210,16 +200,16 @@ async function readRequestEnvelope(request: IncomingMessage): Promise<unknown> {
   try {
     return JSON.parse(body) as unknown;
   } catch {
-    throw new ProtocolError(400, "invalid_execution_request");
+    throw new ProtocolError(400, "invalid_message_request");
   }
 }
 
-function invokeHarness<Input, Output, Event>(
-  runtime: HarnessRuntime<Input, Output, Event>,
+function invokeHarness<Input, Event>(
+  runtime: HarnessRuntime<Input, Event>,
   context: HarnessContext<Input, Event>,
-): Output | Promise<Output> {
+): void | Promise<void> {
   if (typeof runtime === "function") return runtime(context);
-  return runtime.run(context);
+  return runtime.receive(context);
 }
 
 function readInternalPort(value: string | undefined): number {
@@ -249,7 +239,7 @@ function isJSONContentType(value: string | undefined): boolean {
   return value !== undefined && /^application\/json(?:\s*;|$)/i.test(value);
 }
 
-function hasExecutionEnvelopeShape(value: Record<string, unknown>): boolean {
+function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
   return keys.length === 2 && keys.includes("session") && keys.includes("input") &&
     isRecord(value.session);
@@ -262,7 +252,7 @@ function readSession(value: unknown): Session {
       typeof value.keep_alive_seconds !== "number" ||
       !Number.isInteger(value.keep_alive_seconds) || value.keep_alive_seconds < 0 ||
       value.keep_alive_seconds > MAX_KEEP_ALIVE_SECONDS) {
-    throw new ProtocolError(400, "invalid_execution_request");
+    throw new ProtocolError(400, "invalid_message_request");
   }
   return Object.freeze({
     id: value.id,
@@ -285,13 +275,7 @@ function writeError(response: ServerResponse, status: number, code: string): voi
 }
 
 function writeJSON(response: ServerResponse, status: number, value: unknown): void {
-  let body: string;
-  try {
-    body = JSON.stringify(value);
-  } catch {
-    status = 500;
-    body = JSON.stringify({ error: { code: "invalid_execution_output" } });
-  }
+  const body = JSON.stringify(value);
   response.statusCode = status;
   response.setHeader("Content-Length", Buffer.byteLength(body));
   response.end(body);

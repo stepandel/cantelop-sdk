@@ -13,7 +13,6 @@ test("the Edge API modules have no native harness dependencies", async () => {
   const files = [
     "api.js",
     "edge.js",
-    "execution.js",
     "index.js",
     "remote-app.js",
     "resources.js",
@@ -28,7 +27,7 @@ test("the Edge API modules have no native harness dependencies", async () => {
   }
 });
 
-test("only native harness executions expose events", async () => {
+test("only native harness messages expose event emission", async () => {
   const edgeContract = await readFile(
     path.join(repositoryRoot, "dist/resources.d.ts"),
     "utf8",
@@ -38,8 +37,8 @@ test("only native harness executions expose events", async () => {
     "utf8",
   );
 
-  assert.doesNotMatch(edgeContract, /\bevents\(\)/);
-  assert.match(harnessContract, /\bevents\(\): AsyncIterable<Event>/);
+  assert.doesNotMatch(edgeContract, /\bemit\(event:/);
+  assert.match(harnessContract, /\bemit\(event: Event\): void/);
 });
 
 test("provider API entrypoints do not import native dependencies", async () => {

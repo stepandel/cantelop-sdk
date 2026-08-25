@@ -41,7 +41,7 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
     schema_version: 1,
     kind: "cantelop-edge-api",
     main_module: "worker.mjs",
-    execution_protocol_version: 4,
+    message_protocol_version: 1,
   });
   assert.deepEqual(
     JSON.parse(await readFile(artifact.manifestFile, "utf8")),
@@ -129,7 +129,7 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
     [
       'import { greeting } from "./dependency.ts";',
       `import { defineHarness } from ${JSON.stringify(new URL("../dist/harness.js", import.meta.url).pathname)};`,
-      'export default defineHarness(async () => ({ greeting }));',
+      'export default defineHarness(async () => { void greeting; });',
     ].join("\n"),
   );
 
@@ -137,7 +137,7 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.equal(artifact.mainModule, path.join(outdir, "harness.mjs"));
   assert.equal(artifact.manifest.kind, "cantelop-native-harness");
   assert.equal(artifact.manifest.main_module, "harness.mjs");
-  assert.equal(artifact.manifest.execution_protocol_version, 4);
+  assert.equal(artifact.manifest.message_protocol_version, 1);
   assert.ok(artifact.manifest.bundled_bytes > 0);
   assert.deepEqual(
     JSON.parse(await readFile(artifact.manifestFile, "utf8")),
@@ -150,11 +150,11 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.match(source, /harness_startup_stage/);
   assert.match(source, /bun_entry/);
   assert.match(source, /module_evaluated/);
-  assert.match(source, /X-Cantelop-SDK-Execution-Complete/);
+  assert.match(source, /X-Cantelop-SDK-Message-Complete/);
   assert.match(source, /listener_ready/);
 });
 
-test("a built harness serves executions on the local development port", async (t) => {
+test("a built harness receives messages on the local development port", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-harness-runtime-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const entrypoint = path.join(directory, "harness.ts");
@@ -164,10 +164,9 @@ test("a built harness serves executions on the local development port", async (t
     entrypoint,
     [
       `import { defineHarness } from ${JSON.stringify(sdkHarness)};`,
-      "export default defineHarness(async ({ input, env }) => ({",
-      "  answer: String(input.prompt).toUpperCase(),",
-      "  model: env.MODEL,",
-      "}));",
+      "export default defineHarness(async ({ input, env }) => {",
+      '  if (`${String(input.prompt).toUpperCase()}:${env.MODEL}` !== "HELLO:test-model") throw new Error("unexpected message");',
+      "});",
     ].join("\n"),
   );
 
@@ -188,21 +187,18 @@ test("a built harness serves executions on the local development port", async (t
   });
   t.after(async () => stopChild(child));
 
-  const executionId = "exec_0123456789abcdef0123456789abcdef";
+  const messageId = "msg_0123456789abcdef0123456789abcdef";
   const response = await waitForHarness(
-    `http://127.0.0.1:${port}/__cantelop/v1/executions/${executionId}`,
+    `http://127.0.0.1:${port}/__cantelop/v1/messages/${messageId}`,
     child,
     () => childError,
   );
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 204);
   assert.equal(
-    response.headers.get("X-Cantelop-SDK-Execution-Complete"),
-    executionId,
+    response.headers.get("X-Cantelop-SDK-Message-Complete"),
+    messageId,
   );
-  assert.deepEqual(await response.json(), {
-    output: { answer: "HELLO", model: "test-model" },
-  });
 });
 
 test("watchLocalProject incrementally rebuilds changed components", async (t) => {

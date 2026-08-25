@@ -7,15 +7,15 @@ import {
   serveHarness,
 } from "../dist/harness.js";
 
-const executionId = "exec_0123456789abcdef0123456789abcdef";
+const messageId = "msg_0123456789abcdef0123456789abcdef";
 
-test("the native adapter executes the versioned harness protocol", async (t) => {
+test("the native adapter receives the versioned message protocol", async (t) => {
   let received;
   const server = createServer(
     createHarnessRequestHandler(
       async (context) => {
         received = context;
-        return { answer: String(context.input.prompt).toUpperCase() };
+        assert.equal(String(context.input.prompt).toUpperCase(), "HELLO");
       },
       { env: { MODEL: "test-model" } },
     ),
@@ -24,31 +24,29 @@ test("the native adapter executes the versioned harness protocol", async (t) => 
   t.after(() => close(server));
 
   const response = await fetch(
-    `${origin(server)}/__cantelop/v1/executions/${executionId}`,
+    `${origin(server)}/__cantelop/v1/messages/${messageId}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(executionEnvelope({ prompt: "hello" })),
+      body: JSON.stringify(messageEnvelope({ prompt: "hello" })),
     },
   );
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 204);
   assert.equal(
-    response.headers.get("X-Cantelop-SDK-Execution-Complete"),
-    executionId,
+    response.headers.get("X-Cantelop-SDK-Message-Complete"),
+    messageId,
   );
-  assert.deepEqual(await response.json(), { output: { answer: "HELLO" } });
-  assert.deepEqual(received.execution, { id: executionId });
+  assert.deepEqual(received.message, { id: messageId });
   assert.deepEqual(received.session, {
     id: "thread",
     workspaceId: "wsp_0123456789abcdef0123456789abcdef",
     keepAliveSeconds: 300,
   });
-  assert.equal(Object.isFrozen(received.execution), true);
+  assert.equal(Object.isFrozen(received.message), true);
   assert.equal(Object.isFrozen(received.session), true);
   assert.deepEqual(received.input, { prompt: "hello" });
   assert.equal(received.env.MODEL, "test-model");
-  assert.equal(received.signal.aborted, false);
 });
 
 test("one harness runtime processes its Session mailbox in FIFO order", async (t) => {
@@ -57,10 +55,9 @@ test("one harness runtime processes its Session mailbox in FIFO order", async (t
   const firstReleased = new Promise((resolve) => { releaseFirst = resolve; });
   const server = createServer(
     createHarnessRequestHandler({
-      async run(context) {
+      async receive(context) {
         started.push(context.input.type);
         if (context.input.type === "message") await firstReleased;
-        return { handled: context.input.type };
       },
     }),
   );
@@ -69,33 +66,33 @@ test("one harness runtime processes its Session mailbox in FIFO order", async (t
   t.after(() => close(server));
 
   const first = fetch(
-    `${origin(server)}/__cantelop/v1/executions/${executionId}`,
+    `${origin(server)}/__cantelop/v1/messages/${messageId}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(executionEnvelope({ type: "message" })),
+      body: JSON.stringify(messageEnvelope({ type: "message" })),
     },
   );
   await waitFor(() => started.length === 1);
-  const secondExecutionId = "exec_fedcba9876543210fedcba9876543210";
+  const secondMessageId = "msg_fedcba9876543210fedcba9876543210";
   const second = fetch(
-    `${origin(server)}/__cantelop/v1/executions/${secondExecutionId}`,
+    `${origin(server)}/__cantelop/v1/messages/${secondMessageId}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(executionEnvelope({ type: "steer" })),
+      body: JSON.stringify(messageEnvelope({ type: "steer" })),
     },
   );
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(started, ["message"]);
   releaseFirst();
-  assert.deepEqual(await (await first).json(), { output: { handled: "message" } });
-  assert.deepEqual(await (await second).json(), { output: { handled: "steer" } });
+  assert.equal((await first).status, 204);
+  assert.equal((await second).status, 204);
   assert.deepEqual(started, ["message", "steer"]);
 });
 
-test("one harness runtime deduplicates an execution ID for its activation", async (t) => {
+test("one harness runtime deduplicates a message ID for its activation", async (t) => {
   let calls = 0;
   let release;
   const released = new Promise((resolve) => { release = resolve; });
@@ -103,17 +100,16 @@ test("one harness runtime deduplicates an execution ID for its activation", asyn
     createHarnessRequestHandler(async () => {
       calls += 1;
       await released;
-      return { calls };
     }),
   );
   await listen(server);
   t.after(() => release());
   t.after(() => close(server));
-  const url = `${origin(server)}/__cantelop/v1/executions/${executionId}`;
+  const url = `${origin(server)}/__cantelop/v1/messages/${messageId}`;
   const request = () => fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(executionEnvelope({ type: "message" })),
+    body: JSON.stringify(messageEnvelope({ type: "message" })),
   });
 
   const first = request();
@@ -123,9 +119,9 @@ test("one harness runtime deduplicates an execution ID for its activation", asyn
   assert.equal(calls, 1);
 
   release();
-  assert.deepEqual(await (await first).json(), { output: { calls: 1 } });
-  assert.deepEqual(await (await duplicate).json(), { output: { calls: 1 } });
-  assert.deepEqual(await (await request()).json(), { output: { calls: 1 } });
+  assert.equal((await first).status, 204);
+  assert.equal((await duplicate).status, 204);
+  assert.equal((await request()).status, 204);
   assert.equal(calls, 1);
 });
 
@@ -135,46 +131,46 @@ test("a harness server is bound to one Session identity", async (t) => {
   );
   await listen(server);
   t.after(() => close(server));
-  const url = `${origin(server)}/__cantelop/v1/executions/${executionId}`;
+  const url = `${origin(server)}/__cantelop/v1/messages/${messageId}`;
 
   const first = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(executionEnvelope({})),
+    body: JSON.stringify(messageEnvelope({})),
   });
   const second = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(executionEnvelope({}, "other-thread")),
+    body: JSON.stringify(messageEnvelope({}, "other-thread")),
   });
 
-  assert.equal(first.status, 200);
+  assert.equal(first.status, 204);
   assert.equal(second.status, 409);
   assert.deepEqual(await second.json(), { error: { code: "session_mismatch" } });
 });
 
-test("the native adapter marks a failed user execution as settled", async (t) => {
+test("the native adapter marks a failed user message as settled", async (t) => {
   const server = createServer(
     createHarnessRequestHandler(async () => {
-      throw new Error("user execution failed");
+      throw new Error("user message failed");
     }),
   );
   await listen(server);
   t.after(() => close(server));
 
   const response = await fetch(
-    `${origin(server)}/__cantelop/v1/executions/${executionId}`,
+    `${origin(server)}/__cantelop/v1/messages/${messageId}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(executionEnvelope({})),
+      body: JSON.stringify(messageEnvelope({})),
     },
   );
 
   assert.equal(response.status, 500);
   assert.equal(
-    response.headers.get("X-Cantelop-SDK-Execution-Complete"),
-    executionId,
+    response.headers.get("X-Cantelop-SDK-Message-Complete"),
+    messageId,
   );
 });
 
@@ -189,26 +185,26 @@ test("the native adapter rejects malformed protocol requests", async (t) => {
   t.after(() => close(server));
 
   const malformed = await fetch(
-    `${origin(server)}/__cantelop/v1/executions/${executionId}`,
+    `${origin(server)}/__cantelop/v1/messages/${messageId}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...executionEnvelope({}), extra: true }),
+      body: JSON.stringify({ ...messageEnvelope({}), extra: true }),
     },
   );
   const wrongPath = await fetch(`${origin(server)}/execute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(executionEnvelope({})),
+    body: JSON.stringify(messageEnvelope({})),
   });
 
   assert.equal(malformed.status, 400);
   assert.equal(
-    malformed.headers.get("X-Cantelop-SDK-Execution-Complete"),
+    malformed.headers.get("X-Cantelop-SDK-Message-Complete"),
     null,
   );
   assert.deepEqual(await malformed.json(), {
-    error: { code: "invalid_execution_request" },
+    error: { code: "invalid_message_request" },
   });
   assert.equal(wrongPath.status, 404);
   assert.equal(calls, 0);
@@ -263,7 +259,7 @@ test("serveHarness adopts the platform-prebound listener", async () => {
     "--eval",
     [
       'import { serveHarness } from "./dist/harness.js";',
-      "const harness = serveHarness(async () => ({ ready: true }));",
+      "const harness = serveHarness(async () => undefined);",
       "await harness.ready;",
       'process.stdout.write("READY\\n");',
       "setTimeout(() => {}, 30_000);",
@@ -287,15 +283,14 @@ test("serveHarness adopts the platform-prebound listener", async () => {
       });
     });
     const response = await fetch(
-      `http://127.0.0.1:${address.port}/__cantelop/v1/executions/${executionId}`,
+      `http://127.0.0.1:${address.port}/__cantelop/v1/messages/${messageId}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(executionEnvelope({})),
+        body: JSON.stringify(messageEnvelope({})),
       },
     );
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { output: { ready: true } });
+    assert.equal(response.status, 204);
   } finally {
     child.kill();
   }
@@ -335,7 +330,7 @@ function origin(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function executionEnvelope(input, sessionId = "thread") {
+function messageEnvelope(input, sessionId = "thread") {
   return {
     session: {
       id: sessionId,
