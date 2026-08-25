@@ -10,7 +10,7 @@ cantelop.json   Build and deployment manifest
 
 Each provider directory is a complete, self-contained implementation with its
 own contracts, request validation, and routes. Provider SDKs, credentials, and
-incremental events remain confined to the harness entrypoint. Cantelop injects
+incremental events remain confined to the native Session logic entrypoint. Cantelop injects
 the current App into each API definition. Every API exposes four routes:
 `GET /health`, `POST /chat`, `POST /steer`, and `POST /cancel`. Chat creates or
 reuses a Session from an optional ID; steer and cancel require an existing
@@ -19,7 +19,7 @@ Session ID. All message routes call the same asynchronous
 `202`. The protocol does not define steering or cancellation semantics. OpenAI
 and Anthropic queue steer prompts as later provider turns; Pi applies steer to
 its active Agent. All three propagate cancel through the Session activity's
-`AbortSignal`. The canonical Session is propagated into the native harness,
+`AbortSignal`. The Session identity is propagated into the native harness,
 and direct client streaming is configured at the VM.
 
 Each manifest targets an illustrative App slug. Create that App or change its

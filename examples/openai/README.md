@@ -17,7 +17,8 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 requires the same Session fields without a prompt. All message routes return an
 in-memory acceptance receipt with status `202`.
 
-The message routes use the harness's single `receive` entrypoint. The
+The message routes target the App's single Session logic. Its `receive`
+entrypoint handles each message. The
 application message identifies chat, steer, or cancel intent; this example adds
 either prompt as another
 turn in the Session's shared OpenAI `MemorySession`. The active run is a

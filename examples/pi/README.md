@@ -17,7 +17,8 @@ optional `sessionId`; it creates or reuses that Session. Steer requires
 requires the same Session fields without a prompt. All message routes return an
 in-memory acceptance receipt with status `202`.
 
-The message routes use the harness's single `receive` entrypoint. The
+The message routes target the App's single Session logic. Its `receive`
+entrypoint handles each message. The
 application message identifies chat, steer, or cancel intent, and the retained
 Agent handles steer input
 through Pi's native steering queue. The Agent prompt runs as the runtime-managed
