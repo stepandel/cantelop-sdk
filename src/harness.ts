@@ -6,13 +6,31 @@ export type HarnessEnvironment = Readonly<
   Record<string, string | undefined>
 >;
 
+export interface HarnessTaskContext<Message> {
+  readonly signal: AbortSignal;
+  send(payload: Message): void;
+}
+
+export type HarnessTaskFunction<Message> = (
+  context: HarnessTaskContext<Message>,
+) => Awaitable<void>;
+
+export interface HarnessTasks<Message> {
+  start(id: string, work: HarnessTaskFunction<Message>): void;
+  cancel(id: string, reason?: unknown): boolean;
+  has(id: string): boolean;
+}
+
 export interface HarnessContext<Input, Event = never> {
   readonly message: Readonly<{
     id: string;
+    sequence: number;
     payload: Input;
   }>;
   readonly session: Session;
   readonly env: HarnessEnvironment;
+  readonly tasks: HarnessTasks<Input>;
+  send(payload: Input): void;
   emit(event: Event): void;
 }
 

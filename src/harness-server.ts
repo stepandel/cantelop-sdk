@@ -6,6 +6,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import { randomUUID } from "node:crypto";
 
 import type {
   HarnessContext,
@@ -15,6 +16,7 @@ import type {
 import type { Session } from "./resources.js";
 import { markHarnessStartup } from "./harness-startup.js";
 import { InMemoryMailbox } from "./mailbox.js";
+import { InMemoryTasks } from "./tasks.js";
 
 const MESSAGE_PATH = "/__cantelop/v1/messages";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
@@ -53,13 +55,37 @@ export function createHarnessRequestHandler<Input, Event = never>(
 ): HarnessRequestHandler {
   let boundSession: Session | undefined;
   const mailbox = new InMemoryMailbox<void>();
+  let tasks: InMemoryTasks<Input>;
+
+  const receiveMessage = (
+    message: Readonly<{ id: string; payload: Input }>,
+    session: Session,
+  ): Promise<void> => mailbox.enqueue(message.id, async (sequence) =>
+    invokeHarness(runtime, Object.freeze({
+      message: Object.freeze({ ...message, sequence }),
+      session,
+      env: options.env ?? process.env,
+      tasks,
+      send: sendMessage,
+      emit: () => undefined,
+    })));
+
+  const sendMessage = (payload: Input): void => {
+    if (boundSession === undefined) {
+      throw new Error("Harness cannot send before its Session is bound");
+    }
+    const message = Object.freeze({ id: createMessageID(), payload });
+    void receiveMessage(message, boundSession).catch(() => undefined);
+  };
+
+  tasks = new InMemoryTasks(sendMessage);
   return (request, response) => {
     void handleRequest(
       request,
       response,
-      runtime,
-      options.env ?? process.env,
       mailbox,
+      tasks,
+      receiveMessage,
       (session) => {
         if (boundSession !== undefined &&
             (boundSession.id !== session.id ||
@@ -114,9 +140,12 @@ function listen(server: Server, port: number, inheritedFD: number | undefined): 
 async function handleRequest<Input, Event>(
   request: IncomingMessage,
   response: ServerResponse,
-  runtime: HarnessRuntime<Input, Event>,
-  env: HarnessEnvironment,
   mailbox: InMemoryMailbox<void>,
+  tasks: InMemoryTasks<Input>,
+  receiveMessage: (
+    message: Readonly<{ id: string; payload: Input }>,
+    session: Session,
+  ) => Promise<void>,
   bindSession: (session: Session) => void,
 ): Promise<void> {
   setBaseHeaders(response);
@@ -149,13 +178,8 @@ async function handleRequest<Input, Event>(
     bindSession(session);
 
     try {
-      await mailbox.enqueue(message.id, async () =>
-        invokeHarness(runtime, Object.freeze({
-          message,
-          session,
-          env,
-          emit: () => undefined,
-        })));
+      await receiveMessage(message, session);
+      await waitForActorIdle(mailbox, tasks);
     } finally {
       messageSettled = true;
     }
@@ -173,6 +197,15 @@ async function handleRequest<Input, Event>(
       return;
     }
     writeError(response, 500, "message_failed");
+  }
+}
+
+async function waitForActorIdle<Message>(
+  mailbox: InMemoryMailbox<void>,
+  tasks: InMemoryTasks<Message>,
+): Promise<void> {
+  while (!mailbox.isIdle || !tasks.isIdle) {
+    await Promise.all([mailbox.waitForIdle(), tasks.waitForIdle()]);
   }
 }
 
@@ -210,6 +243,10 @@ function invokeHarness<Input, Event>(
 ): void | Promise<void> {
   if (typeof runtime === "function") return runtime(context);
   return runtime.receive(context);
+}
+
+function createMessageID(): string {
+  return `msg_${randomUUID().replaceAll("-", "")}`;
 }
 
 function readInternalPort(value: string | undefined): number {

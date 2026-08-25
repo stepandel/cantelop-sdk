@@ -37,7 +37,11 @@ test("the native adapter receives the versioned message protocol", async (t) => 
     response.headers.get("X-Cantelop-SDK-Message-Complete"),
     messageId,
   );
-  assert.deepEqual(received.message, { id: messageId, payload: { prompt: "hello" } });
+  assert.deepEqual(received.message, {
+    id: messageId,
+    sequence: 1,
+    payload: { prompt: "hello" },
+  });
   assert.deepEqual(received.session, {
     id: "thread",
     workspaceId: "wsp_0123456789abcdef0123456789abcdef",
@@ -46,6 +50,62 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.equal(Object.isFrozen(received.message), true);
   assert.equal(Object.isFrozen(received.session), true);
   assert.equal(received.env.MODEL, "test-model");
+});
+
+test("runtime tasks keep the Session active while steer and cancel messages run", async (t) => {
+  const handled = [];
+  const sequences = [];
+  let firstSettled = false;
+  const server = createServer(
+    createHarnessRequestHandler(async (context) => {
+      const { payload } = context.message;
+      handled.push(payload.type);
+      sequences.push(context.message.sequence);
+
+      if (payload.type === "start") {
+        context.tasks.start(payload.operationId, async ({ signal, send }) => {
+          await new Promise((resolve) => {
+            signal.addEventListener("abort", resolve, { once: true });
+          });
+          send({ type: "cancelled", operationId: payload.operationId });
+        });
+      } else if (payload.type === "steer") {
+        assert.equal(context.tasks.has(payload.operationId), true);
+      } else if (payload.type === "cancel") {
+        assert.equal(context.tasks.cancel(payload.operationId), true);
+      }
+    }),
+  );
+  await listen(server);
+  t.after(() => close(server));
+  const url = `${origin(server)}/__cantelop/v1/messages`;
+  const send = (id, payload) => fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope(payload, "thread", id)),
+  });
+
+  const first = send(messageId, { type: "start", operationId: "agent" });
+  void first.then(() => { firstSettled = true; });
+  await waitFor(() => handled.length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(firstSettled, false);
+
+  const steer = send(
+    "msg_11111111111111111111111111111111",
+    { type: "steer", operationId: "agent" },
+  );
+  await waitFor(() => handled.length === 2);
+  const cancel = send(
+    "msg_22222222222222222222222222222222",
+    { type: "cancel", operationId: "agent" },
+  );
+
+  assert.equal((await first).status, 204);
+  assert.equal((await steer).status, 204);
+  assert.equal((await cancel).status, 204);
+  assert.deepEqual(handled, ["start", "steer", "cancel", "cancelled"]);
+  assert.deepEqual(sequences, [1, 2, 3, 4]);
 });
 
 test("one harness runtime processes its Session mailbox in FIFO order", async (t) => {
