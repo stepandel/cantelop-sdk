@@ -18,13 +18,14 @@ Session ID. All message routes call the same asynchronous
 `dispatch()` method, and return an in-memory acceptance receipt with status
 `202`. Each example defines an explicit `SessionMessage` protocol with
 `prompt`, `steer`, and `cancel` commands, plus a `SessionEvent` stream for text
-deltas and completion. A steer received while idle starts a provider turn. New
-prompts received while busy enter a per-Session FIFO queue. OpenAI and Anthropic
-also queue active steer commands because their active runs are not steerable;
-Pi applies active steer directly to its Agent. All three propagate cancel
-through the Session activity's `AbortSignal` and clear queued prompts. The
-Session identity is propagated into the native harness, and direct client
-streaming is configured at the VM.
+deltas and completion. A steer received while idle starts a provider turn.
+OpenAI keeps busy-time prompts in a per-Session FIFO because a text `run()`
+cannot accept more input. Anthropic feeds prompts and prioritized steer commands
+into its live `SDKUserMessage` stream. Pi applies active steer directly to its
+Agent and keeps ordinary busy-time prompts in a Cantelop FIFO. All three
+propagate cancel through the Session activity's `AbortSignal`. The Session
+identity is propagated into the native harness, and direct client streaming is
+configured at the VM.
 
 Each manifest targets an illustrative App slug. Create that App or change its
 `app` value before running `cantelop deploy`; generated App IDs are never stored

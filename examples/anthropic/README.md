@@ -18,12 +18,13 @@ requires the same Session fields without a prompt. All message routes return an
 in-memory acceptance receipt with status `202`.
 
 The App has one Session logic with an explicit actor protocol. `prompt` and an
-idle `steer` start a Claude query. Prompts and steer commands received while a
-query is active enter a FIFO queue, and `cancel` aborts the query and clears
-that queue. The actor retains Claude's conversation ID for the next turn; no
-per-Session registry is needed because the native runtime is already bound to
-one Session. The query lives in the Session activity so the mailbox remains
-available for new commands.
+idle `steer` start one streaming-input Claude query. While it is active, actor
+messages are written directly to the SDK's `AsyncIterable<SDKUserMessage>`:
+ordinary prompts use native `later` priority and steer commands use `now`.
+`cancel` closes that input stream and aborts the query. The actor retains
+Claude's conversation ID for reactivation; no per-Session registry or duplicate
+application queue is needed. The live query remains the Session activity so the
+mailbox can continue feeding it commands.
 
 `cantelop.json` targets an illustrative App with slug `anthropic`. Change the
 slug when deploying to a different App.
