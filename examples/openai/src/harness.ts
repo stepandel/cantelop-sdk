@@ -12,7 +12,6 @@ type RuntimeEvent =
   | { type: "text_delta"; delta: string }
   | { type: "done"; output: AnswerOutput };
 
-const ACTIVE_AGENT_TASK = "agent";
 const queuedPrompts: string[] = [];
 let providerSession: MemorySession | undefined;
 
@@ -20,8 +19,8 @@ function startTurn(
   context: HarnessContext<PromptInput, RuntimeEvent>,
   prompt: string,
 ): void {
-  const { env, session, tasks, emit } = context;
-  tasks.start(ACTIVE_AGENT_TASK, async ({ signal, send }) => {
+  const { env, session, activity, emit } = context;
+  activity.start(async ({ signal, send }) => {
     try {
       if (!env.OPENAI_API_KEY) {
         throw new Error("OPENAI_API_KEY is not configured in the harness VM");
@@ -64,11 +63,11 @@ async function receive(
 
   if (command.type === "cancel") {
     queuedPrompts.length = 0;
-    context.tasks.cancel(ACTIVE_AGENT_TASK);
+    context.activity.cancel();
     return;
   }
 
-  if (context.tasks.has(ACTIVE_AGENT_TASK)) {
+  if (context.activity.active) {
     queuedPrompts.push(command.prompt);
     return;
   }

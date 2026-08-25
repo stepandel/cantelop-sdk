@@ -12,7 +12,6 @@ type RuntimeEvent =
   | { type: "text_delta"; delta: string }
   | { type: "done"; output: AnswerOutput };
 
-const ACTIVE_AGENT_TASK = "agent";
 const queuedPrompts: string[] = [];
 let providerSessionId: string | undefined;
 
@@ -20,8 +19,8 @@ function startTurn(
   context: HarnessContext<PromptInput, RuntimeEvent>,
   prompt: string,
 ): void {
-  const { env, tasks, emit } = context;
-  tasks.start(ACTIVE_AGENT_TASK, async ({ signal, send }) => {
+  const { env, activity, emit } = context;
+  activity.start(async ({ signal, send }) => {
     if (!env.ANTHROPIC_API_KEY && !env.CLAUDE_CODE_OAUTH_TOKEN) {
       throw new Error(
         "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is not configured in the harness VM",
@@ -78,11 +77,11 @@ async function receive(
 
   if (command.type === "cancel") {
     queuedPrompts.length = 0;
-    context.tasks.cancel(ACTIVE_AGENT_TASK);
+    context.activity.cancel();
     return;
   }
 
-  if (context.tasks.has(ACTIVE_AGENT_TASK)) {
+  if (context.activity.active) {
     queuedPrompts.push(command.prompt);
     return;
   }

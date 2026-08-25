@@ -21,7 +21,7 @@ The message routes use the harness's single `receive` entrypoint. The
 application message identifies chat, steer, or cancel intent; this example
 resumes the Session's Claude
 provider session and applies either prompt as its next turn. The active query is
-a runtime-managed task: steer queues the next turn without blocking the
+a runtime-managed Session activity: steer queues the next turn without blocking the
 mailbox, while cancel aborts the Claude query and clears queued prompts.
 
 `cantelop.json` targets an illustrative App with slug `anthropic`. Change the

@@ -14,7 +14,6 @@ type RuntimeEvent =
   | { type: "done"; output: AnswerOutput };
 
 const models = builtinModels();
-const ACTIVE_AGENT_TASK = "agent";
 let agent: Agent | undefined;
 
 function sessionAgent(
@@ -45,18 +44,18 @@ async function runTurn(
   context: HarnessContext<PromptInput, RuntimeEvent>,
 ): Promise<void> {
   const { payload } = context.message;
-  const { emit, tasks } = context;
+  const { activity, emit } = context;
 
   if (payload.type === "cancel") {
-    tasks.cancel(ACTIVE_AGENT_TASK);
+    activity.cancel();
     return;
   }
 
   const agent = sessionAgent(context);
 
   if (payload.type === "steer") {
-    if (!tasks.has(ACTIVE_AGENT_TASK)) {
-      throw new Error("No active agent task to steer");
+    if (!activity.active) {
+      throw new Error("No active agent activity to steer");
     }
     agent.steer({
       role: "user",
@@ -68,11 +67,11 @@ async function runTurn(
     return;
   }
 
-  if (tasks.has(ACTIVE_AGENT_TASK)) {
-    throw new Error("An agent task is already active");
+  if (activity.active) {
+    throw new Error("Agent activity is already active");
   }
 
-  tasks.start(ACTIVE_AGENT_TASK, async ({ signal }) => {
+  activity.start(async ({ signal }) => {
     let answer = "";
     const unsubscribe = agent.subscribe((event) => {
       if (

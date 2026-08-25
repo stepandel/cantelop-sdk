@@ -300,8 +300,9 @@ runtime places messages in an in-memory FIFO mailbox and invokes the harness
 for one message at a time. A harness can use a payload discriminator and its
 retained Agent instance to interpret each message.
 
-Long-running work that must accept later steer or cancel messages runs as a
-runtime-managed task. Starting a task does not block the mailbox. External and
+Long-running work that must accept later steer or cancel messages runs as the
+Session's runtime-managed activity. Starting the activity does not block the
+mailbox. External and
 self-generated messages use the same FIFO sequence:
 
 ```ts
@@ -309,12 +310,12 @@ export default defineHarness<Message>(async (context) => {
   const command = context.message.payload;
 
   if (command.type === "start") {
-    context.tasks.start(command.operationId, async ({ signal, send }) => {
+    context.activity.start(async ({ signal, send }) => {
       try {
         const result = await runAgent(command.prompt, { signal });
-        send({ type: "completed", operationId: command.operationId, result });
-      } catch (error) {
-        send({ type: "failed", operationId: command.operationId });
+        send({ type: "completed", result });
+      } catch {
+        send({ type: "failed" });
       }
     });
     return;
@@ -326,24 +327,26 @@ export default defineHarness<Message>(async (context) => {
   }
 
   if (command.type === "cancel") {
-    context.tasks.cancel(command.operationId);
+    context.activity.cancel();
   }
 });
 ```
 
-Task IDs are developer-owned strings scoped to the active Session. Starting a
-duplicate active ID fails the current message. `tasks.cancel()` returns `false`
-when no active task has that ID; cancellation is cooperative through the task's
-`AbortSignal`. Task failures are contained by the runtime, so task code should
-catch failures and send an application-defined failure message when the actor
-must observe them. `send()` calls made inside a task are buffered until that
-task settles, then enter the mailbox in call order; actor-level `context.send()`
-enters the mailbox immediately.
+Each Session has at most one managed activity. `activity.active` reports whether
+it is running, starting another activity fails the current message, and
+`activity.cancel()` returns `false` when none is active. Cancellation is
+cooperative through the activity's `AbortSignal`. Activity failures are
+contained by the runtime, so activity code should catch failures and send an
+application-defined failure message when the actor must observe them. If an
+application needs to correlate commands, it can carry its own ID in the message
+payload; the runtime activity itself has no ID. `send()` calls made inside the
+activity are buffered until it settles, then enter the mailbox in call order;
+actor-level `context.send()` enters the mailbox immediately.
 
-The native delivery response remains pending until both the mailbox and task
-registry are idle. This keeps the in-memory activation owned while background
+The native delivery response remains pending until both the mailbox and
+activity are idle. This keeps the in-memory activation owned while background
 work runs, while the server remains able to receive later steer and cancel
-messages. It deliberately avoids introducing a heartbeat or durable task
+messages. It deliberately avoids introducing a heartbeat or durable activity
 protocol in this stage.
 
 The canonical Session lets a harness key provider state consistently, but it

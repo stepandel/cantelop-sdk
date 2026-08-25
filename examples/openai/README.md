@@ -21,8 +21,9 @@ The message routes use the harness's single `receive` entrypoint. The
 application message identifies chat, steer, or cancel intent; this example adds
 either prompt as another
 turn in the Session's shared OpenAI `MemorySession`. The active run is a
-runtime-managed task: steer queues the next turn without blocking the mailbox,
-while cancel aborts the run through its task signal and clears queued prompts.
+runtime-managed Session activity: steer queues the next turn without blocking
+the mailbox, while cancel aborts the run through its activity signal and clears
+queued prompts.
 
 `cantelop.json` targets an illustrative App with slug `openai`. Change the slug
 when deploying to a different App.

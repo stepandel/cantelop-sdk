@@ -38,7 +38,7 @@ try {
     assert.doesNotMatch(harnessSource, /steer:\s*steerTurn/);
     assert.match(apiSource, /type:\s*"steer"/);
     assert.match(apiSource, /type:\s*"cancel"/);
-    assert.match(harnessSource, /tasks\.start\(/);
+    assert.match(harnessSource, /activity\.start\(/);
     JSON.parse(await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"));
 
     await buildApi({

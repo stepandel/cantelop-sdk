@@ -18,7 +18,7 @@ Session ID. All message routes call the same asynchronous
 `dispatch()` method, and return an in-memory acceptance receipt with status
 `202`. The protocol does not define steering or cancellation semantics. OpenAI
 and Anthropic queue steer prompts as later provider turns; Pi applies steer to
-its active Agent. All three propagate cancel through a runtime-managed task's
+its active Agent. All three propagate cancel through the Session activity's
 `AbortSignal`. The canonical Session is propagated into the native harness,
 and direct client streaming is configured at the VM.
 

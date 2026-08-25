@@ -20,9 +20,9 @@ in-memory acceptance receipt with status `202`.
 The message routes use the harness's single `receive` entrypoint. The
 application message identifies chat, steer, or cancel intent, and the retained
 Agent handles steer input
-through Pi's native steering queue. The Agent prompt runs as a runtime-managed
-task, so steer reaches it while active and cancel aborts it through the task
-signal.
+through Pi's native steering queue. The Agent prompt runs as the runtime-managed
+Session activity, so steer reaches it while active and cancel aborts it through
+the activity signal.
 
 `cantelop.json` targets an illustrative App with slug `pi`. Change the slug
 when deploying to a different App.
