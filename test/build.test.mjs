@@ -128,8 +128,8 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
     entrypoint,
     [
       'import { greeting } from "./dependency.ts";',
-      `import { defineHarness } from ${JSON.stringify(new URL("../dist/harness.js", import.meta.url).pathname)};`,
-      'export default defineHarness(async () => { void greeting; });',
+      `import { defineSessionLogic } from ${JSON.stringify(new URL("../dist/session.js", import.meta.url).pathname)};`,
+      'export default defineSessionLogic(async () => { void greeting; });',
     ].join("\n"),
   );
 
@@ -159,12 +159,11 @@ test("a built harness receives messages on the local development port", async (t
   t.after(() => rm(directory, { recursive: true, force: true }));
   const entrypoint = path.join(directory, "harness.ts");
   const outdir = path.join(directory, "artifact");
-  const sdkHarness = new URL("../dist/harness.js", import.meta.url).pathname;
   await writeFile(
     entrypoint,
     [
-      `import { defineHarness } from ${JSON.stringify(sdkHarness)};`,
-      "export default defineHarness(async ({ message, env }) => {",
+      `import { defineSessionLogic } from ${JSON.stringify(new URL("../dist/session.js", import.meta.url).pathname)};`,
+      "export default defineSessionLogic(async ({ message, env }) => {",
       '  if (`${String(message.payload.prompt).toUpperCase()}:${env.MODEL}` !== "HELLO:test-model") throw new Error("unexpected message");',
       "});",
     ].join("\n"),

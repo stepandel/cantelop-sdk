@@ -23,6 +23,7 @@ try {
   assert.ok(paths.includes("dist/build.js"));
   assert.ok(paths.includes("dist/api.d.ts"));
   assert.ok(paths.includes("dist/harness.js"));
+  assert.ok(paths.includes("dist/session.js"));
   assert.ok(paths.includes("README.md"));
   assert.ok(paths.includes("package.json"));
   assert.equal(paths.some((file) => /^(src|test|examples|scripts)\//.test(file)), false);
@@ -59,7 +60,8 @@ try {
       'import { CANTELOP_CLI_BUILD_PROTOCOL_VERSION, buildApi, buildHarness, buildLocalApi, watchLocalProject } from "@cantelop/sdk/build";',
       'import { defineApi } from "@cantelop/sdk/api";',
       'import { createApiWorker } from "@cantelop/sdk/edge";',
-      'import { defineHarness, serveHarness } from "@cantelop/sdk/harness";',
+      'import { serveHarness } from "@cantelop/sdk/harness";',
+      'import { defineSessionLogic } from "@cantelop/sdk/session";',
       "assert.equal(typeof buildApi, \"function\");",
       "assert.equal(typeof buildHarness, \"function\");",
       "assert.equal(typeof buildLocalApi, \"function\");",
@@ -67,7 +69,7 @@ try {
       "assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 1);",
       "assert.equal(typeof defineApi, \"function\");",
       "assert.equal(typeof createApiWorker, \"function\");",
-      "assert.equal(typeof defineHarness, \"function\");",
+      "assert.equal(typeof defineSessionLogic, \"function\");",
       "assert.equal(typeof serveHarness, \"function\");",
       'await buildApi({ entrypoint: "./api.mjs", outdir: "./artifact" });',
     ].join("\n"),

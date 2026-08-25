@@ -28,16 +28,16 @@ export interface MessageReceipt {
   readonly acceptedAt: Date;
 }
 
-/** Canonical, read-only Session identity and configuration. */
-export interface Session {
+/** Canonical, read-only identity and configuration for a Session actor. */
+export interface SessionIdentity {
   readonly id: string;
   readonly workspaceId: string;
   readonly keepAliveSeconds: number;
 }
 
-/** Edge capabilities for operating on a canonical Session. */
-export interface SessionHandle<Input> extends Session {
-  dispatch(input: Input): Promise<MessageReceipt>;
+/** A reference to a Session actor. */
+export interface Session<Message> extends SessionIdentity {
+  dispatch(message: Message): Promise<MessageReceipt>;
   terminate(): Promise<void>;
 }
 
@@ -47,7 +47,7 @@ export interface WorkspaceService {
 }
 
 export interface SessionService<Input> {
-  open(config: SessionOpenConfig): SessionHandle<Input>;
+  open(config: SessionOpenConfig): Session<Input>;
 }
 
 /** Capabilities of the current App, injected by Cantelop. */

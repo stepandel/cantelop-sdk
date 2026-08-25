@@ -1,15 +1,15 @@
 import type {
-  HarnessActivity,
-  HarnessActivityContext,
-  HarnessActivityFunction,
-} from "./harness.js";
+  SessionActivity,
+  SessionActivityContext,
+  SessionActivityFunction,
+} from "./session.js";
 
 interface ActiveActivity<Message> {
   readonly controller: AbortController;
   readonly messages: Message[];
 }
 
-export class InMemoryActivity<Message> implements HarnessActivity<Message> {
+export class InMemoryActivity<Message> implements SessionActivity<Message> {
   private current: ActiveActivity<Message> | undefined;
   private readonly idleWaiters = new Set<() => void>();
 
@@ -19,7 +19,7 @@ export class InMemoryActivity<Message> implements HarnessActivity<Message> {
     return this.current !== undefined;
   }
 
-  start(work: HarnessActivityFunction<Message>): void {
+  start(work: SessionActivityFunction<Message>): void {
     if (this.active) {
       throw new Error("Harness activity is already active");
     }
@@ -27,7 +27,7 @@ export class InMemoryActivity<Message> implements HarnessActivity<Message> {
     const controller = new AbortController();
     const activity: ActiveActivity<Message> = { controller, messages: [] };
     this.current = activity;
-    const context: HarnessActivityContext<Message> = Object.freeze({
+    const context: SessionActivityContext<Message> = Object.freeze({
       signal: controller.signal,
       send: (payload: Message) => activity.messages.push(payload),
     });

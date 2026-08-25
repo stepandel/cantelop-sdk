@@ -39,6 +39,10 @@
     "./harness": {
       "types": "./dist/harness.d.ts",
       "import": "./dist/harness.js"
+    },
+    "./session": {
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.js"
     }
   },
   "files": [

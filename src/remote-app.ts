@@ -1,7 +1,7 @@
 import type {
   CantelopApp,
   MessageReceipt,
-  SessionHandle,
+  Session,
   SessionOpenConfig,
   Workspace,
   WorkspaceCreateConfig,
@@ -44,7 +44,7 @@ export function createRemoteApp<Input = unknown>(
   const messageId = options.messageId ?? createMessageID;
 
   const sessions = Object.freeze({
-    open(config: SessionOpenConfig): SessionHandle<Input> {
+    open(config: SessionOpenConfig): Session<Input> {
       assertWorkspaceID(config.workspaceId);
       assertKeepAliveSeconds(config.keepAliveSeconds);
       const id = config.id ?? sessionId();
@@ -81,7 +81,7 @@ function createRemoteSession<Input>(
   config: SessionOpenConfig,
   runtimeFetch: RuntimeFetch,
   messageId: IDFactory,
-): SessionHandle<Input> {
+): Session<Input> {
   return Object.freeze({
     id,
     workspaceId: config.workspaceId,

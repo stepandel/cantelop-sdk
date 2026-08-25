@@ -9,11 +9,11 @@ import {
 import { randomUUID } from "node:crypto";
 
 import type {
-  HarnessContext,
-  HarnessEnvironment,
-  HarnessRuntime,
-} from "./harness.js";
-import type { Session } from "./resources.js";
+  SessionContext,
+  SessionEnvironment,
+  SessionLogic,
+} from "./session.js";
+import type { SessionIdentity } from "./resources.js";
 import { markHarnessStartup } from "./harness-startup.js";
 import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
@@ -29,7 +29,7 @@ const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
 
 export interface HarnessRequestHandlerOptions {
-  env?: HarnessEnvironment;
+  env?: SessionEnvironment;
 }
 
 export interface HarnessServer {
@@ -50,16 +50,16 @@ type HarnessRequestHandler = (
  * primarily useful to platform integration tests and custom native launchers.
  */
 export function createHarnessRequestHandler<Input, Event = never>(
-  runtime: HarnessRuntime<Input, Event>,
+  runtime: SessionLogic<Input, Event>,
   options: HarnessRequestHandlerOptions = {},
 ): HarnessRequestHandler {
-  let boundSession: Session | undefined;
+  let boundSession: SessionIdentity | undefined;
   const mailbox = new InMemoryMailbox<void>();
   let activity: InMemoryActivity<Input>;
 
   const receiveMessage = (
     message: Readonly<{ id: string; payload: Input }>,
-    session: Session,
+    session: SessionIdentity,
   ): Promise<void> => mailbox.enqueue(message.id, async (sequence) =>
     invokeHarness(runtime, Object.freeze({
       message: Object.freeze({ ...message, sequence }),
@@ -104,7 +104,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
  * supplies a deployment port.
  */
 export function serveHarness<Input, Event = never>(
-  runtime: HarnessRuntime<Input, Event>,
+  runtime: SessionLogic<Input, Event>,
 ): HarnessServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
@@ -144,9 +144,9 @@ async function handleRequest<Input, Event>(
   activity: InMemoryActivity<Input>,
   receiveMessage: (
     message: Readonly<{ id: string; payload: Input }>,
-    session: Session,
+    session: SessionIdentity,
   ) => Promise<void>,
-  bindSession: (session: Session) => void,
+  bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://harness.cantelop.internal");
@@ -238,8 +238,8 @@ async function readRequestEnvelope(request: IncomingMessage): Promise<unknown> {
 }
 
 function invokeHarness<Input, Event>(
-  runtime: HarnessRuntime<Input, Event>,
-  context: HarnessContext<Input, Event>,
+  runtime: SessionLogic<Input, Event>,
+  context: SessionContext<Input, Event>,
 ): void | Promise<void> {
   if (typeof runtime === "function") return runtime(context);
   return runtime.receive(context);
@@ -291,7 +291,7 @@ function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Inp
   return Object.freeze({ id: value.id, payload: value.payload as Input });
 }
 
-function readSession(value: unknown): Session {
+function readSession(value: unknown): SessionIdentity {
   if (!isRecord(value) || Object.keys(value).length !== 3 ||
       typeof value.id !== "string" || !SESSION_ID_PATTERN.test(value.id) ||
       typeof value.workspace_id !== "string" || !WORKSPACE_ID_PATTERN.test(value.workspace_id) ||
