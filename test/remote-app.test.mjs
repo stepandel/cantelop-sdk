@@ -5,12 +5,12 @@ import { createRemoteApp, RemoteAppError } from "../dist/remote-app.js";
 const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
 const sessionId = "ses_0123456789abcdef0123456789abcdef";
 const namedSessionId = "github:repository";
-const executionId = "exec_0123456789abcdef0123456789abcdef";
+const messageId = "msg_0123456789abcdef0123456789abcdef";
 
 test("the current App creates Workspaces without a caller-supplied App ID", async () => {
   let forwarded;
   const app = createRemoteApp({
-    executionId: () => executionId,
+    messageId: () => messageId,
     fetch: async (request) => {
       forwarded = request;
       return Response.json({
@@ -86,11 +86,11 @@ test("opening an anonymous Session generates its ID without a request", () => {
 test("a Session dispatches asynchronously with the same identity and configuration", async () => {
   let forwarded;
   const app = createRemoteApp({
-    executionId: () => executionId,
+    messageId: () => messageId,
     fetch: async (request) => {
       forwarded = request;
       return Response.json({
-        id: executionId,
+        id: messageId,
         status: "queued",
         accepted_at: "2026-08-17T12:00:00Z",
       }, { status: 202 });
@@ -103,12 +103,12 @@ test("a Session dispatches asynchronously with the same identity and configurati
     keepAliveSeconds: 300,
   });
   const receipt = await session.dispatch({ event: "push" });
-  assert.equal(receipt.id, executionId);
+  assert.equal(receipt.id, messageId);
   assert.equal(receipt.status, "queued");
   assert.equal(receipt.acceptedAt.toISOString(), "2026-08-17T12:00:00.000Z");
-  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/executions");
+  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/messages");
   assert.deepEqual(await forwarded.json(), {
-    id: executionId,
+    id: messageId,
     session: {
       id: namedSessionId,
       workspace_id: workspaceId,

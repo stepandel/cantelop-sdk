@@ -1,6 +1,6 @@
 import type {
   CantelopApp,
-  ExecutionReceipt,
+  MessageReceipt,
   SessionHandle,
   SessionOpenConfig,
   Workspace,
@@ -10,7 +10,7 @@ import type {
 
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const EXECUTION_ID_PATTERN = /^exec_[0-9a-f]{32}$/;
+const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
 const WORKSPACE_SLUG_PATTERN = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const RUNTIME_ORIGIN = "https://runtime.cantelop.internal";
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
@@ -23,7 +23,7 @@ type IDFactory = () => string;
 export interface RemoteAppOptions {
   readonly fetch?: RuntimeFetch;
   readonly sessionId?: IDFactory;
-  readonly executionId?: IDFactory;
+  readonly messageId?: IDFactory;
 }
 
 export class RemoteAppError extends Error {
@@ -41,7 +41,7 @@ export function createRemoteApp<Input = unknown>(
 ): CantelopApp<Input> {
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
   const sessionId = options.sessionId ?? createSessionID;
-  const executionId = options.executionId ?? createExecutionID;
+  const messageId = options.messageId ?? createMessageID;
 
   const sessions = Object.freeze({
     open(config: SessionOpenConfig): SessionHandle<Input> {
@@ -49,7 +49,7 @@ export function createRemoteApp<Input = unknown>(
       assertKeepAliveSeconds(config.keepAliveSeconds);
       const id = config.id ?? sessionId();
       assertSessionID(id);
-      return createRemoteSession(id, config, runtimeFetch, executionId);
+      return createRemoteSession(id, config, runtimeFetch, messageId);
     },
   });
 
@@ -80,25 +80,25 @@ function createRemoteSession<Input>(
   id: string,
   config: SessionOpenConfig,
   runtimeFetch: RuntimeFetch,
-  executionId: IDFactory,
+  messageId: IDFactory,
 ): SessionHandle<Input> {
   return Object.freeze({
     id,
     workspaceId: config.workspaceId,
     keepAliveSeconds: config.keepAliveSeconds,
 
-    async dispatch(input: Input): Promise<ExecutionReceipt> {
-      const execution = executionId();
-      assertExecutionID(execution);
-      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/executions", {
+    async dispatch(input: Input): Promise<MessageReceipt> {
+      const message = messageId();
+      assertMessageID(message);
+      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/messages", {
         method: "POST",
         body: {
-          id: execution,
+          id: message,
           session: sessionEnvelope(this.id, config),
           input,
         },
       });
-      return readExecutionReceipt(envelope, execution);
+      return readMessageReceipt(envelope, message);
     },
 
     async terminate(): Promise<void> {
@@ -119,21 +119,21 @@ function sessionEnvelope(id: string, config: SessionOpenConfig): Record<string, 
   };
 }
 
-function readExecutionReceipt(
+function readMessageReceipt(
   envelope: unknown,
-  expectedExecution: string,
-): ExecutionReceipt {
+  expectedMessage: string,
+): MessageReceipt {
   if (!isRecord(envelope) || typeof envelope.id !== "string" ||
-      !EXECUTION_ID_PATTERN.test(envelope.id) ||
-      envelope.id !== expectedExecution ||
+      !MESSAGE_ID_PATTERN.test(envelope.id) ||
+      envelope.id !== expectedMessage ||
       envelope.status !== "queued" ||
       typeof envelope.accepted_at !== "string") {
-    throw new RemoteAppError("invalid_execution_response", 0);
+    throw new RemoteAppError("invalid_message_response", 0);
   }
   return Object.freeze({
     id: envelope.id,
     status: "queued" as const,
-    acceptedAt: readExecutionDate(envelope.accepted_at),
+    acceptedAt: readMessageDate(envelope.accepted_at),
   });
 }
 
@@ -220,9 +220,9 @@ function readDate(value: unknown): Date {
   return date;
 }
 
-function readExecutionDate(value: string): Date {
+function readMessageDate(value: string): Date {
   const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) throw new RemoteAppError("invalid_execution_response", 0);
+  if (Number.isNaN(date.valueOf())) throw new RemoteAppError("invalid_message_response", 0);
   return date;
 }
 
@@ -243,8 +243,8 @@ function assertSessionID(id: string): void {
   }
 }
 
-function assertExecutionID(id: string): void {
-  if (!EXECUTION_ID_PATTERN.test(id)) throw new TypeError("Invalid Cantelop execution ID");
+function assertMessageID(id: string): void {
+  if (!MESSAGE_ID_PATTERN.test(id)) throw new TypeError("Invalid Cantelop message ID");
 }
 
 function assertWorkspaceSlug(slug: string): void {
@@ -261,8 +261,8 @@ function createSessionID(): string {
   return `ses_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
-function createExecutionID(): string {
-  return `exec_${crypto.randomUUID().replaceAll("-", "")}`;
+function createMessageID(): string {
+  return `msg_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
 function byteLength(value: string): number {

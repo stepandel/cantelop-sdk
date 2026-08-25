@@ -44,7 +44,7 @@ export type {
 } from "./router.js";
 export type {
   CantelopApp,
-  ExecutionReceipt,
+  MessageReceipt,
   Session,
   SessionHandle,
   SessionOpenConfig,

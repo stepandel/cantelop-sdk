@@ -22,7 +22,7 @@ export interface SessionOpenConfig {
   readonly keepAliveSeconds: number;
 }
 
-export interface ExecutionReceipt {
+export interface MessageReceipt {
   readonly id: string;
   readonly status: "queued";
   readonly acceptedAt: Date;
@@ -37,7 +37,7 @@ export interface Session {
 
 /** Edge capabilities for operating on a canonical Session. */
 export interface SessionHandle<Input> extends Session {
-  dispatch(input: Input): Promise<ExecutionReceipt>;
+  dispatch(input: Input): Promise<MessageReceipt>;
   terminate(): Promise<void>;
 }
 

@@ -5,7 +5,7 @@ import { createApiWorker } from "../dist/edge.js";
 
 const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
 const sessionId = "ses_0123456789abcdef0123456789abcdef";
-const executionId = "exec_0123456789abcdef0123456789abcdef";
+const messageId = "msg_0123456789abcdef0123456789abcdef";
 
 test("the Edge adapter turns an API definition into a standard Worker", async () => {
   const runtimeRequests = [];
@@ -26,11 +26,11 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
   });
   const worker = createApiWorker(definition, {
     sessionId: () => sessionId,
-    executionId: () => executionId,
+    messageId: () => messageId,
     fetch: async (request) => {
       runtimeRequests.push(request);
       return Response.json({
-        id: executionId,
+        id: messageId,
         status: "queued",
         accepted_at: "2026-08-17T12:00:00Z",
       }, { status: 202 });
@@ -55,7 +55,7 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
   assert.deepEqual(await response.json(), {
     sessionId,
     receipt: {
-      id: executionId,
+      id: messageId,
       status: "queued",
       acceptedAt: "2026-08-17T12:00:00.000Z",
     },
@@ -63,11 +63,11 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
   assert.equal(runtimeRequests.length, 1);
   assert.equal(
     runtimeRequests[0].url,
-    "https://runtime.cantelop.internal/__cantelop/v1/executions",
+    "https://runtime.cantelop.internal/__cantelop/v1/messages",
   );
   assert.equal(runtimeRequests[0].headers.get("X-Cantelop-Edge-Workspace-ID"), null);
   assert.deepEqual(await runtimeRequests[0].json(), {
-    id: executionId,
+    id: messageId,
     session: {
       id: sessionId,
       workspace_id: workspaceId,

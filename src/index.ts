@@ -7,7 +7,7 @@ export type {
   ApiEnvironment,
   ApiFactory,
   CantelopApp,
-  ExecutionReceipt,
+  MessageReceipt,
   HttpMethod,
   Route,
   RouteContext,

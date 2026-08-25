@@ -103,7 +103,7 @@ test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge",
     },
   });
   assert.equal(forwarded.url,
-    "http://127.0.0.1:43123/__cantelop/v1/executions");
+    "http://127.0.0.1:43123/__cantelop/v1/messages");
 });
 
 test("buildLocalApi rejects non-loopback runtime origins", async () => {
