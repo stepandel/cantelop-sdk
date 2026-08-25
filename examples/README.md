@@ -4,7 +4,7 @@ The OpenAI, Anthropic, and Pi examples each contain two deployment artifacts:
 
 ```text
 src/api.ts      Edge HTTP middleware
-src/harness.ts  Linux-native agent runtime
+src/session.ts  Linux-native Session logic
 cantelop.json   Build and deployment manifest
 ```
 

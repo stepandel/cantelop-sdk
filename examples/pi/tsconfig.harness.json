@@ -11,5 +11,5 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true
   },
-  "include": ["src/harness.ts", "src/contracts.ts"]
+  "include": ["src/session.ts", "src/contracts.ts"]
 }

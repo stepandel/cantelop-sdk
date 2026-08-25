@@ -1,7 +1,7 @@
 {
   "app": "openai",
   "api": "src/api.ts",
-  "harness": "src/harness.ts",
+  "harness": "src/session.ts",
   "environment": {
     "OPENAI_MODEL": {"default": "gpt-4.1-mini"},
     "OPENAI_API_KEY": {"secret": true, "required": true}

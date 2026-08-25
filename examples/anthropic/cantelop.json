@@ -1,5 +1,5 @@
 {
   "app": "anthropic",
   "api": "src/api.ts",
-  "harness": "src/harness.ts"
+  "harness": "src/session.ts"
 }

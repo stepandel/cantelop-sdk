@@ -26,7 +26,7 @@ try {
   for (const example of examples) {
     const exampleRoot = path.join(repositoryRoot, "examples", example);
     const apiSource = await readFile(path.join(exampleRoot, "src/api.ts"), "utf8");
-    const harnessSource = await readFile(path.join(exampleRoot, "src/harness.ts"), "utf8");
+    const sessionSource = await readFile(path.join(exampleRoot, "src/session.ts"), "utf8");
     const routes = [...apiSource.matchAll(/router\.route\("([A-Z]+)", "([^"]+)"/g)]
       .map(([, method, route]) => `${method} ${route}`);
     assert.deepEqual(routes, [
@@ -35,11 +35,11 @@ try {
       "POST /steer",
       "POST /cancel",
     ]);
-    assert.doesNotMatch(harnessSource, /steer:\s*steerTurn/);
+    assert.doesNotMatch(sessionSource, /steer:\s*steerTurn/);
     assert.match(apiSource, /type:\s*"steer"/);
     assert.match(apiSource, /type:\s*"cancel"/);
-    assert.match(harnessSource, /activity\.start\(/);
-    assert.match(harnessSource, /defineSessionLogic/);
+    assert.match(sessionSource, /activity\.start\(/);
+    assert.match(sessionSource, /defineSessionLogic/);
     JSON.parse(await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"));
 
     await buildApi({
@@ -47,7 +47,7 @@ try {
       outdir: path.join(temporaryRoot, example, "api"),
     });
     await buildHarness({
-      entrypoint: path.join(exampleRoot, "src/harness.ts"),
+      entrypoint: path.join(exampleRoot, "src/session.ts"),
       outdir: path.join(temporaryRoot, example, "harness"),
     });
   }
