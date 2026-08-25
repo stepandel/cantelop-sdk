@@ -4,20 +4,15 @@ import {
   defineSessionLogic,
   type SessionContext,
 } from "@cantelop/sdk/session";
-import type {
-  AnswerOutput,
-  PromptInput,
-} from "./contracts.js";
+import type { SessionEvent, SessionMessage } from "./contracts.js";
 
-type RuntimeEvent =
-  | { type: "text_delta"; delta: string }
-  | { type: "done"; output: AnswerOutput };
+type Context = SessionContext<SessionMessage, SessionEvent>;
 
 const models = builtinModels();
 let agent: Agent | undefined;
 
 function sessionAgent(
-  { session, env }: SessionContext<PromptInput, RuntimeEvent>,
+  { session, env }: Context,
 ): Agent {
   if (agent !== undefined) return agent;
 
@@ -40,61 +35,59 @@ function sessionAgent(
   return agent;
 }
 
-async function runTurn(
-  context: SessionContext<PromptInput, RuntimeEvent>,
-): Promise<void> {
-  const { payload } = context.message;
-  const { activity, emit } = context;
+export default defineSessionLogic<SessionMessage, SessionEvent>({
+  receive(context) {
+    const command = context.message.payload;
 
-  if (payload.type === "cancel") {
-    activity.cancel();
-    return;
-  }
-
-  const agent = sessionAgent(context);
-
-  if (payload.type === "steer") {
-    if (!activity.active) {
-      throw new Error("No active agent activity to steer");
+    if (command.type === "cancel") {
+      context.activity.cancel();
+      return;
     }
-    agent.steer({
-      role: "user",
-      content: payload.prompt,
-      timestamp: Date.now(),
-    });
-    const output = { answer: "Steering accepted" };
-    emit({ type: "done", output });
-    return;
-  }
 
-  if (activity.active) {
-    throw new Error("Agent activity is already active");
-  }
+    if (command.type === "steer") {
+      if (!context.activity.active || agent === undefined) {
+        throw new Error("No active Pi agent to steer");
+      }
+      agent.steer({
+        role: "user",
+        content: command.prompt,
+        timestamp: Date.now(),
+      });
+      return;
+    }
 
-  activity.start(async ({ signal }) => {
+    if (context.activity.active) {
+      throw new Error("The Session is already processing a prompt");
+    }
+
+    startPrompt(context, command.prompt);
+  },
+});
+
+function startPrompt(context: Context, prompt: string): void {
+  const currentAgent = sessionAgent(context);
+
+  context.activity.start(async ({ signal }) => {
     let answer = "";
-    const unsubscribe = agent.subscribe((event) => {
+    const unsubscribe = currentAgent.subscribe((event) => {
       if (
         event.type === "message_update" &&
         event.assistantMessageEvent.type === "text_delta"
       ) {
         const delta = event.assistantMessageEvent.delta;
         answer += delta;
-        emit({ type: "text_delta", delta });
+        context.emit({ type: "text_delta", delta });
       }
     });
-    const abort = () => agent.abort();
+    const abort = () => currentAgent.abort();
     signal.addEventListener("abort", abort, { once: true });
 
     try {
-      await agent.prompt(payload.prompt);
-      const output = { answer };
-      emit({ type: "done", output });
+      await currentAgent.prompt(prompt);
+      context.emit({ type: "done", answer });
     } finally {
       signal.removeEventListener("abort", abort);
       unsubscribe();
     }
   });
 }
-
-export default defineSessionLogic<PromptInput, RuntimeEvent>({ receive: runTurn });

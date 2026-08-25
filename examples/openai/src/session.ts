@@ -3,76 +3,77 @@ import {
   defineSessionLogic,
   type SessionContext,
 } from "@cantelop/sdk/session";
-import type {
-  AnswerOutput,
-  PromptInput,
-} from "./contracts.js";
+import type { SessionEvent, SessionMessage } from "./contracts.js";
 
-type RuntimeEvent =
-  | { type: "text_delta"; delta: string }
-  | { type: "done"; output: AnswerOutput };
+type Context = SessionContext<SessionMessage, SessionEvent>;
 
-const queuedPrompts: string[] = [];
-let providerSession: MemorySession | undefined;
+let agent: Agent | undefined;
+let conversation: MemorySession | undefined;
+let pendingSteer: string | undefined;
 
-function startTurn(
-  context: SessionContext<PromptInput, RuntimeEvent>,
-  prompt: string,
-): void {
-  const { env, session, activity, emit } = context;
-  activity.start(async ({ signal, send }) => {
+export default defineSessionLogic<SessionMessage, SessionEvent>({
+  receive(context) {
+    const command = context.message.payload;
+
+    if (command.type === "cancel") {
+      pendingSteer = undefined;
+      context.activity.cancel();
+      return;
+    }
+
+    if (command.type === "steer") {
+      if (!context.activity.active) {
+        throw new Error("No active OpenAI run to steer");
+      }
+      pendingSteer = command.prompt;
+      return;
+    }
+
+    if (context.activity.active) {
+      throw new Error("The Session is already processing a prompt");
+    }
+
+    startPrompt(context, command.prompt);
+  },
+});
+
+function startPrompt(context: Context, prompt: string): void {
+  if (!context.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+
+  agent ??= new Agent({
+    name: "Cantelop OpenAI example",
+    instructions: "You are a concise, helpful assistant.",
+    model: context.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+  });
+  conversation ??= new MemorySession({ sessionId: context.session.id });
+  const currentAgent = agent;
+  const currentConversation = conversation;
+
+  context.activity.start(async ({ signal, send }) => {
+    let completed = false;
     try {
-      if (!env.OPENAI_API_KEY) {
-        throw new Error("OPENAI_API_KEY is not configured in the harness VM");
-      }
-      const agent = new Agent({
-        name: "Cantelop OpenAI example",
-        instructions: "You are a concise, helpful assistant.",
-        model: env.OPENAI_MODEL ?? "gpt-4.1-mini",
-      });
-      providerSession ??= new MemorySession({ sessionId: session.id });
-
-      const stream = await run(agent, prompt, {
-        stream: true,
+      const result = await run(currentAgent, prompt, {
+        session: currentConversation,
         signal,
-        session: providerSession,
+        stream: true,
       });
+
       let answer = "";
-      for await (const delta of stream.toTextStream()) {
+      for await (const delta of result.toTextStream()) {
         answer += delta;
-        emit({ type: "text_delta", delta });
+        context.emit({ type: "text_delta", delta });
       }
-      await stream.completed;
-      emit({
-        type: "done",
-        output: { answer: stream.finalOutput ?? answer },
-      });
+      await result.completed;
+      context.emit({ type: "done", answer: result.finalOutput ?? answer });
+      completed = true;
     } finally {
-      const nextPrompt = queuedPrompts.shift();
-      if (nextPrompt !== undefined) {
-        send({ type: "message", prompt: nextPrompt });
+      const steer = pendingSteer;
+      pendingSteer = undefined;
+      if (completed && steer !== undefined) {
+        send({ type: "prompt", prompt: steer });
       }
     }
   });
 }
-
-async function receive(
-  context: SessionContext<PromptInput, RuntimeEvent>,
-): Promise<void> {
-  const command = context.message.payload;
-
-  if (command.type === "cancel") {
-    queuedPrompts.length = 0;
-    context.activity.cancel();
-    return;
-  }
-
-  if (context.activity.active) {
-    queuedPrompts.push(command.prompt);
-    return;
-  }
-
-  startTurn(context, command.prompt);
-}
-
-export default defineSessionLogic<PromptInput, RuntimeEvent>({ receive });

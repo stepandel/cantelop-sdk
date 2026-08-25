@@ -1,6 +1,10 @@
-export type PromptInput =
-  | { type: "message" | "steer"; prompt: string }
+export type SessionMessage =
+  | { type: "prompt" | "steer"; prompt: string }
   | { type: "cancel" };
+
+export type SessionEvent =
+  | { type: "text_delta"; delta: string }
+  | { type: "done"; answer: string };
 
 export interface ChatRequest {
   sessionId?: string;
@@ -20,8 +24,4 @@ export interface CancelRequest {
   sessionId: string;
   workspaceId: string;
   keepAliveSeconds: number;
-}
-
-export interface AnswerOutput {
-  answer: string;
 }

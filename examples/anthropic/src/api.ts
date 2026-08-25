@@ -2,11 +2,11 @@ import { defineApi } from "@cantelop/sdk/api";
 import type {
   ChatRequest,
   CancelRequest,
-  PromptInput,
+  SessionMessage,
   SteerRequest,
 } from "./contracts.js";
 
-export default defineApi<PromptInput>(
+export default defineApi<SessionMessage>(
   ({ app, router }) => {
     router.route("GET", "/health", () =>
       Response.json({ status: "ok", runtime: "anthropic" }),
@@ -25,7 +25,7 @@ export default defineApi<PromptInput>(
         workspaceId: input.workspaceId,
         keepAliveSeconds: input.keepAliveSeconds,
       });
-      const receipt = await session.dispatch({ type: "message", prompt: input.prompt });
+      const receipt = await session.dispatch({ type: "prompt", prompt: input.prompt });
       return Response.json({ sessionId: session.id, receipt }, { status: 202 });
     });
 
