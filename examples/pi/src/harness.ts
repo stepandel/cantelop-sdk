@@ -14,6 +14,7 @@ type RuntimeEvent =
   | { type: "done"; output: AnswerOutput };
 
 const models = builtinModels();
+const ACTIVE_AGENT_TASK = "agent";
 let agent: Agent | undefined;
 
 function sessionAgent(
@@ -44,10 +45,13 @@ async function runTurn(
   context: HarnessContext<PromptInput, RuntimeEvent>,
 ): Promise<void> {
   const { payload } = context.message;
-  const { emit } = context;
+  const { emit, tasks } = context;
   const agent = sessionAgent(context);
 
   if (payload.type === "steer") {
+    if (!tasks.has(ACTIVE_AGENT_TASK)) {
+      throw new Error("No active agent task to steer");
+    }
     agent.steer({
       role: "user",
       content: payload.prompt,
@@ -58,24 +62,34 @@ async function runTurn(
     return;
   }
 
-  let answer = "";
-  const unsubscribe = agent.subscribe((event) => {
-    if (
-      event.type === "message_update" &&
-      event.assistantMessageEvent.type === "text_delta"
-    ) {
-      const delta = event.assistantMessageEvent.delta;
-      answer += delta;
-      emit({ type: "text_delta", delta });
+  if (tasks.has(ACTIVE_AGENT_TASK)) {
+    throw new Error("An agent task is already active");
+  }
+
+  tasks.start(ACTIVE_AGENT_TASK, async ({ signal }) => {
+    let answer = "";
+    const unsubscribe = agent.subscribe((event) => {
+      if (
+        event.type === "message_update" &&
+        event.assistantMessageEvent.type === "text_delta"
+      ) {
+        const delta = event.assistantMessageEvent.delta;
+        answer += delta;
+        emit({ type: "text_delta", delta });
+      }
+    });
+    const abort = () => agent.abort();
+    signal.addEventListener("abort", abort, { once: true });
+
+    try {
+      await agent.prompt(payload.prompt);
+      const output = { answer };
+      emit({ type: "done", output });
+    } finally {
+      signal.removeEventListener("abort", abort);
+      unsubscribe();
     }
   });
-  try {
-    await agent.prompt(payload.prompt);
-    const output = { answer };
-    emit({ type: "done", output });
-  } finally {
-    unsubscribe();
-  }
 }
 
 export default defineHarness<PromptInput, RuntimeEvent>({ receive: runTurn });

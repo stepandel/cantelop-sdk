@@ -19,7 +19,8 @@ message routes return an in-memory acceptance receipt with status `202`.
 Both routes use the harness's single `receive` entrypoint. The application input
 identifies chat versus steer intent, and the retained Agent handles steer input
 through Pi's native steering queue. FIFO processing means the steer request
-waits for any earlier handler to settle.
+waits for the start handler to settle, then reaches the Agent while its
+runtime-managed task remains active.
 
 `cantelop.json` targets an illustrative App with slug `pi`. Change the slug
 when deploying to a different App.

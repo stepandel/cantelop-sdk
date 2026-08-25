@@ -290,16 +290,59 @@ secrets to the harness VM and Edge API.
 Every harness invocation receives the same canonical Session snapshot exposed
 by its Edge `SessionHandle`: `session.id`, `session.workspaceId`, and the
 request's `session.keepAliveSeconds`. `message.id` is the stable delivery
-identity. These objects are frozen and constructed by the trusted runtime
-rather than copied from an application request.
+identity and `message.sequence` is its activation-local FIFO position. These
+objects are frozen and constructed by the trusted runtime rather than copied
+from an application request.
 
 The message protocol carries only the Session and the developer-defined
 payload. It does not assign meaning such as run, steer, or cancel. The active
 runtime places messages in an in-memory FIFO mailbox and invokes the harness
 for one message at a time. A harness can use a payload discriminator and its
-retained Agent instance to interpret each message. A later steer or cancel
-message cannot interrupt a handler that is still pending; runtime-managed
-background tasks are intentionally deferred beyond this first mailbox stage.
+retained Agent instance to interpret each message.
+
+Long-running work that must accept later steer or cancel messages runs as a
+runtime-managed task. Starting a task does not block the mailbox. External and
+self-generated messages use the same FIFO sequence:
+
+```ts
+export default defineHarness<Message>(async (context) => {
+  const command = context.message.payload;
+
+  if (command.type === "start") {
+    context.tasks.start(command.operationId, async ({ signal, send }) => {
+      try {
+        const result = await runAgent(command.prompt, { signal });
+        send({ type: "completed", operationId: command.operationId, result });
+      } catch (error) {
+        send({ type: "failed", operationId: command.operationId });
+      }
+    });
+    return;
+  }
+
+  if (command.type === "steer") {
+    activeAgent?.steer(command.prompt);
+    return;
+  }
+
+  if (command.type === "cancel") {
+    context.tasks.cancel(command.operationId);
+  }
+});
+```
+
+Task IDs are developer-owned strings scoped to the active Session. Starting a
+duplicate active ID fails the current message. `tasks.cancel()` returns `false`
+when no active task has that ID; cancellation is cooperative through the task's
+`AbortSignal`. Task failures are contained by the runtime, so task code should
+catch failures and send an application-defined failure message when the actor
+must observe them.
+
+The native delivery response remains pending until both the mailbox and task
+registry are idle. This keeps the in-memory activation owned while background
+work runs, while the server remains able to receive later steer and cancel
+messages. It deliberately avoids introducing a heartbeat or durable task
+protocol in this stage.
 
 The canonical Session lets a harness key provider state consistently, but it
 does not persist arbitrary in-memory objects. Module-level agents,
