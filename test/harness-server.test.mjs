@@ -40,6 +40,7 @@ test("the native adapter receives the versioned message protocol", async (t) => 
     response.headers.get("X-Cantelop-SDK-Message-Complete"),
     messageId,
   );
+  assert.equal(response.headers.get("X-Cantelop-SDK-Session-Generation"), "1");
   assert.deepEqual(received.message, {
     id: messageId,
     sequence: 1,
@@ -249,7 +250,12 @@ test("one harness runtime deduplicates a message ID for its activation", async (
   release();
   assert.equal((await first).status, 204);
   assert.equal((await duplicate).status, 204);
-  assert.equal((await request()).status, 204);
+  const completedDuplicate = await request();
+  assert.equal(completedDuplicate.status, 204);
+  assert.equal(
+    completedDuplicate.headers.get("X-Cantelop-SDK-Session-Generation"),
+    "1",
+  );
   assert.equal(calls, 1);
 });
 

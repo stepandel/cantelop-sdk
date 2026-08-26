@@ -17,6 +17,7 @@ import type { SessionIdentity } from "./resources.js";
 import { markHarnessStartup, markMessageLifecycle } from "./harness-startup.js";
 import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
+import { RuntimeQuiescence } from "./runtime-quiescence.js";
 
 const MESSAGE_PATH = "/__cantelop/v1/messages";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
@@ -24,6 +25,7 @@ const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
 const INTERNAL_FD_VARIABLE = "CANTELOP_INTERNAL_FD";
 const MESSAGE_COMPLETE_HEADER = "X-Cantelop-SDK-Message-Complete";
+const SESSION_GENERATION_HEADER = "X-Cantelop-SDK-Session-Generation";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
@@ -45,6 +47,11 @@ type HarnessRequestHandler = (
   response: ServerResponse,
 ) => void;
 
+interface RuntimeDelivery {
+  readonly generation: number;
+  readonly settled: Promise<void>;
+}
+
 /**
  * Creates the native HTTP protocol adapter. This lower-level entrypoint is
  * primarily useful to platform integration tests and custom native launchers.
@@ -54,43 +61,49 @@ export function createHarnessRequestHandler<Input, Event = never>(
   options: HarnessRequestHandlerOptions = {},
 ): HarnessRequestHandler {
   let boundSession: SessionIdentity | undefined;
-  const mailbox = new InMemoryMailbox<void>(markMessageLifecycle);
+  let quiescence: RuntimeQuiescence;
+  const mailbox = new InMemoryMailbox<void>(markMessageLifecycle, () => quiescence.changed());
   let activity: InMemoryActivity<Input>;
 
   const receiveMessage = (
     message: Readonly<{ id: string; payload: Input }>,
     session: SessionIdentity,
-  ): Promise<void> => mailbox.enqueue(message.id, async (sequence) => {
-    let invocationOpen = true;
-    const send = (payload: Input): void => {
-      if (!invocationOpen) {
-        throw new Error("Harness message invocation has already settled");
+  ): RuntimeDelivery => {
+    const generation = quiescence.observeMessage(message.id);
+    const settled = mailbox.enqueue(message.id, async (sequence) => {
+      let invocationOpen = true;
+      const send = (payload: Input): void => {
+        if (!invocationOpen) {
+          throw new Error("Harness message invocation has already settled");
+        }
+        sendMessage(payload);
+      };
+      try {
+        await invokeBehaviour(behaviour, Object.freeze({
+          message: Object.freeze({ ...message, sequence }),
+          session,
+          env: options.env ?? process.env,
+          activity,
+          send,
+          emit: () => undefined,
+        }));
+      } finally {
+        invocationOpen = false;
       }
-      sendMessage(payload);
-    };
-    try {
-      await invokeBehaviour(behaviour, Object.freeze({
-        message: Object.freeze({ ...message, sequence }),
-        session,
-        env: options.env ?? process.env,
-        activity,
-        send,
-        emit: () => undefined,
-      }));
-    } finally {
-      invocationOpen = false;
-    }
-  });
+    });
+    return Object.freeze({ generation, settled });
+  };
 
   const sendMessage = (payload: Input): void => {
     if (boundSession === undefined) {
       throw new Error("Harness cannot send before its Session is bound");
     }
     const message = Object.freeze({ id: createMessageID(), payload });
-    void receiveMessage(message, boundSession).catch(() => undefined);
+    void receiveMessage(message, boundSession).settled.catch(() => undefined);
   };
 
-  activity = new InMemoryActivity(sendMessage);
+  activity = new InMemoryActivity(sendMessage, () => quiescence.changed());
+  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
   return (request, response) => {
     void handleRequest(
       request,
@@ -153,7 +166,7 @@ async function handleRequest<Input, Event>(
   receiveMessage: (
     message: Readonly<{ id: string; payload: Input }>,
     session: SessionIdentity,
-  ) => Promise<void>,
+  ) => RuntimeDelivery,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
   setBaseHeaders(response);
@@ -173,6 +186,7 @@ async function handleRequest<Input, Event>(
   }
   let messageSettled = false;
   let acceptedMessageID: string | undefined;
+  let acceptedGeneration: number | undefined;
 
   try {
     const envelope = await readRequestEnvelope(request);
@@ -185,19 +199,25 @@ async function handleRequest<Input, Event>(
     const session = readSession(envelope.session);
     bindSession(session);
 
+    const delivery = receiveMessage(message, session);
+    acceptedGeneration = delivery.generation;
     try {
-      await receiveMessage(message, session);
+      await delivery.settled;
     } finally {
       messageSettled = true;
     }
     if (response.destroyed) return;
     response.setHeader(MESSAGE_COMPLETE_HEADER, message.id);
+    response.setHeader(SESSION_GENERATION_HEADER, String(delivery.generation));
     response.statusCode = 204;
     response.end();
   } catch (error) {
     if (response.destroyed) return;
     if (messageSettled && acceptedMessageID !== undefined) {
       response.setHeader(MESSAGE_COMPLETE_HEADER, acceptedMessageID);
+      if (acceptedGeneration !== undefined) {
+        response.setHeader(SESSION_GENERATION_HEADER, String(acceptedGeneration));
+      }
     }
     if (error instanceof ProtocolError) {
       writeError(response, error.status, error.code);

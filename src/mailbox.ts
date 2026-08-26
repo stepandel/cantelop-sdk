@@ -37,7 +37,10 @@ export class InMemoryMailbox<Output> {
   private pending = 0;
   private nextSequence = 1;
 
-  constructor(private readonly observer: MailboxObserver = () => undefined) {}
+  constructor(
+    private readonly observer: MailboxObserver = () => undefined,
+    private readonly stateChanged: () => void = () => undefined,
+  ) {}
 
   enqueue(id: string, receive: (sequence: number) => Promise<Output>): Promise<Output> {
     const existing = this.results.get(id);
@@ -49,6 +52,7 @@ export class InMemoryMailbox<Output> {
     const sequence = this.nextSequence++;
     const enqueuedAt = process.hrtime.bigint();
     this.pending += 1;
+    this.stateChanged();
     this.observe(Object.freeze({
       type: "enqueued",
       messageId: id,
@@ -106,6 +110,7 @@ export class InMemoryMailbox<Output> {
 
   private settle(): void {
     this.pending -= 1;
+    this.stateChanged();
     if (!this.isIdle) return;
     for (const resolve of this.idleWaiters) resolve();
     this.idleWaiters.clear();

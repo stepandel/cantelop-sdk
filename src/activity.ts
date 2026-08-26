@@ -14,7 +14,10 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
   private current: ActiveActivity<Message> | undefined;
   private readonly idleWaiters = new Set<() => void>();
 
-  constructor(private readonly sendMessage: (payload: Message) => void) {}
+  constructor(
+    private readonly sendMessage: (payload: Message) => void,
+    private readonly stateChanged: () => void = () => undefined,
+  ) {}
 
   get active(): boolean {
     return this.current !== undefined;
@@ -28,6 +31,7 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
     const controller = new AbortController();
     const activity: ActiveActivity<Message> = { controller, messages: [], settled: false };
     this.current = activity;
+    this.stateChanged();
     const context: SessionActivityContext<Message> = Object.freeze({
       signal: controller.signal,
       send: (payload: Message) => {
@@ -66,6 +70,7 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
     activity.settled = true;
     this.current = undefined;
     for (const payload of activity.messages) this.sendMessage(payload);
+    this.stateChanged();
     for (const resolve of this.idleWaiters) resolve();
     this.idleWaiters.clear();
   }
