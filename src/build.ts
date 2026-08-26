@@ -1,6 +1,6 @@
 /// <reference types="node" />
 
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,7 +16,6 @@ const MANIFEST_SCHEMA_VERSION = 1;
 const MAIN_MODULE = "worker.mjs";
 const MANIFEST_FILE = "cantelop-api.json";
 const HARNESS_MAIN_MODULE = "harness.mjs";
-const HARNESS_MANIFEST_FILE = "cantelop-harness.json";
 const EDGE_ADAPTER_MODULE = fileURLToPath(new URL("./edge.js", import.meta.url));
 const HARNESS_ADAPTER_MODULE = fileURLToPath(new URL("./harness.js", import.meta.url));
 const HARNESS_STARTUP_STATE_KEY = "dev.cantelop.sdk.harness-startup.v1";
@@ -53,18 +52,9 @@ export interface BuildHarnessOptions {
   readonly outdir: string;
 }
 
-export interface HarnessArtifactManifest {
-  readonly schema_version: 1;
-  readonly kind: "cantelop-native-harness";
-  readonly main_module: "harness.mjs";
-  readonly bundled_bytes: number;
-}
-
 export interface HarnessArtifact {
   readonly directory: string;
   readonly mainModule: string;
-  readonly manifestFile: string;
-  readonly manifest: HarnessArtifactManifest;
 }
 
 export type LocalBuildComponent = "api" | "harness";
@@ -225,14 +215,9 @@ export async function buildHarness(
   const mainModule = path.join(outdir, HARNESS_MAIN_MODULE);
   await build(harnessBuildOptions(entrypoint, mainModule));
 
-  const manifest = await writeHarnessManifest(outdir, mainModule);
-  const manifestFile = path.join(outdir, HARNESS_MANIFEST_FILE);
-
   return Object.freeze({
     directory: outdir,
     mainModule,
-    manifestFile,
-    manifest: Object.freeze(manifest),
   });
 }
 
@@ -273,25 +258,6 @@ function harnessBuildOptions(entrypoint: string, mainModule: string): BuildOptio
   };
 }
 
-async function writeHarnessManifest(
-  outdir: string,
-  mainModule: string,
-): Promise<HarnessArtifactManifest> {
-  const bundledBytes = (await stat(mainModule)).size;
-  const manifest: HarnessArtifactManifest = {
-    schema_version: MANIFEST_SCHEMA_VERSION,
-    kind: "cantelop-native-harness",
-    main_module: HARNESS_MAIN_MODULE,
-    bundled_bytes: bundledBytes,
-  };
-  const manifestFile = path.join(outdir, HARNESS_MANIFEST_FILE);
-  await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o644,
-  });
-  return manifest;
-}
-
 export async function watchLocalProject(
   options: WatchLocalProjectOptions,
 ): Promise<LocalProjectWatcher> {
@@ -315,8 +281,8 @@ export async function watchLocalProject(
           path.join(apiOutdir, MAIN_MODULE),
           runtimeOrigin,
         ),
-        () => writeApiManifest(apiOutdir),
         options.onBuild,
+        () => writeApiManifest(apiOutdir),
       ),
     );
     contexts.push(
@@ -324,10 +290,6 @@ export async function watchLocalProject(
         "harness",
         harnessBuildOptions(
           harnessEntrypoint,
-          path.join(harnessOutdir, HARNESS_MAIN_MODULE),
-        ),
-        () => writeHarnessManifest(
-          harnessOutdir,
           path.join(harnessOutdir, HARNESS_MAIN_MODULE),
         ),
         options.onBuild,
@@ -347,8 +309,8 @@ export async function watchLocalProject(
 async function watchedContext(
   component: LocalBuildComponent,
   options: BuildOptions,
-  finalize: () => Promise<unknown>,
   onBuild: (event: LocalBuildEvent) => void,
+  finalize?: () => Promise<unknown>,
 ): Promise<BuildContext> {
   let initial = true;
   let resolveInitial!: () => void;
@@ -362,7 +324,7 @@ async function watchedContext(
     setup(build) {
       build.onEnd(async (result) => {
         let error = result.errors.map((value) => value.text).join("\n");
-        if (error === "") {
+        if (error === "" && finalize !== undefined) {
           try {
             await finalize();
           } catch (failure) {

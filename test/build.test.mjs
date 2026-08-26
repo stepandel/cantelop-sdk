@@ -116,7 +116,7 @@ test("buildLocalApi rejects non-loopback runtime origins", async () => {
   );
 });
 
-test("buildHarness emits one deployable native module and manifest", async (t) => {
+test("buildHarness emits one deployable native module", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-harness-build-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const entrypoint = path.join(directory, "server.ts");
@@ -133,14 +133,8 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   );
 
   const artifact = await buildHarness({ entrypoint, outdir });
+  assert.equal(artifact.directory, outdir);
   assert.equal(artifact.mainModule, path.join(outdir, "harness.mjs"));
-  assert.equal(artifact.manifest.kind, "cantelop-native-harness");
-  assert.equal(artifact.manifest.main_module, "harness.mjs");
-  assert.ok(artifact.manifest.bundled_bytes > 0);
-  assert.deepEqual(
-    JSON.parse(await readFile(artifact.manifestFile, "utf8")),
-    artifact.manifest,
-  );
 
   const source = await readFile(artifact.mainModule, "utf8");
   assert.match(source, /ready/);
