@@ -150,6 +150,87 @@ test("message and activity send capabilities close when their work settles", asy
   );
 });
 
+test("the platform can wait for generation-fenced runtime quiescence", async (t) => {
+  let finishActivity;
+  let finishSelfMessage;
+  const activityFinished = new Promise((resolve) => { finishActivity = resolve; });
+  const selfMessageFinished = new Promise((resolve) => { finishSelfMessage = resolve; });
+  const handled = [];
+  const server = createServer(
+    createHarnessRequestHandler(behaviour(async (context) => {
+      handled.push(context.message.payload.type);
+      if (context.message.payload.type === "start") {
+        context.activity.start(async ({ send }) => {
+          await activityFinished;
+          send({ type: "completed" });
+        });
+      } else if (context.message.payload.type === "completed") {
+        await selfMessageFinished;
+      }
+    })),
+  );
+  await listen(server);
+  t.after(() => finishActivity());
+  t.after(() => finishSelfMessage());
+  t.after(() => close(server));
+
+  const messageResponse = await fetch(`${origin(server)}/__cantelop/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope({ type: "start" })),
+  });
+  assert.equal(messageResponse.status, 204);
+  assert.equal(
+    messageResponse.headers.get("X-Cantelop-SDK-Session-Generation"),
+    "1",
+  );
+
+  let quiescenceSettled = false;
+  const quiescence = fetch(
+    `${origin(server)}/__cantelop/v1/runtime/quiescence?minimum_generation=1`,
+  ).then((response) => {
+    quiescenceSettled = true;
+    return response;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(quiescenceSettled, false);
+
+  finishActivity();
+  await waitFor(() => handled.includes("completed"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(quiescenceSettled, false);
+
+  finishSelfMessage();
+  const quiescenceResponse = await quiescence;
+  assert.equal(quiescenceResponse.status, 200);
+  assert.deepEqual(await quiescenceResponse.json(), {
+    state: "quiescent",
+    generation: 2,
+  });
+  assert.deepEqual(handled, ["start", "completed"]);
+});
+
+test("runtime quiescence requires a bound Session and one valid generation", async (t) => {
+  const server = createServer(
+    createHarnessRequestHandler(behaviour(async () => undefined)),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const unbound = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/quiescence?minimum_generation=0`,
+  );
+  const malformed = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/quiescence?minimum_generation=one`,
+  );
+  assert.equal(unbound.status, 409);
+  assert.deepEqual(await unbound.json(), { error: { code: "session_unbound" } });
+  assert.equal(malformed.status, 400);
+  assert.deepEqual(await malformed.json(), {
+    error: { code: "invalid_quiescence_request" },
+  });
+});
+
 test("the mailbox records internal queue timing without exposing a queued state", async () => {
   const events = [];
   let releaseFirst;

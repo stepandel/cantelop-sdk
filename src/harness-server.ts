@@ -20,6 +20,7 @@ import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
 
 const MESSAGE_PATH = "/__cantelop/v1/messages";
+const QUIESCENCE_PATH = "/__cantelop/v1/runtime/quiescence";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
@@ -109,6 +110,8 @@ export function createHarnessRequestHandler<Input, Event = never>(
       request,
       response,
       receiveMessage,
+      quiescence,
+      () => boundSession,
       (session) => {
         if (boundSession !== undefined &&
             (boundSession.id !== session.id ||
@@ -167,10 +170,16 @@ async function handleRequest<Input, Event>(
     message: Readonly<{ id: string; payload: Input }>,
     session: SessionIdentity,
   ) => RuntimeDelivery,
+  quiescence: RuntimeQuiescence,
+  boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://harness.cantelop.internal");
+  if (url.pathname === QUIESCENCE_PATH) {
+    await handleQuiescenceRequest(request, response, url, quiescence, boundSession());
+    return;
+  }
   if (url.pathname !== MESSAGE_PATH || url.search !== "") {
     writeError(response, 404, "not_found");
     return;
@@ -224,6 +233,59 @@ async function handleRequest<Input, Event>(
       return;
     }
     writeError(response, 500, "message_failed");
+  }
+}
+
+async function handleQuiescenceRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  quiescence: RuntimeQuiescence,
+  session: SessionIdentity | undefined,
+): Promise<void> {
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    writeError(response, 405, "method_not_allowed");
+    return;
+  }
+  const values = url.searchParams.getAll("minimum_generation");
+  if ([...url.searchParams.keys()].some((key) => key !== "minimum_generation") ||
+      values.length !== 1 || !/^\d+$/.test(values[0] ?? "")) {
+    writeError(response, 400, "invalid_quiescence_request");
+    return;
+  }
+  const minimumGeneration = Number(values[0]);
+  if (!Number.isSafeInteger(minimumGeneration) || session === undefined) {
+    writeError(
+      response,
+      session === undefined ? 409 : 400,
+      session === undefined ? "session_unbound" : "invalid_quiescence_request",
+    );
+    return;
+  }
+
+  const controller = new AbortController();
+  const abort = () => controller.abort(new DOMException("Quiescence request closed", "AbortError"));
+  request.once("aborted", abort);
+  response.once("close", () => {
+    if (!response.writableEnded) abort();
+  });
+  try {
+    const snapshot = await quiescence.waitForQuiescence(
+      minimumGeneration,
+      controller.signal,
+    );
+    if (response.destroyed) return;
+    writeJSON(response, 200, {
+      state: "quiescent",
+      generation: snapshot.generation,
+    });
+  } catch (error) {
+    if (!controller.signal.aborted && !response.destroyed) {
+      writeError(response, 500, "quiescence_failed");
+    }
+  } finally {
+    request.removeListener("aborted", abort);
   }
 }
 
