@@ -7,6 +7,7 @@ import type {
 interface ActiveActivity<Message> {
   readonly controller: AbortController;
   readonly messages: Message[];
+  settled: boolean;
 }
 
 export class InMemoryActivity<Message> implements SessionActivity<Message> {
@@ -25,11 +26,16 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
     }
 
     const controller = new AbortController();
-    const activity: ActiveActivity<Message> = { controller, messages: [] };
+    const activity: ActiveActivity<Message> = { controller, messages: [], settled: false };
     this.current = activity;
     const context: SessionActivityContext<Message> = Object.freeze({
       signal: controller.signal,
-      send: (payload: Message) => activity.messages.push(payload),
+      send: (payload: Message) => {
+        if (activity.settled) {
+          throw new Error("Harness activity has already settled");
+        }
+        activity.messages.push(payload);
+      },
     });
     const result = Promise.resolve().then(() => work(context));
     void result.then(
@@ -57,6 +63,7 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
 
   private settle(activity: ActiveActivity<Message>): void {
     if (this.current !== activity) return;
+    activity.settled = true;
     this.current = undefined;
     for (const payload of activity.messages) this.sendMessage(payload);
     for (const resolve of this.idleWaiters) resolve();

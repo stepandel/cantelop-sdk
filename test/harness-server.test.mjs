@@ -112,6 +112,43 @@ test("runtime activity keeps the Session active while steer and cancel messages 
   assert.deepEqual(sequences, [1, 2, 3, 4]);
 });
 
+test("message and activity send capabilities close when their work settles", async (t) => {
+  let invocation;
+  let activity;
+  let finishActivity;
+  const activityFinished = new Promise((resolve) => { finishActivity = resolve; });
+  const server = createServer(
+    createHarnessRequestHandler(behaviour(async (context) => {
+      invocation = context;
+      context.activity.start(async (activityContext) => {
+        activity = activityContext;
+        await activityFinished;
+      });
+    })),
+  );
+  await listen(server);
+  t.after(() => finishActivity());
+  t.after(() => close(server));
+
+  const response = await fetch(`${origin(server)}/__cantelop/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope({ type: "start" })),
+  });
+  assert.equal(response.status, 204);
+  assert.throws(
+    () => invocation.send({ type: "late" }),
+    /message invocation has already settled/,
+  );
+
+  finishActivity();
+  await waitFor(() => invocation.activity.active === false);
+  assert.throws(
+    () => activity.send({ type: "late" }),
+    /activity has already settled/,
+  );
+});
+
 test("the mailbox records internal queue timing without exposing a queued state", async () => {
   const events = [];
   let releaseFirst;

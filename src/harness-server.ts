@@ -60,15 +60,27 @@ export function createHarnessRequestHandler<Input, Event = never>(
   const receiveMessage = (
     message: Readonly<{ id: string; payload: Input }>,
     session: SessionIdentity,
-  ): Promise<void> => mailbox.enqueue(message.id, async (sequence) =>
-    invokeBehaviour(behaviour, Object.freeze({
-      message: Object.freeze({ ...message, sequence }),
-      session,
-      env: options.env ?? process.env,
-      activity,
-      send: sendMessage,
-      emit: () => undefined,
-    })));
+  ): Promise<void> => mailbox.enqueue(message.id, async (sequence) => {
+    let invocationOpen = true;
+    const send = (payload: Input): void => {
+      if (!invocationOpen) {
+        throw new Error("Harness message invocation has already settled");
+      }
+      sendMessage(payload);
+    };
+    try {
+      await invokeBehaviour(behaviour, Object.freeze({
+        message: Object.freeze({ ...message, sequence }),
+        session,
+        env: options.env ?? process.env,
+        activity,
+        send,
+        emit: () => undefined,
+      }));
+    } finally {
+      invocationOpen = false;
+    }
+  });
 
   const sendMessage = (payload: Input): void => {
     if (boundSession === undefined) {
