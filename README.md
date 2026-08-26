@@ -368,7 +368,11 @@ application-defined failure message when the actor must observe them. If an
 application needs to correlate commands, it can carry its own ID in the message
 payload; the runtime activity itself has no ID. `send()` calls made inside the
 activity are buffered until it settles, then enter the mailbox in call order;
-actor-level `context.send()` enters the mailbox immediately.
+actor-level `context.send()` enters the mailbox immediately. These send
+capabilities are scoped to their work: `context.send()` fails after the current
+behaviour invocation settles, and an activity's `send()` fails after that
+activity settles. Detached work must either be awaited by the behaviour or run
+inside the managed activity to remain part of the tracked actor runtime.
 
 The native delivery response settles when that message's Session behaviour returns;
 it does not wait for the mailbox or managed activity to become idle. This lets
@@ -377,6 +381,19 @@ own the activity and accept later steer or cancel messages. Enqueue, handler
 start, handler completion, failure, deduplication, queue-wait time, and handler
 duration are emitted as secret-free structured runtime telemetry. Mailbox
 position remains an implementation detail rather than a public message state.
+
+The generated harness separately tracks runtime quiescence. Quiescence means
+that its mailbox is empty, no behaviour invocation is running, the managed
+activity is inactive, and all activity-generated messages have entered and
+drained from the mailbox. Each unique activation-local message advances a
+monotonic runtime generation; duplicate delivery of the same message ID keeps
+the original generation. Message responses include the generation they cover.
+
+Platform infrastructure can wait on the harness's private
+`GET /__cantelop/v1/runtime/quiescence?minimum_generation=<n>` endpoint. It
+responds only when the runtime is quiescent at or beyond that generation. This
+is a statement about SDK-managed actor work, not a Sandbox lifecycle decision:
+the SDK does not choose keep-alive, lease, or termination policy.
 
 The Session identity lets logic key provider state consistently, but it
 does not persist arbitrary in-memory objects. Module-level agents,

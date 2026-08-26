@@ -152,6 +152,8 @@ test("buildHarness emits one deployable native module and manifest", async (t) =
   assert.match(source, /bun_entry/);
   assert.match(source, /module_evaluated/);
   assert.match(source, /X-Cantelop-SDK-Message-Complete/);
+  assert.match(source, /X-Cantelop-SDK-Session-Generation/);
+  assert.match(source, /\/__cantelop\/v1\/runtime\/quiescence/);
   assert.match(source, /listener_ready/);
 });
 
@@ -198,6 +200,10 @@ test("a built harness receives messages on the local development port", async (t
   assert.equal(
     response.headers.get("X-Cantelop-SDK-Message-Complete"),
     messageId,
+  );
+  assert.equal(
+    response.headers.get("X-Cantelop-SDK-Session-Generation"),
+    "1",
   );
 });
 
