@@ -32,7 +32,6 @@ type MailboxObserver = (event: MailboxEvent) => void;
 
 export class InMemoryMailbox<Output> {
   private readonly results = new Map<string, Promise<Output>>();
-  private readonly idleWaiters = new Set<() => void>();
   private tail: Promise<void> = Promise.resolve();
   private pending = 0;
   private nextSequence = 1;
@@ -103,17 +102,9 @@ export class InMemoryMailbox<Output> {
     return this.pending === 0;
   }
 
-  waitForIdle(): Promise<void> {
-    if (this.isIdle) return Promise.resolve();
-    return new Promise((resolve) => this.idleWaiters.add(resolve));
-  }
-
   private settle(): void {
     this.pending -= 1;
     this.stateChanged();
-    if (!this.isIdle) return;
-    for (const resolve of this.idleWaiters) resolve();
-    this.idleWaiters.clear();
   }
 
   private observe(event: MailboxEvent): void {

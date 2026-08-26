@@ -12,7 +12,6 @@ interface ActiveActivity<Message> {
 
 export class InMemoryActivity<Message> implements SessionActivity<Message> {
   private current: ActiveActivity<Message> | undefined;
-  private readonly idleWaiters = new Set<() => void>();
 
   constructor(
     private readonly sendMessage: (payload: Message) => void,
@@ -60,18 +59,11 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
     return !this.active;
   }
 
-  waitForIdle(): Promise<void> {
-    if (this.isIdle) return Promise.resolve();
-    return new Promise((resolve) => this.idleWaiters.add(resolve));
-  }
-
   private settle(activity: ActiveActivity<Message>): void {
     if (this.current !== activity) return;
     activity.settled = true;
     this.current = undefined;
     for (const payload of activity.messages) this.sendMessage(payload);
     this.stateChanged();
-    for (const resolve of this.idleWaiters) resolve();
-    this.idleWaiters.clear();
   }
 }
