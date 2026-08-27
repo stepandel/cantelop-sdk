@@ -12,7 +12,7 @@ import {
   type Plugin,
 } from "esbuild";
 
-const MANIFEST_SCHEMA_VERSION = 1;
+const MANIFEST_SCHEMA_VERSION = 2;
 const MAIN_MODULE = "worker.mjs";
 const MANIFEST_FILE = "cantelop-api.json";
 const HARNESS_MAIN_MODULE = "harness.mjs";
@@ -22,7 +22,7 @@ const HARNESS_STARTUP_STATE_KEY = "dev.cantelop.sdk.harness-startup.v1";
 
 // The CLI checks this exact protocol before using the build module. Increment
 // it when an incompatible build/watch contract is introduced.
-export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 1;
+export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 2;
 
 export interface BuildApiOptions {
   readonly entrypoint: string;
@@ -35,7 +35,7 @@ export interface BuildLocalApiOptions extends BuildApiOptions {
 }
 
 export interface ApiArtifactManifest {
-  readonly schema_version: 1;
+  readonly schema_version: 2;
   readonly kind: "cantelop-edge-api";
   readonly main_module: "worker.mjs";
 }

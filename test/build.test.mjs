@@ -14,7 +14,7 @@ import {
 } from "../dist/build.js";
 
 test("the build module declares its CLI compatibility protocol", () => {
-  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 1);
+  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 2);
   assert.equal(typeof buildLocalApi, "function");
   assert.equal(typeof watchLocalProject, "function");
 });
@@ -38,7 +38,7 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
   const artifact = await buildApi({ entrypoint, outdir });
   assert.equal(artifact.mainModule, path.join(outdir, "worker.mjs"));
   assert.deepEqual(artifact.manifest, {
-    schema_version: 1,
+    schema_version: 2,
     kind: "cantelop-edge-api",
     main_module: "worker.mjs",
   });
