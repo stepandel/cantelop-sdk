@@ -24,14 +24,14 @@ cannot accept more input. Anthropic feeds prompts and prioritized steer commands
 into its live `SDKUserMessage` stream. Pi applies active steer directly to its
 Agent and keeps ordinary busy-time prompts in a Cantelop FIFO. All three
 propagate cancel through the Session activity's `AbortSignal`. The Session
-identity is propagated into the native harness, and direct client streaming is
+identity is propagated into the native Session runtime, and direct client streaming is
 configured at the VM.
 
 Each manifest targets an illustrative App slug. Create that App or change its
 `app` value before running `cantelop deploy`; generated App IDs are never stored
 in the example source.
 
-Run all API and harness type checks plus deployment bundle smoke checks from
+Run all API and Session runtime type checks plus deployment bundle smoke checks from
 the repository root:
 
 ```bash

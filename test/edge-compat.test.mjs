@@ -9,7 +9,7 @@ const repositoryRoot = path.resolve(
   "..",
 );
 
-test("the Edge API modules have no native harness dependencies", async () => {
+test("the Edge API modules have no native Session runtime dependencies", async () => {
   const files = [
     "api.js",
     "edge.js",
@@ -23,11 +23,11 @@ test("the Edge API modules have no native harness dependencies", async () => {
     const source = await readFile(path.join(repositoryRoot, "dist", file), "utf8");
     assert.doesNotMatch(source, /(?:from|import\s*\()\s*["']node:/);
     assert.doesNotMatch(source, /\b(?:Buffer|process)\b/);
-    assert.doesNotMatch(source, /["']\.\/harness\.js["']/);
+    assert.doesNotMatch(source, /["']\.\/runtime\.js["']/);
   }
 });
 
-test("only native Session behaviour exposes event emission", async () => {
+test("only native Session behaviour exposes event output", async () => {
   const edgeContract = await readFile(
     path.join(repositoryRoot, "dist/resources.d.ts"),
     "utf8",
@@ -36,15 +36,16 @@ test("only native Session behaviour exposes event emission", async () => {
     path.join(repositoryRoot, "dist/session.d.ts"),
     "utf8",
   );
-  const harnessContract = await readFile(
-    path.join(repositoryRoot, "dist/harness.d.ts"),
+  const runtimeContract = await readFile(
+    path.join(repositoryRoot, "dist/runtime.d.ts"),
     "utf8",
   );
 
-  assert.doesNotMatch(edgeContract, /\bemit\(event:/);
-  assert.match(sessionContract, /\bemit\(event: Event\): void/);
-  assert.doesNotMatch(harnessContract, /\bemit\(event:/);
-  assert.doesNotMatch(harnessContract, /defineSessionBehaviour/);
+  assert.doesNotMatch(edgeContract, /\bSessionOutput\b/);
+  assert.match(sessionContract, /interface SessionOutput<Event>/);
+  assert.match(sessionContract, /send\(event: Event\): Promise<void>/);
+  assert.doesNotMatch(runtimeContract, /\bSessionOutput\b/);
+  assert.doesNotMatch(runtimeContract, /defineSessionBehaviour/);
 });
 
 test("provider API entrypoints do not import native dependencies", async () => {
@@ -64,7 +65,7 @@ test("provider API entrypoints do not import native dependencies", async () => {
       source,
       /@(?:anthropic-ai|earendil-works|openai)\//,
     );
-    assert.doesNotMatch(source, /@cantelop\/sdk\/harness/);
+    assert.doesNotMatch(source, /@cantelop\/sdk\/runtime/);
     assert.doesNotMatch(source, /\b(?:Buffer|process)\b/);
     assert.doesNotMatch(source, /from\s+["']\.\.\//);
     assert.doesNotMatch(source, /\.events\(\)/);

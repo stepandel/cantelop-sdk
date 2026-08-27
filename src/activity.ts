@@ -1,7 +1,7 @@
 import type {
-  SessionActivity,
   SessionActivityContext,
   SessionActivityFunction,
+  SessionOutput,
 } from "./session.js";
 
 interface ActiveActivity<Message> {
@@ -10,11 +10,12 @@ interface ActiveActivity<Message> {
   settled: boolean;
 }
 
-export class InMemoryActivity<Message> implements SessionActivity<Message> {
+export class InMemoryActivity<Message, Event> {
   private current: ActiveActivity<Message> | undefined;
 
   constructor(
     private readonly sendMessage: (payload: Message) => void,
+    private readonly sendOutput: (messageId: string, event: Event) => Promise<void>,
     private readonly stateChanged: () => void = () => undefined,
   ) {}
 
@@ -22,20 +23,32 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
     return this.current !== undefined;
   }
 
-  start(work: SessionActivityFunction<Message>): void {
+  start(
+    messageId: string,
+    work: SessionActivityFunction<Message, Event>,
+  ): void {
     if (this.active) {
-      throw new Error("Harness activity is already active");
+      throw new Error("Session runtime activity is already active");
     }
 
     const controller = new AbortController();
     const activity: ActiveActivity<Message> = { controller, messages: [], settled: false };
     this.current = activity;
     this.stateChanged();
-    const context: SessionActivityContext<Message> = Object.freeze({
+    const output: SessionOutput<Event> = Object.freeze({
+      send: async (event: Event) => {
+        if (activity.settled) {
+          throw new Error("Session runtime activity has already settled");
+        }
+        await this.sendOutput(messageId, event);
+      },
+    });
+    const context: SessionActivityContext<Message, Event> = Object.freeze({
       signal: controller.signal,
+      output,
       send: (payload: Message) => {
         if (activity.settled) {
-          throw new Error("Harness activity has already settled");
+          throw new Error("Session runtime activity has already settled");
         }
         activity.messages.push(payload);
       },
@@ -50,7 +63,7 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
   cancel(reason?: unknown): boolean {
     if (this.current === undefined) return false;
     this.current.controller.abort(
-      reason ?? new DOMException("Harness activity cancelled", "AbortError"),
+      reason ?? new DOMException("Session runtime activity cancelled", "AbortError"),
     );
     return true;
   }

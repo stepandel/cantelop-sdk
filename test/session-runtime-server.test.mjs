@@ -3,9 +3,9 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import test from "node:test";
 import {
-  createHarnessRequestHandler,
-  serveHarness,
-} from "../dist/harness.js";
+  createSessionRuntimeHandler,
+  serveSessionRuntime,
+} from "../dist/runtime.js";
 import { InMemoryMailbox } from "../dist/mailbox.js";
 import { defineSessionBehaviour } from "../dist/session.js";
 
@@ -15,7 +15,7 @@ const behaviour = defineSessionBehaviour;
 test("the native adapter receives the versioned message protocol", async (t) => {
   let received;
   const server = createServer(
-    createHarnessRequestHandler(behaviour(
+    createSessionRuntimeHandler(behaviour(
       async (context) => {
         received = context;
         assert.equal(String(context.message.payload.prompt).toUpperCase(), "HELLO");
@@ -54,6 +54,62 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.equal(Object.isFrozen(received.message), true);
   assert.equal(Object.isFrozen(received.session), true);
   assert.equal(received.env.MODEL, "test-model");
+
+  const snapshot = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/events?after=0&wait=0`,
+  );
+  assert.equal(snapshot.status, 200);
+  assert.deepEqual(await snapshot.json(), { events: [] });
+});
+
+test("the platform drains ordered Session output events", async (t) => {
+  let beginOutput;
+  const outputStarted = new Promise((resolve) => { beginOutput = resolve; });
+  const server = createServer(
+    createSessionRuntimeHandler(behaviour(async ({ output }) => {
+      beginOutput();
+      await output.send({ type: "text_delta", delta: "hello" });
+      await output.send({ type: "done" });
+    })),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope({ prompt: "hello" })),
+  });
+  await outputStarted;
+  const first = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/events?after=0`,
+  );
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), {
+    events: [{
+      cursor: 1,
+      message_id: messageId,
+      event: { type: "text_delta", delta: "hello" },
+    }],
+  });
+
+  const second = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/events?after=1`,
+  );
+  assert.equal(second.status, 200);
+  assert.deepEqual(await second.json(), {
+    events: [{
+      cursor: 2,
+      message_id: messageId,
+      event: { type: "done" },
+    }],
+  });
+  const acknowledged = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/events?after=2&wait=0`,
+  );
+  assert.equal(acknowledged.status, 200);
+  assert.deepEqual(await acknowledged.json(), { events: [] });
+  assert.equal((await delivery).status, 204);
 });
 
 test("runtime activity keeps the Session active while steer and cancel messages run", async (t) => {
@@ -61,7 +117,7 @@ test("runtime activity keeps the Session active while steer and cancel messages 
   const sequences = [];
   let activity;
   const server = createServer(
-    createHarnessRequestHandler(behaviour(async (context) => {
+    createSessionRuntimeHandler(behaviour(async (context) => {
       const { payload } = context.message;
       activity = context.activity;
       handled.push(payload.type);
@@ -119,7 +175,7 @@ test("message and activity send capabilities close when their work settles", asy
   let finishActivity;
   const activityFinished = new Promise((resolve) => { finishActivity = resolve; });
   const server = createServer(
-    createHarnessRequestHandler(behaviour(async (context) => {
+    createSessionRuntimeHandler(behaviour(async (context) => {
       invocation = context;
       context.activity.start(async (activityContext) => {
         activity = activityContext;
@@ -141,11 +197,19 @@ test("message and activity send capabilities close when their work settles", asy
     () => invocation.send({ type: "late" }),
     /message invocation has already settled/,
   );
+  await assert.rejects(
+    invocation.output.send({ type: "late" }),
+    /message invocation has already settled/,
+  );
 
   finishActivity();
   await waitFor(() => invocation.activity.active === false);
   assert.throws(
     () => activity.send({ type: "late" }),
+    /activity has already settled/,
+  );
+  await assert.rejects(
+    activity.output.send({ type: "late" }),
     /activity has already settled/,
   );
 });
@@ -157,7 +221,7 @@ test("the platform can wait for generation-fenced runtime quiescence", async (t)
   const selfMessageFinished = new Promise((resolve) => { finishSelfMessage = resolve; });
   const handled = [];
   const server = createServer(
-    createHarnessRequestHandler(behaviour(async (context) => {
+    createSessionRuntimeHandler(behaviour(async (context) => {
       handled.push(context.message.payload.type);
       if (context.message.payload.type === "start") {
         context.activity.start(async ({ send }) => {
@@ -212,7 +276,7 @@ test("the platform can wait for generation-fenced runtime quiescence", async (t)
 
 test("runtime quiescence requires a bound Session and one valid generation", async (t) => {
   const server = createServer(
-    createHarnessRequestHandler(behaviour(async () => undefined)),
+    createSessionRuntimeHandler(behaviour(async () => undefined)),
   );
   await listen(server);
   t.after(() => close(server));
@@ -259,12 +323,12 @@ test("the mailbox records internal queue timing without exposing a queued state"
   assert.equal(Number.isInteger(events[4].handlingMicroseconds), true);
 });
 
-test("one harness runtime processes its Session mailbox in FIFO order", async (t) => {
+test("one Session runtime processes its Session mailbox in FIFO order", async (t) => {
   const started = [];
   let releaseFirst;
   const firstReleased = new Promise((resolve) => { releaseFirst = resolve; });
   const server = createServer(
-    createHarnessRequestHandler({
+    createSessionRuntimeHandler({
       async receive(context) {
         started.push(context.message.payload.type);
         if (context.message.payload.type === "message") await firstReleased;
@@ -302,12 +366,12 @@ test("one harness runtime processes its Session mailbox in FIFO order", async (t
   assert.deepEqual(started, ["message", "steer"]);
 });
 
-test("one harness runtime deduplicates a message ID for its activation", async (t) => {
+test("one Session runtime deduplicates a message ID for its activation", async (t) => {
   let calls = 0;
   let release;
   const released = new Promise((resolve) => { release = resolve; });
   const server = createServer(
-    createHarnessRequestHandler(behaviour(async () => {
+    createSessionRuntimeHandler(behaviour(async () => {
       calls += 1;
       await released;
     })),
@@ -340,9 +404,9 @@ test("one harness runtime deduplicates a message ID for its activation", async (
   assert.equal(calls, 1);
 });
 
-test("a harness server is bound to one Session identity", async (t) => {
+test("a Session runtime server is bound to one Session identity", async (t) => {
   const server = createServer(
-    createHarnessRequestHandler(behaviour(async () => ({ ok: true }))),
+    createSessionRuntimeHandler(behaviour(async () => ({ ok: true }))),
   );
   await listen(server);
   t.after(() => close(server));
@@ -366,7 +430,7 @@ test("a harness server is bound to one Session identity", async (t) => {
 
 test("the native adapter marks a failed user message as settled", async (t) => {
   const server = createServer(
-    createHarnessRequestHandler(behaviour(async () => {
+    createSessionRuntimeHandler(behaviour(async () => {
       throw new Error("user message failed");
     })),
   );
@@ -392,7 +456,7 @@ test("the native adapter marks a failed user message as settled", async (t) => {
 test("the native adapter rejects malformed protocol requests", async (t) => {
   let calls = 0;
   const server = createServer(
-    createHarnessRequestHandler(behaviour(async () => {
+    createSessionRuntimeHandler(behaviour(async () => {
       calls += 1;
     })),
   );
@@ -425,12 +489,12 @@ test("the native adapter rejects malformed protocol requests", async (t) => {
   assert.equal(calls, 0);
 });
 
-test("serveHarness requires the platform-owned internal port", () => {
+test("serveSessionRuntime requires the platform-owned internal port", () => {
   const previous = process.env.CANTELOP_INTERNAL_PORT;
   delete process.env.CANTELOP_INTERNAL_PORT;
   try {
     assert.throws(
-      () => serveHarness(behaviour(async () => undefined)),
+      () => serveSessionRuntime(behaviour(async () => undefined)),
       /CANTELOP_INTERNAL_PORT is not configured/,
     );
   } finally {
@@ -439,7 +503,7 @@ test("serveHarness requires the platform-owned internal port", () => {
   }
 });
 
-test("serveHarness exposes an explicit listener-ready signal", async (t) => {
+test("serveSessionRuntime exposes an explicit listener-ready signal", async (t) => {
   const previous = process.env.CANTELOP_INTERNAL_PORT;
   const reservation = createServer();
   await listen(reservation);
@@ -450,18 +514,18 @@ test("serveHarness exposes an explicit listener-ready signal", async (t) => {
   process.env.CANTELOP_INTERNAL_PORT = String(port);
 
   try {
-    const harness = serveHarness(behaviour(async () => undefined));
-    t.after(() => harness.close());
-    await harness.ready;
-    assert.equal(harness.server.listening, true);
-    assert.equal(harness.port, port);
+    const runtime = serveSessionRuntime(behaviour(async () => undefined));
+    t.after(() => runtime.close());
+    await runtime.ready;
+    assert.equal(runtime.server.listening, true);
+    assert.equal(runtime.port, port);
   } finally {
     if (previous === undefined) delete process.env.CANTELOP_INTERNAL_PORT;
     else process.env.CANTELOP_INTERNAL_PORT = previous;
   }
 });
 
-test("serveHarness adopts the platform-prebound listener", async () => {
+test("serveSessionRuntime adopts the platform-prebound listener", async () => {
   const reservation = createServer();
   await listen(reservation);
   const address = reservation.address();
@@ -473,9 +537,9 @@ test("serveHarness adopts the platform-prebound listener", async () => {
     "--input-type=module",
     "--eval",
     [
-      'import { serveHarness } from "./dist/harness.js";',
-      "const harness = serveHarness({ receive: async () => undefined });",
-      "await harness.ready;",
+      'import { serveSessionRuntime } from "./dist/runtime.js";',
+      "const runtime = serveSessionRuntime({ receive: async () => undefined });",
+      "await runtime.ready;",
       'process.stdout.write("READY\\n");',
       "setTimeout(() => {}, 30_000);",
     ].join("\n"),
@@ -511,14 +575,14 @@ test("serveHarness adopts the platform-prebound listener", async () => {
   }
 });
 
-test("serveHarness rejects an invalid inherited listener descriptor", () => {
+test("serveSessionRuntime rejects an invalid inherited listener descriptor", () => {
   const previousPort = process.env.CANTELOP_INTERNAL_PORT;
   const previousFD = process.env.CANTELOP_INTERNAL_FD;
   process.env.CANTELOP_INTERNAL_PORT = "3000";
   process.env.CANTELOP_INTERNAL_FD = "socket";
   try {
     assert.throws(
-      () => serveHarness(behaviour(async () => undefined)),
+      () => serveSessionRuntime(behaviour(async () => undefined)),
       /CANTELOP_INTERNAL_FD must be an inherited file descriptor/,
     );
   } finally {

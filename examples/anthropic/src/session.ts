@@ -39,7 +39,7 @@ function startPrompt(context: Context, prompt: string): void {
   input = new ClaudeInput();
   input.send(prompt);
 
-  context.activity.start(async ({ signal }) => {
+  context.activity.start(async ({ signal, output }) => {
     const abortController = new AbortController();
     const currentInput = input!;
     const abort = () => {
@@ -68,9 +68,9 @@ function startPrompt(context: Context, prompt: string): void {
           message.event.type === "content_block_delta" &&
           message.event.delta.type === "text_delta"
         ) {
-          context.emit({ type: "text_delta", delta: message.event.delta.text });
+          await output.send({ type: "text_delta", delta: message.event.delta.text });
         } else if (message.type === "result" && "result" in message) {
-          context.emit({ type: "done", answer: message.result });
+          await output.send({ type: "done", answer: message.result });
         }
       }
       if (!signal.aborted) {

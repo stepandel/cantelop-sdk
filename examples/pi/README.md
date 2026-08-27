@@ -1,4 +1,4 @@
-# Pi harness example
+# Pi Session runtime example
 
 This example has two deployment artifacts:
 
@@ -8,7 +8,7 @@ This example has two deployment artifacts:
 
 Cantelop injects the current App when it creates the API. The Edge API manages
 Workspaces and reusable Sessions without an API key; provider credentials and
-Pi configuration are supplied only to the harness VM.
+Pi configuration are supplied only to the Session runtime.
 
 The API exposes `GET /health`, `POST /chat`, `POST /steer`, and `POST /cancel`.
 Chat requires `workspaceId`, `keepAliveSeconds`, and `prompt`, and accepts an

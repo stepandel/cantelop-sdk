@@ -1,13 +1,13 @@
 /// <reference types="node" />
 
-const STARTUP_STATE = Symbol.for("dev.cantelop.sdk.harness-startup.v1");
+const STARTUP_STATE = Symbol.for("dev.cantelop.sdk.session-runtime-startup.v1");
 
 interface StartupState {
   readonly started: bigint;
   readonly seen: Set<string>;
 }
 
-export interface HarnessMessageLifecycleEvent {
+export interface SessionRuntimeMessageLifecycleEvent {
   readonly type: "deduplicated" | "enqueued" | "failed" | "handled" | "handling";
   readonly messageId: string;
   readonly sequence?: number;
@@ -17,21 +17,21 @@ export interface HarnessMessageLifecycleEvent {
 }
 
 /** Records a bounded, secret-free stage when the deploy-generated bootstrap is active. */
-export function markHarnessStartup(stage: "server_created" | "listener_ready"): void {
+export function markSessionRuntimeStartup(stage: "server_created" | "listener_ready"): void {
   const state = (globalThis as Record<symbol, unknown>)[STARTUP_STATE];
   if (!isStartupState(state) || state.seen.has(stage)) return;
   state.seen.add(stage);
   const now = process.hrtime.bigint();
   process.stderr.write(`${JSON.stringify({
     component: "cantelop.sdk",
-    event: "harness_startup_stage",
+    event: "session_runtime_startup_stage",
     stage,
     elapsed_us: Number((now - state.started) / 1_000n),
   })}\n`);
 }
 
 /** Emits secret-free message telemetry when running from a deploy-generated bootstrap. */
-export function markMessageLifecycle(event: HarnessMessageLifecycleEvent): void {
+export function markMessageLifecycle(event: SessionRuntimeMessageLifecycleEvent): void {
   const state = (globalThis as Record<symbol, unknown>)[STARTUP_STATE];
   if (!isStartupState(state)) return;
   process.stderr.write(`${JSON.stringify({

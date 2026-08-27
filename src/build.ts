@@ -15,14 +15,14 @@ import {
 const MANIFEST_SCHEMA_VERSION = 2;
 const MAIN_MODULE = "worker.mjs";
 const MANIFEST_FILE = "cantelop-api.json";
-const HARNESS_MAIN_MODULE = "harness.mjs";
+const SESSION_RUNTIME_MAIN_MODULE = "session-runtime.mjs";
 const EDGE_ADAPTER_MODULE = fileURLToPath(new URL("./edge.js", import.meta.url));
-const HARNESS_ADAPTER_MODULE = fileURLToPath(new URL("./harness.js", import.meta.url));
-const HARNESS_STARTUP_STATE_KEY = "dev.cantelop.sdk.harness-startup.v1";
+const SESSION_RUNTIME_ADAPTER_MODULE = fileURLToPath(new URL("./runtime.js", import.meta.url));
+const SESSION_RUNTIME_STARTUP_STATE_KEY = "dev.cantelop.sdk.session-runtime-startup.v1";
 
 // The CLI checks this exact protocol before using the build module. Increment
 // it when an incompatible build/watch contract is introduced.
-export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 2;
+export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 3;
 
 export interface BuildApiOptions {
   readonly entrypoint: string;
@@ -47,17 +47,17 @@ export interface ApiArtifact {
   readonly manifest: ApiArtifactManifest;
 }
 
-export interface BuildHarnessOptions {
+export interface BuildSessionRuntimeOptions {
   readonly entrypoint: string;
   readonly outdir: string;
 }
 
-export interface HarnessArtifact {
+export interface SessionRuntimeArtifact {
   readonly directory: string;
   readonly mainModule: string;
 }
 
-export type LocalBuildComponent = "api" | "harness";
+export type LocalBuildComponent = "api" | "session-runtime";
 
 export interface LocalBuildEvent {
   readonly component: LocalBuildComponent;
@@ -67,8 +67,8 @@ export interface LocalBuildEvent {
 export interface WatchLocalProjectOptions {
   readonly apiEntrypoint: string;
   readonly apiOutdir: string;
-  readonly harnessEntrypoint: string;
-  readonly harnessOutdir: string;
+  readonly sessionEntrypoint: string;
+  readonly sessionRuntimeOutdir: string;
   readonly runtimeOrigin: string;
   readonly onBuild: (event: LocalBuildEvent) => void;
 }
@@ -196,24 +196,24 @@ function localRuntimeOrigin(value: string): string {
 }
 
 /**
- * Bundles a native SDK harness into one Bun-loadable module. Doing this at
+ * Bundles a Session runtime into one Bun-loadable module. Doing this at
  * deploy time removes node_modules graph discovery and TypeScript transforms
  * from the VM's request-critical startup path.
  */
-export async function buildHarness(
-  options: BuildHarnessOptions,
-): Promise<HarnessArtifact> {
+export async function buildSessionRuntime(
+  options: BuildSessionRuntimeOptions,
+): Promise<SessionRuntimeArtifact> {
   const entrypoint = path.resolve(options.entrypoint);
   const outdir = path.resolve(options.outdir);
   if (entrypoint === outdir || path.dirname(entrypoint) === outdir) {
     throw new TypeError(
-      "harness artifact output must not contain the source entrypoint",
+      "Session runtime artifact output must not contain the source entrypoint",
     );
   }
   await mkdir(outdir, { recursive: true });
 
-  const mainModule = path.join(outdir, HARNESS_MAIN_MODULE);
-  await build(harnessBuildOptions(entrypoint, mainModule));
+  const mainModule = path.join(outdir, SESSION_RUNTIME_MAIN_MODULE);
+  await build(sessionRuntimeBuildOptions(entrypoint, mainModule));
 
   return Object.freeze({
     directory: outdir,
@@ -221,29 +221,29 @@ export async function buildHarness(
   });
 }
 
-function harnessBuildOptions(entrypoint: string, mainModule: string): BuildOptions {
+function sessionRuntimeBuildOptions(entrypoint: string, mainModule: string): BuildOptions {
   return {
     stdin: {
       contents: [
-        `const key = Symbol.for(${JSON.stringify(HARNESS_STARTUP_STATE_KEY)});`,
+        `const key = Symbol.for(${JSON.stringify(SESSION_RUNTIME_STARTUP_STATE_KEY)});`,
         "const state = { started: process.hrtime.bigint(), seen: new Set() };",
         "Object.defineProperty(globalThis, key, { value: state, configurable: false });",
         "const mark = (stage) => {",
         "  if (state.seen.has(stage)) return;",
         "  state.seen.add(stage);",
         "  const now = process.hrtime.bigint();",
-        "  process.stderr.write(`${JSON.stringify({ component: \"cantelop.sdk\", event: \"harness_startup_stage\", stage, elapsed_us: Number((now - state.started) / 1000n) })}\\n`);",
+        "  process.stderr.write(`${JSON.stringify({ component: \"cantelop.sdk\", event: \"session_runtime_startup_stage\", stage, elapsed_us: Number((now - state.started) / 1000n) })}\\n`);",
         "};",
         "mark(\"bun_entry\");",
-        `const { serveHarness } = await import(${JSON.stringify(HARNESS_ADAPTER_MODULE)});`,
+        `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
         `const { default: definition } = await import(${JSON.stringify(entrypoint)});`,
         "mark(\"module_evaluated\");",
-        "const harness = serveHarness(definition);",
-        "await harness.ready;",
+        "const sessionRuntime = serveSessionRuntime(definition);",
+        "await sessionRuntime.ready;",
       ].join("\n"),
       loader: "ts",
       resolveDir: path.dirname(entrypoint),
-      sourcefile: "cantelop-harness-bootstrap.ts",
+      sourcefile: "cantelop-session-runtime-bootstrap.ts",
     },
     bundle: true,
     format: "esm",
@@ -264,11 +264,11 @@ export async function watchLocalProject(
   const runtimeOrigin = localRuntimeOrigin(options.runtimeOrigin);
   const apiEntrypoint = path.resolve(options.apiEntrypoint);
   const apiOutdir = path.resolve(options.apiOutdir);
-  const harnessEntrypoint = path.resolve(options.harnessEntrypoint);
-  const harnessOutdir = path.resolve(options.harnessOutdir);
+  const sessionEntrypoint = path.resolve(options.sessionEntrypoint);
+  const sessionRuntimeOutdir = path.resolve(options.sessionRuntimeOutdir);
   await Promise.all([
     mkdir(apiOutdir, { recursive: true }),
-    mkdir(harnessOutdir, { recursive: true }),
+    mkdir(sessionRuntimeOutdir, { recursive: true }),
   ]);
 
   const contexts: BuildContext[] = [];
@@ -287,10 +287,10 @@ export async function watchLocalProject(
     );
     contexts.push(
       await watchedContext(
-        "harness",
-        harnessBuildOptions(
-          harnessEntrypoint,
-          path.join(harnessOutdir, HARNESS_MAIN_MODULE),
+        "session-runtime",
+        sessionRuntimeBuildOptions(
+          sessionEntrypoint,
+          path.join(sessionRuntimeOutdir, SESSION_RUNTIME_MAIN_MODULE),
         ),
         options.onBuild,
       ),

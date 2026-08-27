@@ -8,13 +8,13 @@ import test from "node:test";
 import {
   CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
   buildApi,
-  buildHarness,
+  buildSessionRuntime,
   buildLocalApi,
   watchLocalProject,
 } from "../dist/build.js";
 
 test("the build module declares its CLI compatibility protocol", () => {
-  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 2);
+  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 3);
   assert.equal(typeof buildLocalApi, "function");
   assert.equal(typeof watchLocalProject, "function");
 });
@@ -116,8 +116,8 @@ test("buildLocalApi rejects non-loopback runtime origins", async () => {
   );
 });
 
-test("buildHarness emits one deployable native module", async (t) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-harness-build-"));
+test("buildSessionRuntime emits one deployable native module", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-session-runtime-build-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const entrypoint = path.join(directory, "server.ts");
   const dependency = path.join(directory, "dependency.ts");
@@ -132,27 +132,28 @@ test("buildHarness emits one deployable native module", async (t) => {
     ].join("\n"),
   );
 
-  const artifact = await buildHarness({ entrypoint, outdir });
+  const artifact = await buildSessionRuntime({ entrypoint, outdir });
   assert.equal(artifact.directory, outdir);
-  assert.equal(artifact.mainModule, path.join(outdir, "harness.mjs"));
+  assert.equal(artifact.mainModule, path.join(outdir, "session-runtime.mjs"));
 
   const source = await readFile(artifact.mainModule, "utf8");
   assert.match(source, /ready/);
   assert.doesNotMatch(source, /from ["']\.\/dependency\.ts["']/);
-  assert.match(source, /harness_startup_stage/);
+  assert.match(source, /session_runtime_startup_stage/);
   assert.match(source, /message_lifecycle/);
   assert.match(source, /bun_entry/);
   assert.match(source, /module_evaluated/);
   assert.match(source, /X-Cantelop-SDK-Message-Complete/);
   assert.match(source, /X-Cantelop-SDK-Session-Generation/);
   assert.match(source, /\/__cantelop\/v1\/runtime\/quiescence/);
+  assert.match(source, /\/__cantelop\/v1\/runtime\/events/);
   assert.match(source, /listener_ready/);
 });
 
-test("a built harness receives messages on the local development port", async (t) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-harness-runtime-"));
+test("a built Session runtime receives messages on the local development port", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-session-runtime-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const entrypoint = path.join(directory, "harness.ts");
+  const entrypoint = path.join(directory, "session.ts");
   const outdir = path.join(directory, "artifact");
   await writeFile(
     entrypoint,
@@ -164,7 +165,7 @@ test("a built harness receives messages on the local development port", async (t
     ].join("\n"),
   );
 
-  const artifact = await buildHarness({ entrypoint, outdir });
+  const artifact = await buildSessionRuntime({ entrypoint, outdir });
   const port = await reservePort();
   const child = spawn(process.execPath, [artifact.mainModule], {
     env: {
@@ -182,7 +183,7 @@ test("a built harness receives messages on the local development port", async (t
   t.after(async () => stopChild(child));
 
   const messageId = "msg_0123456789abcdef0123456789abcdef";
-  const response = await waitForHarness(
+  const response = await waitForSessionRuntime(
     `http://127.0.0.1:${port}/__cantelop/v1/messages`,
     child,
     () => childError,
@@ -203,32 +204,32 @@ test("watchLocalProject incrementally rebuilds changed components", async (t) =>
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-watch-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const apiEntrypoint = path.join(directory, "api.ts");
-  const harnessEntrypoint = path.join(directory, "harness.ts");
+  const sessionEntrypoint = path.join(directory, "session.ts");
   const apiOutdir = path.join(directory, "api-artifact");
-  const harnessOutdir = path.join(directory, "harness-artifact");
+  const sessionRuntimeOutdir = path.join(directory, "session-runtime-artifact");
   const sdkApi = new URL("../dist/api.js", import.meta.url).pathname;
   await writeFile(
     apiEntrypoint,
     `import { defineApi } from ${JSON.stringify(sdkApi)}; export default defineApi(({ router }) => router.route("GET", "/", () => Response.json({ value: "one" })));`,
   );
-  await writeFile(harnessEntrypoint, 'export default async () => "harness-one";\n');
+  await writeFile(sessionEntrypoint, 'export default async () => "runtime-one";\n');
 
   const events = [];
   const watcher = await watchLocalProject({
     apiEntrypoint,
     apiOutdir,
-    harnessEntrypoint,
-    harnessOutdir,
+    sessionEntrypoint,
+    sessionRuntimeOutdir,
     runtimeOrigin: "http://127.0.0.1:43123",
     onBuild: (event) => events.push(event),
   });
   t.after(() => watcher.dispose());
   assert.match(await readFile(path.join(apiOutdir, "worker.mjs"), "utf8"), /one/);
-  assert.match(await readFile(path.join(harnessOutdir, "harness.mjs"), "utf8"), /harness-one/);
+  assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-one/);
 
-  await writeFile(harnessEntrypoint, 'export default async () => "harness-two";\n');
-  await waitFor(() => events.some((event) => event.component === "harness"));
-  assert.match(await readFile(path.join(harnessOutdir, "harness.mjs"), "utf8"), /harness-two/);
+  await writeFile(sessionEntrypoint, 'export default async () => "runtime-two";\n');
+  await waitFor(() => events.some((event) => event.component === "session-runtime"));
+  assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-two/);
 });
 
 async function waitFor(predicate) {
@@ -253,7 +254,7 @@ async function reservePort() {
   return address.port;
 }
 
-async function waitForHarness(url, child, childError) {
+async function waitForSessionRuntime(url, child, childError) {
   const deadline = Date.now() + 5_000;
   let lastError;
   while (Date.now() < deadline) {
@@ -277,13 +278,13 @@ async function waitForHarness(url, child, childError) {
       lastError = error;
       if (child.exitCode !== null) {
         throw new Error(
-          `built harness exited with ${child.exitCode} before listening: ${childError()}`,
+          `built Session runtime exited with ${child.exitCode} before listening: ${childError()}`,
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
-  throw lastError ?? new Error("built harness did not begin listening");
+  throw lastError ?? new Error("built Session runtime did not begin listening");
 }
 
 async function stopChild(child) {

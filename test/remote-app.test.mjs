@@ -206,6 +206,61 @@ test("Session termination targets the logical Session", async () => {
   );
 });
 
+test("Session events adapt an App route to the private streaming endpoint", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    fetch: async (request) => {
+      forwarded = request;
+      return new Response("id: 4\ndata: {}\n\n", {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+  });
+  const session = app.sessions.open({
+    id: namedSessionId,
+    workspaceId,
+    keepAliveSeconds: 300,
+  });
+  const response = await session.events(new Request("https://agent.example/events?after=3", {
+    headers: { "Last-Event-ID": "3" },
+  }));
+  assert.equal(await response.text(), "id: 4\ndata: {}\n\n");
+  assert.equal(
+    forwarded.url,
+    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}/events?workspace_id=${workspaceId}&after=3`,
+  );
+  assert.equal(forwarded.headers.get("Accept"), "text/event-stream");
+  assert.equal(forwarded.headers.get("Last-Event-ID"), null);
+});
+
+test("Session events preserve the authenticated WebSocket handshake", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    fetch: async (request) => {
+      forwarded = request;
+      return new Response();
+    },
+  });
+  const session = app.sessions.open({
+    id: namedSessionId,
+    workspaceId,
+    keepAliveSeconds: 300,
+  });
+  await session.events(new Request("https://agent.example/events", {
+    headers: {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      Origin: "https://agent.example",
+      "Sec-WebSocket-Protocol": "cantelop.events.v1",
+    },
+  }));
+  assert.equal(forwarded.headers.get("Upgrade"), "websocket");
+  assert.equal(forwarded.headers.get("Connection"), "Upgrade");
+  assert.equal(forwarded.headers.get("Origin"), "https://agent.example");
+  assert.equal(forwarded.headers.get("Sec-WebSocket-Protocol"), "cantelop.events.v1");
+  assert.equal(forwarded.headers.get("Accept"), null);
+});
+
 test("resource configuration is validated before transport", async () => {
   const app = createRemoteApp();
   await assert.rejects(app.workspaces.create({ slug: "Bad Slug" }), /Workspace slug/);
