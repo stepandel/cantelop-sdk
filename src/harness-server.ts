@@ -9,9 +9,12 @@ import {
 import { randomUUID } from "node:crypto";
 
 import type {
+  SessionActivity,
+  SessionActivityFunction,
   SessionContext,
   SessionEnvironment,
   SessionBehaviour,
+  SessionOutput,
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
 import { markHarnessStartup, markMessageLifecycle } from "./harness-startup.js";
@@ -30,6 +33,11 @@ const SESSION_GENERATION_HEADER = "X-Cantelop-SDK-Session-Generation";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
+const unavailableOutput: SessionOutput<never> = Object.freeze({
+  async send(): Promise<void> {
+    throw new Error("Session output transport is unavailable");
+  },
+});
 
 export interface HarnessRequestHandlerOptions {
   env?: SessionEnvironment;
@@ -64,7 +72,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
   let boundSession: SessionIdentity | undefined;
   let quiescence: RuntimeQuiescence;
   const mailbox = new InMemoryMailbox<void>(markMessageLifecycle, () => quiescence.changed());
-  let activity: InMemoryActivity<Input>;
+  let activity: InMemoryActivity<Input, Event>;
 
   const receiveMessage = (
     message: Readonly<{ id: string; payload: Input }>,
@@ -79,14 +87,26 @@ export function createHarnessRequestHandler<Input, Event = never>(
         }
         sendMessage(payload);
       };
+      const output = unavailableOutput as SessionOutput<Event>;
+      const activityCapability: SessionActivity<Input, Event> = Object.freeze({
+        get active() {
+          return activity.active;
+        },
+        start(work: SessionActivityFunction<Input, Event>) {
+          activity.start(work, output);
+        },
+        cancel(reason?: unknown) {
+          return activity.cancel(reason);
+        },
+      });
       try {
         await invokeBehaviour(behaviour, Object.freeze({
           message: Object.freeze({ ...message, sequence }),
           session,
           env: options.env ?? process.env,
-          activity,
+          activity: activityCapability,
+          output,
           send,
-          emit: () => undefined,
         }));
       } finally {
         invocationOpen = false;

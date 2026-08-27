@@ -6,18 +6,23 @@ export type SessionEnvironment = Readonly<
   Record<string, string | undefined>
 >;
 
-export interface SessionActivityContext<Message> {
+export interface SessionOutput<Event> {
+  send(event: Event): Promise<void>;
+}
+
+export interface SessionActivityContext<Message, Event> {
   readonly signal: AbortSignal;
+  readonly output: SessionOutput<Event>;
   send(message: Message): void;
 }
 
-export type SessionActivityFunction<Message> = (
-  context: SessionActivityContext<Message>,
+export type SessionActivityFunction<Message, Event> = (
+  context: SessionActivityContext<Message, Event>,
 ) => Awaitable<void>;
 
-export interface SessionActivity<Message> {
+export interface SessionActivity<Message, Event> {
   readonly active: boolean;
-  start(work: SessionActivityFunction<Message>): void;
+  start(work: SessionActivityFunction<Message, Event>): void;
   cancel(reason?: unknown): boolean;
 }
 
@@ -29,9 +34,9 @@ export interface SessionContext<Message, Event = never> {
   }>;
   readonly session: SessionIdentity;
   readonly env: SessionEnvironment;
-  readonly activity: SessionActivity<Message>;
+  readonly activity: SessionActivity<Message, Event>;
+  readonly output: SessionOutput<Event>;
   send(message: Message): void;
-  emit(event: Event): void;
 }
 
 export interface SessionBehaviour<Message, Event = never> {

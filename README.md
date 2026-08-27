@@ -297,15 +297,15 @@ import { defineSessionBehaviour } from "@cantelop/sdk/session";
 import type { Input, RuntimeEvent } from "./contracts.js";
 
 export default defineSessionBehaviour<Input, RuntimeEvent>(
-  async ({ message, session, env, emit }) => {
+  async ({ message, session, env, output }) => {
     const output = await runAgent(message.payload, {
       messageId: message.id,
       sessionId: session.id,
       apiKey: env.MODEL_API_KEY,
-      onText: (delta) => emit({ type: "text_delta", delta }),
+      onText: (delta) => output.send({ type: "text_delta", delta }),
     });
 
-    emit({ type: "done", output });
+    await output.send({ type: "done", output });
   },
 );
 ```
@@ -420,7 +420,7 @@ events and do not control the Sandbox lifecycle.
 
 ## Events and direct streaming
 
-Native Session behaviour can emit application-defined events. A `MessageRef`
+Native Session behaviour can send application-defined output events. A `MessageRef`
 observes delivery lifecycle, not application events, so those events are not
 exposed through the Edge API runtime.
 

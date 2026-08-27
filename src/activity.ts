@@ -1,7 +1,7 @@
 import type {
-  SessionActivity,
   SessionActivityContext,
   SessionActivityFunction,
+  SessionOutput,
 } from "./session.js";
 
 interface ActiveActivity<Message> {
@@ -10,7 +10,7 @@ interface ActiveActivity<Message> {
   settled: boolean;
 }
 
-export class InMemoryActivity<Message> implements SessionActivity<Message> {
+export class InMemoryActivity<Message, Event> {
   private current: ActiveActivity<Message> | undefined;
 
   constructor(
@@ -22,7 +22,10 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
     return this.current !== undefined;
   }
 
-  start(work: SessionActivityFunction<Message>): void {
+  start(
+    work: SessionActivityFunction<Message, Event>,
+    output: SessionOutput<Event>,
+  ): void {
     if (this.active) {
       throw new Error("Harness activity is already active");
     }
@@ -31,8 +34,9 @@ export class InMemoryActivity<Message> implements SessionActivity<Message> {
     const activity: ActiveActivity<Message> = { controller, messages: [], settled: false };
     this.current = activity;
     this.stateChanged();
-    const context: SessionActivityContext<Message> = Object.freeze({
+    const context: SessionActivityContext<Message, Event> = Object.freeze({
       signal: controller.signal,
+      output,
       send: (payload: Message) => {
         if (activity.settled) {
           throw new Error("Harness activity has already settled");

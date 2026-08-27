@@ -65,8 +65,9 @@ export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) =>
 function startPrompt(context: Context, prompt: string): void {
   const currentAgent = sessionAgent(context);
 
-  context.activity.start(async ({ signal, send }) => {
+  context.activity.start(async ({ signal, send, output }) => {
     let answer = "";
+    let pendingOutput = Promise.resolve();
     const unsubscribe = currentAgent.subscribe((event) => {
       if (
         event.type === "message_update" &&
@@ -74,7 +75,9 @@ function startPrompt(context: Context, prompt: string): void {
       ) {
         const delta = event.assistantMessageEvent.delta;
         answer += delta;
-        context.emit({ type: "text_delta", delta });
+        pendingOutput = pendingOutput.then(() =>
+          output.send({ type: "text_delta", delta })
+        );
       }
     });
     const abort = () => currentAgent.abort();
@@ -82,7 +85,8 @@ function startPrompt(context: Context, prompt: string): void {
 
     try {
       await currentAgent.prompt(prompt);
-      context.emit({ type: "done", answer });
+      await pendingOutput;
+      await output.send({ type: "done", answer });
     } finally {
       signal.removeEventListener("abort", abort);
       unsubscribe();

@@ -42,7 +42,7 @@ function startPrompt(context: Context, prompt: string): void {
   const currentAgent = agent;
   const currentConversation = conversation;
 
-  context.activity.start(async ({ signal, send }) => {
+  context.activity.start(async ({ signal, send, output }) => {
     try {
       const result = await run(currentAgent, prompt, {
         session: currentConversation,
@@ -53,10 +53,10 @@ function startPrompt(context: Context, prompt: string): void {
       let answer = "";
       for await (const delta of result.toTextStream()) {
         answer += delta;
-        context.emit({ type: "text_delta", delta });
+        await output.send({ type: "text_delta", delta });
       }
       await result.completed;
-      context.emit({ type: "done", answer: result.finalOutput ?? answer });
+      await output.send({ type: "done", answer: result.finalOutput ?? answer });
     } finally {
       const nextPrompt = promptQueue.shift();
       if (!signal.aborted && nextPrompt !== undefined) {

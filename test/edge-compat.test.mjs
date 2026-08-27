@@ -27,7 +27,7 @@ test("the Edge API modules have no native harness dependencies", async () => {
   }
 });
 
-test("only native Session behaviour exposes event emission", async () => {
+test("only native Session behaviour exposes event output", async () => {
   const edgeContract = await readFile(
     path.join(repositoryRoot, "dist/resources.d.ts"),
     "utf8",
@@ -41,9 +41,10 @@ test("only native Session behaviour exposes event emission", async () => {
     "utf8",
   );
 
-  assert.doesNotMatch(edgeContract, /\bemit\(event:/);
-  assert.match(sessionContract, /\bemit\(event: Event\): void/);
-  assert.doesNotMatch(harnessContract, /\bemit\(event:/);
+  assert.doesNotMatch(edgeContract, /\bSessionOutput\b/);
+  assert.match(sessionContract, /interface SessionOutput<Event>/);
+  assert.match(sessionContract, /send\(event: Event\): Promise<void>/);
+  assert.doesNotMatch(harnessContract, /\bSessionOutput\b/);
   assert.doesNotMatch(harnessContract, /defineSessionBehaviour/);
 });
 
