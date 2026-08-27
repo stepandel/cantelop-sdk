@@ -233,6 +233,34 @@ test("Session events adapt an App route to the private streaming endpoint", asyn
   assert.equal(forwarded.headers.get("Last-Event-ID"), null);
 });
 
+test("Session events preserve the authenticated WebSocket handshake", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    fetch: async (request) => {
+      forwarded = request;
+      return new Response();
+    },
+  });
+  const session = app.sessions.open({
+    id: namedSessionId,
+    workspaceId,
+    keepAliveSeconds: 300,
+  });
+  await session.events(new Request("https://agent.example/events", {
+    headers: {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      Origin: "https://agent.example",
+      "Sec-WebSocket-Protocol": "cantelop.events.v1",
+    },
+  }));
+  assert.equal(forwarded.headers.get("Upgrade"), "websocket");
+  assert.equal(forwarded.headers.get("Connection"), "Upgrade");
+  assert.equal(forwarded.headers.get("Origin"), "https://agent.example");
+  assert.equal(forwarded.headers.get("Sec-WebSocket-Protocol"), "cantelop.events.v1");
+  assert.equal(forwarded.headers.get("Accept"), null);
+});
+
 test("resource configuration is validated before transport", async () => {
   const app = createRemoteApp();
   await assert.rejects(app.workspaces.create({ slug: "Bad Slug" }), /Workspace slug/);

@@ -126,6 +126,7 @@ function createRemoteSession<Input>(
       if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
         headers.set("Upgrade", "websocket");
         copyHeader(request.headers, headers, "Connection");
+        copyHeader(request.headers, headers, "Origin");
         copyHeader(request.headers, headers, "Sec-WebSocket-Protocol");
         headers.delete("Accept");
       }
