@@ -192,11 +192,19 @@ test("message and activity send capabilities close when their work settles", asy
     () => invocation.send({ type: "late" }),
     /message invocation has already settled/,
   );
+  await assert.rejects(
+    invocation.output.send({ type: "late" }),
+    /message invocation has already settled/,
+  );
 
   finishActivity();
   await waitFor(() => invocation.activity.active === false);
   assert.throws(
     () => activity.send({ type: "late" }),
+    /activity has already settled/,
+  );
+  await assert.rejects(
+    activity.output.send({ type: "late" }),
     /activity has already settled/,
   );
 });
