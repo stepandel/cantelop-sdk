@@ -3,10 +3,10 @@
 ## Install
 
 Cantelop applications use the SDK from both their Edge API build and native
-harness image:
+Session runtime image:
 
 ```sh
-pnpm add @cantelop/sdk@0.3.0
+pnpm add @cantelop/sdk@0.4.0
 ```
 
 The SDK requires Node.js 22 or newer. Cantelop's CLI invokes the
@@ -17,27 +17,27 @@ project-installed `@cantelop/sdk/build`; it does not carry a second SDK copy.
 After creating an App, generate the deployment manifest from its slug:
 
 ```sh
-cantelop init -app vera
+cantelop init -app vera -provider openai
 ```
 
-This creates the minimal `cantelop.json` and refuses to overwrite an existing
-file:
+This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`,
+and refuses to overwrite existing project files:
 
 ```json
 {
   "app": "vera",
   "api": "src/api.ts",
-  "harness": "src/session.ts"
+  "session": "src/session.ts"
 }
 ```
 
 The CLI owns parsing, validation, and compatibility for this file; applications
 do not select a schema or tie the manifest format to their installed SDK
 version. `app` is the exact human-readable slug of an existing App; generated
-`app_...` IDs do not belong in project source. Use the command's `-config`,
-`-api`, and `-harness` flags for non-default paths. Add an expanded harness
-object with `context` and `dockerfile` only when native dependencies or system
-tools require a custom image.
+`app_...` IDs do not belong in project source. Use `-config` and `-api` for
+non-default paths. The required `-provider` selects the generated agent starter.
+Add an expanded `session` object with `context` and `dockerfile` only when native
+dependencies or system tools require a custom image.
 
 Declare configuration requirements by name without committing production
 values:
@@ -65,7 +65,7 @@ A TypeScript SDK with separate surfaces for Edge API middleware and native
 Session behaviour.
 
 ```text
-Edge API  ->  Cantelop Session  ->  Linux-native harness VM
+Edge API  ->  Cantelop Session  ->  Linux-native Session runtime
 ```
 
 The API validates HTTP requests, dispatches messages, and returns accepted
@@ -209,7 +209,7 @@ The mailbox and its deduplication records are intentionally in memory. Messages
 are processed one at a time in acceptance order, but a runtime crash or Session
 reactivation loses queued messages and completed deduplication records. The
 message reference therefore confirms volatile acceptance, not durable persistence,
-and does not contain the eventual harness output. IDs also cannot make arbitrary
+and does not contain the eventual Session output. IDs also cannot make arbitrary
 external side effects exactly-once.
 
 Workspace creation takes a routing `slug`. The current App identity is derived
@@ -232,7 +232,7 @@ export default defineApi(({ app, env, router }) => {
 ```
 
 All App variables and secrets are available to both the Edge API and native
-harness. Edge code can therefore read and disclose any configured value;
+Session runtime. Edge code can therefore read and disclose any configured value;
 applications should treat every API dependency and request path as trusted with
 all App credentials. Cantelop-reserved bindings and provider capabilities are
 not exposed through `env`.
@@ -275,15 +275,15 @@ await buildLocalApi({
 
 Application projects normally use this through `cantelop dev` rather than
 calling it directly. The CLI uses `watchLocalProject()` for native development;
-it keeps esbuild contexts for the API and harness alive, rebuilds only affected
+it keeps esbuild contexts for the API and Session runtime alive, rebuilds only affected
 dependency graphs, and reports successful or failed component rebuilds through
 its callback. `cantelop dev --container` uses the one-shot builders for Docker
 parity mode.
 
 CLI compatibility is explicit: `@cantelop/sdk/build` exports
 `CANTELOP_CLI_BUILD_PROTOCOL_VERSION` alongside the one-shot and watch build
-functions. Current CLIs require protocol version `1`, first packaged in
-`@cantelop/sdk@0.1.0-rc.15`. `cantelop doctor` reports older or incomplete
+functions. Current CLIs require protocol version `3`, packaged in
+`@cantelop/sdk@0.4.0`. `cantelop doctor` rejects older or incomplete
 project installations before a build is attempted.
 
 ## Native Session behaviour
@@ -312,7 +312,7 @@ export default defineSessionBehaviour<Input, RuntimeEvent>(
 
 Session behaviour may use Node.js, subprocesses, the Linux filesystem, provider
 SDKs, and VM environment variables. Cantelop supplies the same App variables
-and secrets to the native harness VM and Edge API.
+and secrets to the native Session runtime and Edge API.
 
 Every behaviour invocation receives the `SessionIdentity` represented by its Edge
 `Session` reference: `session.id`, `session.workspaceId`, and the request's
@@ -382,14 +382,14 @@ start, handler completion, failure, deduplication, queue-wait time, and handler
 duration are emitted as secret-free structured runtime telemetry. Mailbox
 position remains an implementation detail rather than a public message state.
 
-The generated harness separately tracks runtime quiescence. Quiescence means
+The generated Session runtime separately tracks runtime quiescence. Quiescence means
 that its mailbox is empty, no behaviour invocation is running, the managed
 activity is inactive, and all activity-generated messages have entered and
 drained from the mailbox. Each unique activation-local message advances a
 monotonic runtime generation; duplicate delivery of the same message ID keeps
 the original generation. Message responses include the generation they cover.
 
-Platform infrastructure can wait on the harness's private
+Platform infrastructure can wait on the Session runtime's private
 `GET /__cantelop/v1/runtime/quiescence?minimum_generation=<n>` endpoint. It
 responds only when the runtime is quiescent at or beyond that generation. This
 is a statement about SDK-managed actor work, not a Sandbox lifecycle decision:
@@ -401,16 +401,16 @@ conversation stores, and provider resume handles survive while the Sandbox is
 warm. Applications that must resume after Sandbox replacement must persist the
 provider's resumable state outside process memory.
 
-Each native harness runtime and Sandbox is bound to exactly one Session identity.
+Each native Session runtime and Sandbox is bound to exactly one Session identity.
 Provider state can therefore be held as one module-level value; a per-Session
 map is unnecessary. The native adapter rejects any request for a different
-Session ID or Workspace rather than mixing tenants inside one harness process.
+Session ID or Workspace rather than mixing tenants inside one runtime process.
 
-The harness is deployment infrastructure around the Session behaviour. Cantelop's
-generated native bootstrap calls `serveHarness()` internally. It accepts no
+The Session runtime is deployment infrastructure around the Session behaviour.
+Cantelop's generated native bootstrap calls `serveSessionRuntime()` internally. It accepts no
 port argument: the runtime provider
 injects `CANTELOP_INTERNAL_PORT` from the App's
-`harness.runtime.internal_port`, which remains the single source of truth.
+`session.runtime.internal_port`, which remains the single source of truth.
 
 The user-defined Session behaviour owns message settlement. Resolving completes
 the message successfully, while throwing marks it as failed. The native adapter
@@ -483,7 +483,7 @@ bounds. A stale, evicted, or post-restart cursor fails explicitly with
 Applications that require replay across platform restarts must persist events
 in their own durable store.
 
-`cantelop dev` uses the same harness drain, platform envelope, cursor rules,
+`cantelop dev` uses the same Session runtime drain, platform envelope, cursor rules,
 SSE endpoint, and output-only WebSocket protocol through its loopback Session
 bridge.
 The Session activity must remain pending until any direct stream and associated
