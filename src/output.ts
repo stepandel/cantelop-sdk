@@ -50,7 +50,11 @@ export class SessionOutputBuffer {
     });
   }
 
-  async read(after: number, signal?: AbortSignal): Promise<readonly BufferedOutputEvent[]> {
+  async read(
+    after: number,
+    signal?: AbortSignal,
+    wait = true,
+  ): Promise<readonly BufferedOutputEvent[]> {
     if (!Number.isSafeInteger(after) || after < 0) {
       throw new TypeError("Session output cursor must be a non-negative integer");
     }
@@ -71,6 +75,7 @@ export class SessionOutputBuffer {
           Object.freeze({ cursor, messageId, event })
         );
       }
+	  if (!wait) return [];
       await this.waitForEvent(signal);
     }
   }

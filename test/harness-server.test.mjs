@@ -54,6 +54,12 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.equal(Object.isFrozen(received.message), true);
   assert.equal(Object.isFrozen(received.session), true);
   assert.equal(received.env.MODEL, "test-model");
+
+  const snapshot = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/events?after=0&wait=0`,
+  );
+  assert.equal(snapshot.status, 200);
+  assert.deepEqual(await snapshot.json(), { events: [] });
 });
 
 test("the platform drains ordered Session output events", async (t) => {

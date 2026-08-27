@@ -210,7 +210,7 @@ async function handleRequest<Input, Event>(
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://harness.cantelop.internal");
   if (url.pathname === OUTPUT_PATH) {
-    await handleOutputRequest(request, response, url, outputBuffer, boundSession());
+    await handleOutputRequest(request, response, url, outputBuffer);
     return;
   }
   if (url.pathname === QUIESCENCE_PATH) {
@@ -278,7 +278,6 @@ async function handleOutputRequest(
   response: ServerResponse,
   url: URL,
   outputBuffer: SessionOutputBuffer,
-  session: SessionIdentity | undefined,
 ): Promise<void> {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
@@ -286,18 +285,16 @@ async function handleOutputRequest(
     return;
   }
   const values = url.searchParams.getAll("after");
-  if ([...url.searchParams.keys()].some((key) => key !== "after") ||
-      values.length !== 1 || !/^\d+$/.test(values[0] ?? "")) {
+  const waitValues = url.searchParams.getAll("wait");
+  if ([...url.searchParams.keys()].some((key) => key !== "after" && key !== "wait") ||
+	  values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
+	  waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
     writeError(response, 400, "invalid_output_request");
     return;
   }
   const after = Number(values[0]);
-  if (!Number.isSafeInteger(after) || session === undefined) {
-    writeError(
-      response,
-      session === undefined ? 409 : 400,
-      session === undefined ? "session_unbound" : "invalid_output_request",
-    );
+  if (!Number.isSafeInteger(after)) {
+	  writeError(response, 400, "invalid_output_request");
     return;
   }
 
@@ -308,7 +305,7 @@ async function handleOutputRequest(
     if (!response.writableEnded) abort();
   });
   try {
-    const events = await outputBuffer.read(after, controller.signal);
+    const events = await outputBuffer.read(after, controller.signal, waitValues.length === 0);
     if (response.destroyed) return;
     writeJSON(response, 200, {
       events: events.map((event) => ({
