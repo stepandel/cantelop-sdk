@@ -1,7 +1,7 @@
 {
   "name": "@cantelop/sdk",
   "version": "0.3.0",
-  "description": "Provider-neutral API and native harness SDK for Cantelop applications",
+  "description": "Provider-neutral API and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,9 +36,9 @@
       "types": "./dist/build.d.ts",
       "import": "./dist/build.js"
     },
-    "./harness": {
-      "types": "./dist/harness.d.ts",
-      "import": "./dist/harness.js"
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
     },
     "./session": {
       "types": "./dist/session.d.ts",

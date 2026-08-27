@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json",
+  "$id": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v2.json",
   "title": "Cantelop App",
   "description": "Build and deployment configuration for one Cantelop App.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["app", "api", "harness"],
+  "required": ["app", "api", "session"],
   "properties": {
     "app": {
       "$ref": "#/$defs/appSlug"
@@ -13,8 +13,8 @@
     "api": {
       "$ref": "#/$defs/api"
     },
-    "harness": {
-      "$ref": "#/$defs/harness"
+    "session": {
+      "$ref": "#/$defs/session"
     },
     "environment": {
       "$ref": "#/$defs/environment"
@@ -55,8 +55,8 @@
         }
       ]
     },
-    "harness": {
-      "description": "Native Session behaviour entrypoint, as a path or an expanded harness configuration object for native system dependencies.",
+    "session": {
+      "description": "Native Session behaviour entrypoint, as a path or an expanded Session configuration object for native system dependencies.",
       "oneOf": [
         {
           "$ref": "#/$defs/projectFile"
@@ -75,7 +75,7 @@
             },
             "dockerfile": {
               "$ref": "#/$defs/projectFile",
-              "description": "Optional Dockerfile used only when the harness needs native dependencies or system tools."
+              "description": "Optional Dockerfile used only when the Session runtime needs native dependencies or system tools."
             }
           }
         }
@@ -131,12 +131,12 @@
     {
       "app": "vera",
       "api": "src/api.ts",
-      "harness": "src/session.ts"
+      "session": "src/session.ts"
     },
     {
       "app": "vera",
       "api": "src/api.ts",
-      "harness": "src/session.ts",
+      "session": "src/session.ts",
       "environment": {
         "OPENAI_MODEL": {"default": "gpt-4.1-mini"},
         "OPENAI_API_KEY": {"secret": true, "required": true}

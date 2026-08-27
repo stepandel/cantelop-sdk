@@ -17,7 +17,7 @@ import type {
   SessionOutput,
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
-import { markHarnessStartup, markMessageLifecycle } from "./harness-startup.js";
+import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
 import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
@@ -36,11 +36,11 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
 
-export interface HarnessRequestHandlerOptions {
+export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
 }
 
-export interface HarnessServer {
+export interface SessionRuntimeServer {
   readonly server: Server;
   readonly port: number;
   /** Resolves only after the platform-owned message socket is accepting connections. */
@@ -48,7 +48,7 @@ export interface HarnessServer {
   close(): Promise<void>;
 }
 
-type HarnessRequestHandler = (
+type SessionRuntimeHandler = (
   request: IncomingMessage,
   response: ServerResponse,
 ) => void;
@@ -62,10 +62,10 @@ interface RuntimeDelivery {
  * Creates the native HTTP protocol adapter. This lower-level entrypoint is
  * primarily useful to platform integration tests and custom native launchers.
  */
-export function createHarnessRequestHandler<Input, Event = never>(
+export function createSessionRuntimeHandler<Input, Event = never>(
   behaviour: SessionBehaviour<Input, Event>,
-  options: HarnessRequestHandlerOptions = {},
-): HarnessRequestHandler {
+  options: SessionRuntimeHandlerOptions = {},
+): SessionRuntimeHandler {
   let boundSession: SessionIdentity | undefined;
   let quiescence: RuntimeQuiescence;
   const outputBuffer = new SessionOutputBuffer();
@@ -81,7 +81,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
       let invocationOpen = true;
       const send = (payload: Input): void => {
         if (!invocationOpen) {
-          throw new Error("Harness message invocation has already settled");
+          throw new Error("Session runtime message invocation has already settled");
         }
         sendMessage(payload);
       };
@@ -89,7 +89,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
       const output: SessionOutput<Event> = Object.freeze({
         async send(event: Event): Promise<void> {
           if (!outputOpen) {
-            throw new Error("Harness message invocation has already settled");
+            throw new Error("Session runtime message invocation has already settled");
           }
           await outputBuffer.publish(message.id, event);
         },
@@ -124,7 +124,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
 
   const sendMessage = (payload: Input): void => {
     if (boundSession === undefined) {
-      throw new Error("Harness cannot send before its Session is bound");
+      throw new Error("Session runtime cannot send before its Session is bound");
     }
     const message = Object.freeze({ id: createMessageID(), payload });
     void receiveMessage(message, boundSession).settled.catch(() => undefined);
@@ -157,17 +157,16 @@ export function createHarnessRequestHandler<Input, Event = never>(
 }
 
 /**
- * Starts the native harness server on the port injected by Cantelop. The App's
- * harness.runtime.internal_port is the source of truth; customer code never
- * supplies a deployment port.
+ * Starts the Session runtime server on the port injected by Cantelop. Customer
+ * code never supplies a deployment port.
  */
-export function serveHarness<Input, Event = never>(
+export function serveSessionRuntime<Input, Event = never>(
   behaviour: SessionBehaviour<Input, Event>,
-): HarnessServer {
+): SessionRuntimeServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
-  const server = createServer(createHarnessRequestHandler(behaviour));
-  markHarnessStartup("server_created");
+  const server = createServer(createSessionRuntimeHandler(behaviour));
+  markSessionRuntimeStartup("server_created");
   const ready = listen(server, port, inheritedFD);
   return {
     server,
@@ -181,7 +180,7 @@ function listen(server: Server, port: number, inheritedFD: number | undefined): 
   return new Promise((resolve, reject) => {
     const listening = () => {
       server.removeListener("error", failed);
-      markHarnessStartup("listener_ready");
+      markSessionRuntimeStartup("listener_ready");
       resolve();
     };
     const failed = (error: Error) => {
@@ -195,7 +194,7 @@ function listen(server: Server, port: number, inheritedFD: number | undefined): 
   });
 }
 
-async function handleRequest<Input, Event>(
+async function handleRequest<Input>(
   request: IncomingMessage,
   response: ServerResponse,
   receiveMessage: (
@@ -208,7 +207,7 @@ async function handleRequest<Input, Event>(
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
   setBaseHeaders(response);
-  const url = new URL(request.url ?? "/", "http://harness.cantelop.internal");
+  const url = new URL(request.url ?? "/", "http://session-runtime.cantelop.internal");
   if (url.pathname === OUTPUT_PATH) {
     await handleOutputRequest(request, response, url, outputBuffer);
     return;

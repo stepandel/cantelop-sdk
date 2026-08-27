@@ -28,7 +28,7 @@ export class InMemoryActivity<Message, Event> {
     work: SessionActivityFunction<Message, Event>,
   ): void {
     if (this.active) {
-      throw new Error("Harness activity is already active");
+      throw new Error("Session runtime activity is already active");
     }
 
     const controller = new AbortController();
@@ -38,7 +38,7 @@ export class InMemoryActivity<Message, Event> {
     const output: SessionOutput<Event> = Object.freeze({
       send: async (event: Event) => {
         if (activity.settled) {
-          throw new Error("Harness activity has already settled");
+          throw new Error("Session runtime activity has already settled");
         }
         await this.sendOutput(messageId, event);
       },
@@ -48,7 +48,7 @@ export class InMemoryActivity<Message, Event> {
       output,
       send: (payload: Message) => {
         if (activity.settled) {
-          throw new Error("Harness activity has already settled");
+          throw new Error("Session runtime activity has already settled");
         }
         activity.messages.push(payload);
       },
@@ -63,7 +63,7 @@ export class InMemoryActivity<Message, Event> {
   cancel(reason?: unknown): boolean {
     if (this.current === undefined) return false;
     this.current.controller.abort(
-      reason ?? new DOMException("Harness activity cancelled", "AbortError"),
+      reason ?? new DOMException("Session runtime activity cancelled", "AbortError"),
     );
     return true;
   }

@@ -4,14 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildApi, buildHarness } from "../dist/build.js";
+import { buildApi, buildSessionRuntime } from "../dist/build.js";
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const schemaUrl =
-  "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v1.json";
+  "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v2.json";
 const examples = ["openai", "anthropic", "pi"];
 const temporaryRoot = await mkdtemp(
   path.join(os.tmpdir(), "cantelop-example-check-"),
@@ -19,12 +19,12 @@ const temporaryRoot = await mkdtemp(
 
 try {
   const schema = JSON.parse(
-    await readFile(path.join(repositoryRoot, "schemas/app-v1.json"), "utf8"),
+    await readFile(path.join(repositoryRoot, "schemas/app-v2.json"), "utf8"),
   );
   assert.equal(schema.$id, schemaUrl);
   assert.ok(schema.examples.length > 0);
   for (const example of schema.examples) {
-    assert.equal(example.harness, "src/session.ts");
+    assert.equal(example.session, "src/session.ts");
   }
 
   for (const example of examples) {
@@ -65,9 +65,9 @@ try {
       entrypoint: path.join(exampleRoot, "src/api.ts"),
       outdir: path.join(temporaryRoot, example, "api"),
     });
-    await buildHarness({
+    await buildSessionRuntime({
       entrypoint: path.join(exampleRoot, "src/session.ts"),
-      outdir: path.join(temporaryRoot, example, "harness"),
+      outdir: path.join(temporaryRoot, example, "session-runtime"),
     });
   }
 } finally {
