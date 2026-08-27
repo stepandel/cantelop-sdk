@@ -15,6 +15,7 @@ export class InMemoryActivity<Message, Event> {
 
   constructor(
     private readonly sendMessage: (payload: Message) => void,
+    private readonly sendOutput: (messageId: string, event: Event) => Promise<void>,
     private readonly stateChanged: () => void = () => undefined,
   ) {}
 
@@ -23,8 +24,8 @@ export class InMemoryActivity<Message, Event> {
   }
 
   start(
+    messageId: string,
     work: SessionActivityFunction<Message, Event>,
-    output: SessionOutput<Event>,
   ): void {
     if (this.active) {
       throw new Error("Harness activity is already active");
@@ -34,6 +35,14 @@ export class InMemoryActivity<Message, Event> {
     const activity: ActiveActivity<Message> = { controller, messages: [], settled: false };
     this.current = activity;
     this.stateChanged();
+    const output: SessionOutput<Event> = Object.freeze({
+      send: async (event: Event) => {
+        if (activity.settled) {
+          throw new Error("Harness activity has already settled");
+        }
+        await this.sendOutput(messageId, event);
+      },
+    });
     const context: SessionActivityContext<Message, Event> = Object.freeze({
       signal: controller.signal,
       output,

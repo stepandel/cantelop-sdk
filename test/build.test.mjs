@@ -146,6 +146,7 @@ test("buildHarness emits one deployable native module", async (t) => {
   assert.match(source, /X-Cantelop-SDK-Message-Complete/);
   assert.match(source, /X-Cantelop-SDK-Session-Generation/);
   assert.match(source, /\/__cantelop\/v1\/runtime\/quiescence/);
+  assert.match(source, /\/__cantelop\/v1\/runtime\/events/);
   assert.match(source, /listener_ready/);
 });
 

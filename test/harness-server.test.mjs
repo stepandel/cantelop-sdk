@@ -56,6 +56,51 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.equal(received.env.MODEL, "test-model");
 });
 
+test("the platform drains ordered Session output events", async (t) => {
+  let beginOutput;
+  const outputStarted = new Promise((resolve) => { beginOutput = resolve; });
+  const server = createServer(
+    createHarnessRequestHandler(behaviour(async ({ output }) => {
+      beginOutput();
+      await output.send({ type: "text_delta", delta: "hello" });
+      await output.send({ type: "done" });
+    })),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope({ prompt: "hello" })),
+  });
+  await outputStarted;
+  const first = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/events?after=0`,
+  );
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), {
+    events: [{
+      cursor: 1,
+      message_id: messageId,
+      event: { type: "text_delta", delta: "hello" },
+    }],
+  });
+
+  const second = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/events?after=1`,
+  );
+  assert.equal(second.status, 200);
+  assert.deepEqual(await second.json(), {
+    events: [{
+      cursor: 2,
+      message_id: messageId,
+      event: { type: "done" },
+    }],
+  });
+  assert.equal((await delivery).status, 204);
+});
+
 test("runtime activity keeps the Session active while steer and cancel messages run", async (t) => {
   const handled = [];
   const sequences = [];

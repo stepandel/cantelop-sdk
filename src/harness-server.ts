@@ -21,9 +21,11 @@ import { markHarnessStartup, markMessageLifecycle } from "./harness-startup.js";
 import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
+import { SessionOutputBuffer } from "./output.js";
 
 const MESSAGE_PATH = "/__cantelop/v1/messages";
 const QUIESCENCE_PATH = "/__cantelop/v1/runtime/quiescence";
+const OUTPUT_PATH = "/__cantelop/v1/runtime/events";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
@@ -33,11 +35,6 @@ const SESSION_GENERATION_HEADER = "X-Cantelop-SDK-Session-Generation";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
-const unavailableOutput: SessionOutput<never> = Object.freeze({
-  async send(): Promise<void> {
-    throw new Error("Session output transport is unavailable");
-  },
-});
 
 export interface HarnessRequestHandlerOptions {
   env?: SessionEnvironment;
@@ -71,6 +68,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
 ): HarnessRequestHandler {
   let boundSession: SessionIdentity | undefined;
   let quiescence: RuntimeQuiescence;
+  const outputBuffer = new SessionOutputBuffer();
   const mailbox = new InMemoryMailbox<void>(markMessageLifecycle, () => quiescence.changed());
   let activity: InMemoryActivity<Input, Event>;
 
@@ -87,13 +85,21 @@ export function createHarnessRequestHandler<Input, Event = never>(
         }
         sendMessage(payload);
       };
-      const output = unavailableOutput as SessionOutput<Event>;
+      let outputOpen = true;
+      const output: SessionOutput<Event> = Object.freeze({
+        async send(event: Event): Promise<void> {
+          if (!outputOpen) {
+            throw new Error("Harness message invocation has already settled");
+          }
+          await outputBuffer.publish(message.id, event);
+        },
+      });
       const activityCapability: SessionActivity<Input, Event> = Object.freeze({
         get active() {
           return activity.active;
         },
         start(work: SessionActivityFunction<Input, Event>) {
-          activity.start(work, output);
+          activity.start(message.id, work);
         },
         cancel(reason?: unknown) {
           return activity.cancel(reason);
@@ -110,6 +116,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
         }));
       } finally {
         invocationOpen = false;
+        outputOpen = false;
       }
     });
     return Object.freeze({ generation, settled });
@@ -123,7 +130,11 @@ export function createHarnessRequestHandler<Input, Event = never>(
     void receiveMessage(message, boundSession).settled.catch(() => undefined);
   };
 
-  activity = new InMemoryActivity(sendMessage, () => quiescence.changed());
+  activity = new InMemoryActivity(
+    sendMessage,
+    (messageId, event) => outputBuffer.publish(messageId, event),
+    () => quiescence.changed(),
+  );
   quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
   return (request, response) => {
     void handleRequest(
@@ -131,6 +142,7 @@ export function createHarnessRequestHandler<Input, Event = never>(
       response,
       receiveMessage,
       quiescence,
+      outputBuffer,
       () => boundSession,
       (session) => {
         if (boundSession !== undefined &&
@@ -191,11 +203,16 @@ async function handleRequest<Input, Event>(
     session: SessionIdentity,
   ) => RuntimeDelivery,
   quiescence: RuntimeQuiescence,
+  outputBuffer: SessionOutputBuffer,
   boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://harness.cantelop.internal");
+  if (url.pathname === OUTPUT_PATH) {
+    await handleOutputRequest(request, response, url, outputBuffer, boundSession());
+    return;
+  }
   if (url.pathname === QUIESCENCE_PATH) {
     await handleQuiescenceRequest(request, response, url, quiescence, boundSession());
     return;
@@ -253,6 +270,59 @@ async function handleRequest<Input, Event>(
       return;
     }
     writeError(response, 500, "message_failed");
+  }
+}
+
+async function handleOutputRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  outputBuffer: SessionOutputBuffer,
+  session: SessionIdentity | undefined,
+): Promise<void> {
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    writeError(response, 405, "method_not_allowed");
+    return;
+  }
+  const values = url.searchParams.getAll("after");
+  if ([...url.searchParams.keys()].some((key) => key !== "after") ||
+      values.length !== 1 || !/^\d+$/.test(values[0] ?? "")) {
+    writeError(response, 400, "invalid_output_request");
+    return;
+  }
+  const after = Number(values[0]);
+  if (!Number.isSafeInteger(after) || session === undefined) {
+    writeError(
+      response,
+      session === undefined ? 409 : 400,
+      session === undefined ? "session_unbound" : "invalid_output_request",
+    );
+    return;
+  }
+
+  const controller = new AbortController();
+  const abort = () => controller.abort(new DOMException("Session output request closed", "AbortError"));
+  request.once("aborted", abort);
+  response.once("close", () => {
+    if (!response.writableEnded) abort();
+  });
+  try {
+    const events = await outputBuffer.read(after, controller.signal);
+    if (response.destroyed) return;
+    writeJSON(response, 200, {
+      events: events.map((event) => ({
+        cursor: event.cursor,
+        message_id: event.messageId,
+        event: event.event,
+      })),
+    });
+  } catch {
+    if (!controller.signal.aborted && !response.destroyed) {
+      writeError(response, 500, "output_failed");
+    }
+  } finally {
+    request.removeListener("aborted", abort);
   }
 }
 
