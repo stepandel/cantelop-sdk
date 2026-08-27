@@ -104,6 +104,11 @@ test("the platform drains ordered Session output events", async (t) => {
       event: { type: "done" },
     }],
   });
+  const acknowledged = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/events?after=2&wait=0`,
+  );
+  assert.equal(acknowledged.status, 200);
+  assert.deepEqual(await acknowledged.json(), { events: [] });
   assert.equal((await delivery).status, 204);
 });
 

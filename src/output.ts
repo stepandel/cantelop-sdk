@@ -11,7 +11,6 @@ export interface BufferedOutputEvent {
 
 interface PendingOutputEvent extends BufferedOutputEvent {
   readonly bytes: number;
-  delivered: boolean;
   readonly resolve: () => void;
 }
 
@@ -42,7 +41,6 @@ export class SessionOutputBuffer {
         messageId,
         event: JSON.parse(encoded) as unknown,
         bytes,
-        delivered: false,
         resolve,
       });
       this.pendingBytes += bytes;
@@ -65,17 +63,11 @@ export class SessionOutputBuffer {
         .filter((event) => event.cursor > after)
         .slice(0, MAX_BATCH_EVENTS);
       if (available.length > 0) {
-        for (const event of available) {
-          if (!event.delivered) {
-            event.delivered = true;
-            event.resolve();
-          }
-        }
         return available.map(({ cursor, messageId, event }) =>
           Object.freeze({ cursor, messageId, event })
         );
       }
-	  if (!wait) return [];
+      if (!wait) return [];
       await this.waitForEvent(signal);
     }
   }
@@ -85,6 +77,7 @@ export class SessionOutputBuffer {
     while (this.events[0] !== undefined && this.events[0].cursor <= after) {
       const event = this.events.shift()!;
       this.pendingBytes -= event.bytes;
+      event.resolve();
       removed = true;
     }
     if (removed) this.wakeCapacityWaiters();
