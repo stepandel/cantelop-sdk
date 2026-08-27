@@ -36,6 +36,7 @@ try {
       .map(([, method, route]) => `${method} ${route}`);
     assert.deepEqual(routes, [
       "GET /health",
+      "GET /events",
       "POST /chat",
       "POST /steer",
       "POST /cancel",
@@ -55,6 +56,7 @@ try {
     assert.match(apiSource, /type:\s*"prompt"/);
     assert.match(apiSource, /type:\s*"steer"/);
     assert.match(apiSource, /type:\s*"cancel"/);
+    assert.match(apiSource, /session\.events\(request\)/);
     assert.match(contractsSource, /SessionMessage/);
     assert.match(contractsSource, /SessionEvent/);
     assert.match(sessionSource, /activity\.start\(/);

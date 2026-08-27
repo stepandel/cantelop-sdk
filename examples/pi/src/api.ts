@@ -2,6 +2,7 @@ import { defineApi } from "@cantelop/sdk/api";
 import type {
   ChatRequest,
   CancelRequest,
+  EventsRequest,
   SessionMessage,
   SteerRequest,
 } from "./contracts.js";
@@ -11,6 +12,18 @@ export default defineApi<SessionMessage>(
     router.route("GET", "/health", () =>
       Response.json({ status: "ok", runtime: "pi" }),
     );
+
+    router.route("GET", "/events", ({ request }) => {
+      const input = readEventsRequest(request);
+      if (input === undefined) {
+        return Response.json({
+          error: "sessionId, workspaceId, and keepAliveSeconds are required",
+        }, { status: 400 });
+      }
+
+      const session = app.sessions.open(input);
+      return session.events(request);
+    });
 
     router.route("POST", "/chat", async ({ request }) => {
       const input = (await request.json()) as Partial<ChatRequest>;
@@ -83,4 +96,21 @@ function isCancelRequest(input: Partial<CancelRequest>): input is CancelRequest 
   return typeof input.sessionId === "string" &&
     typeof input.workspaceId === "string" &&
     typeof input.keepAliveSeconds === "number" && Number.isInteger(input.keepAliveSeconds);
+}
+
+function readEventsRequest(request: Request): EventsRequest | undefined {
+  const search = new URL(request.url).searchParams;
+  if (["sessionId", "workspaceId", "keepAliveSeconds"].some(
+    (name) => search.getAll(name).length !== 1,
+  )) return undefined;
+  const sessionId = search.get("sessionId");
+  const workspaceId = search.get("workspaceId");
+  const keepAlive = search.get("keepAliveSeconds");
+  if (sessionId === null || workspaceId === null ||
+      keepAlive === null || !/^\d+$/.test(keepAlive)) return undefined;
+  const keepAliveSeconds = Number(keepAlive);
+  if (!Number.isSafeInteger(keepAliveSeconds) || keepAliveSeconds > 604_800) {
+    return undefined;
+  }
+  return { sessionId, workspaceId, keepAliveSeconds };
 }

@@ -25,3 +25,9 @@ export interface CancelRequest {
   workspaceId: string;
   keepAliveSeconds: number;
 }
+
+export interface EventsRequest {
+  sessionId: string;
+  workspaceId: string;
+  keepAliveSeconds: number;
+}
