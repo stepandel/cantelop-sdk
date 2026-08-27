@@ -104,6 +104,39 @@ function createRemoteSession<Input>(
       return readMessageRef(envelope, message, this.id, runtimeFetch);
     },
 
+    async events(request: Request): Promise<Response> {
+      if (request.method !== "GET") {
+        throw new TypeError("Session events require a GET request");
+      }
+      const sourceURL = new URL(request.url);
+      const afterValues = sourceURL.searchParams.getAll("after");
+      if (afterValues.length > 1 ||
+          (afterValues.length === 1 && !/^\d+$/.test(afterValues[0] ?? ""))) {
+        throw new TypeError("Session event cursor must be a non-negative integer");
+      }
+      const path = new URL(
+        `/__cantelop/v1/sessions/${encodeURIComponent(this.id)}/events`,
+        RUNTIME_ORIGIN,
+      );
+      path.searchParams.set("workspace_id", config.workspaceId);
+      if (afterValues.length === 1) path.searchParams.set("after", afterValues[0]!);
+
+      const headers = new Headers({ Accept: "text/event-stream" });
+      if (afterValues.length === 0) copyHeader(request.headers, headers, "Last-Event-ID");
+      if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+        headers.set("Upgrade", "websocket");
+        copyHeader(request.headers, headers, "Connection");
+        copyHeader(request.headers, headers, "Sec-WebSocket-Protocol");
+        headers.delete("Accept");
+      }
+      return runtimeFetch(new Request(path, {
+        method: "GET",
+        headers,
+        redirect: "manual",
+        signal: request.signal,
+      }));
+    },
+
     async terminate(): Promise<void> {
       await requestJSON(
         runtimeFetch,
@@ -112,6 +145,11 @@ function createRemoteSession<Input>(
       );
     },
   });
+}
+
+function copyHeader(source: Headers, destination: Headers, name: string): void {
+  const value = source.get(name);
+  if (value !== null) destination.set(name, value);
 }
 
 function sessionEnvelope(id: string, config: SessionOpenConfig): Record<string, unknown> {

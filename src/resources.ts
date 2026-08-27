@@ -77,6 +77,8 @@ export interface SessionIdentity {
 /** A reference to a Session actor. */
 export interface Session<Message> extends SessionIdentity {
   dispatch(message: Message): Promise<MessageRef>;
+  /** Adapts an authenticated App GET route to SSE or an output-only WebSocket. */
+  events(request: Request): Promise<Response>;
   terminate(): Promise<void>;
 }
 
