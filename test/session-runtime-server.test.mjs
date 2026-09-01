@@ -632,6 +632,37 @@ test("serveSessionRuntime exposes an explicit listener-ready signal", async (t) 
   }
 });
 
+test("serveSessionRuntime exposes startup and background output at Sandbox scope", async () => {
+  const previous = process.env.CANTELOP_INTERNAL_PORT;
+  const reservation = createServer();
+  await listen(reservation);
+  const address = reservation.address();
+  assert.equal(typeof address, "object");
+  const port = address.port;
+  await close(reservation);
+  process.env.CANTELOP_INTERNAL_PORT = String(port);
+
+  let runtime;
+  try {
+    runtime = serveSessionRuntime(behaviour(async () => undefined));
+    await runtime.ready;
+    process.stdout.write("background runtime output\n");
+    const response = await fetch(
+      `http://127.0.0.1:${port}/__cantelop/v1/runtime/observations?after=0&wait=0`,
+    );
+    assert.equal(response.status, 200);
+    const batch = await response.json();
+    const record = batch.observations.find(({ observation }) =>
+      observation.body === "background runtime output");
+    assert.equal(record.message_id, undefined);
+    assert.deepEqual(record.observation.attributes, { source: "stdout", automatic: true });
+  } finally {
+    if (runtime) await runtime.close();
+    if (previous === undefined) delete process.env.CANTELOP_INTERNAL_PORT;
+    else process.env.CANTELOP_INTERNAL_PORT = previous;
+  }
+});
+
 test("serveSessionRuntime adopts the platform-prebound listener", async () => {
   const reservation = createServer();
   await listen(reservation);
