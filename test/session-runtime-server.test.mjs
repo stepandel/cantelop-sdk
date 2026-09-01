@@ -119,6 +119,56 @@ test("ObservableMessage emits automatic and user observations on the platform tr
   assert.equal(observations[3].span_id, observations[2].span_id);
 });
 
+test("console and process output are captured automatically on the active Message span", async (t) => {
+  const server = createServer(
+    createSessionRuntimeHandler(behaviour(async () => {
+      console.debug("debug value", 1);
+      console.log("hello", { answer: 42 });
+      console.warn("careful");
+      console.error(new Error("broken"));
+      process.stdout.write("raw stdout\n");
+      process.stderr.write("raw stderr\n");
+    })),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope({}, "thread", messageId, traceContext())),
+  });
+  const observations = [];
+  let cursor = 0;
+  while (!observations.some(({ type }) => type === "span.completed")) {
+    const response = await fetch(
+      `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}`,
+    );
+    assert.equal(response.status, 200);
+    const batch = await response.json();
+    for (const record of batch.observations) {
+      observations.push(record.observation);
+      cursor = record.cursor;
+      assert.equal(record.message_id, messageId);
+    }
+  }
+  await fetch(`${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}&wait=0`);
+  assert.equal((await delivery).status, 204);
+
+  const logs = observations.filter(({ type }) => type === "log.recorded");
+  const selected = logs.filter(({ body }) =>
+    /^(debug value|hello|careful|Error: broken|raw stdout|raw stderr)/.test(body));
+  assert.deepEqual(selected.map(({ severity }) => severity), [
+    "debug", "info", "warn", "error", "info", "error",
+  ]);
+  assert.deepEqual(selected.map(({ attributes }) => attributes.source), [
+    "console", "console", "console", "console", "stdout", "stderr",
+  ]);
+  assert.ok(logs.every(({ span_id }) => span_id === observations[0].span_id));
+  assert.match(selected[1].body, /hello.*answer.*42/);
+  assert.match(selected[3].body, /Error: broken/);
+});
+
 test("the platform drains ordered Session output events", async (t) => {
   let beginOutput;
   const outputStarted = new Promise((resolve) => { beginOutput = resolve; });

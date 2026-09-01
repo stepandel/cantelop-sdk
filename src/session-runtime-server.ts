@@ -23,6 +23,11 @@ import {
   RuntimeObservationBuffer,
   type RuntimeTraceContext,
 } from "./observability.js";
+import {
+  registerRuntimeLogBuffer,
+  runWithRuntimeLogContext,
+  withoutRuntimeLogCapture,
+} from "./runtime-log-capture.js";
 import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
 import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
@@ -76,6 +81,13 @@ export function createSessionRuntimeHandler<Input, Event = never>(
   behaviour: SessionBehaviour<Input, Event>,
   options: SessionRuntimeHandlerOptions = {},
 ): SessionRuntimeHandler {
+  return createSessionRuntimeAdapter(behaviour, options).handler;
+}
+
+function createSessionRuntimeAdapter<Input, Event = never>(
+  behaviour: SessionBehaviour<Input, Event>,
+  options: SessionRuntimeHandlerOptions = {},
+): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer } {
   let boundSession: SessionIdentity | undefined;
   let quiescence: RuntimeQuiescence;
   const outputBuffer = new SessionOutputBuffer();
@@ -120,10 +132,12 @@ export function createSessionRuntimeHandler<Input, Event = never>(
       const observer = new MessageObserver(message.id, trace, observationBuffer);
       const observableMessage = new ObservableMessage(message.id, sequence, message.payload, observer);
       try {
-        await observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
-          message: observableMessage, session, env: options.env ?? process.env,
-          activity: activityCapability, output, send,
-        })));
+        await runWithRuntimeLogContext(observer, () =>
+          observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
+            message: observableMessage, session, env: options.env ?? process.env,
+            activity: activityCapability, output, send,
+          }))),
+        );
       } finally {
         invocationOpen = false;
         outputOpen = false;
@@ -146,7 +160,7 @@ export function createSessionRuntimeHandler<Input, Event = never>(
     () => quiescence.changed(),
   );
   quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
-  return (request, response) => {
+  const handler = (request: IncomingMessage, response: ServerResponse) => {
     void handleRequest(
       request,
       response,
@@ -165,6 +179,7 @@ export function createSessionRuntimeHandler<Input, Event = never>(
       },
     );
   };
+  return { handler, observationBuffer };
 }
 
 /**
@@ -176,14 +191,22 @@ export function serveSessionRuntime<Input, Event = never>(
 ): SessionRuntimeServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
-  const server = createServer(createSessionRuntimeHandler(behaviour));
-  markSessionRuntimeStartup("server_created");
+  const adapter = createSessionRuntimeAdapter(behaviour);
+  const unregisterLogBuffer = registerRuntimeLogBuffer(adapter.observationBuffer);
+  const server = createServer(adapter.handler);
+  withoutRuntimeLogCapture(() => markSessionRuntimeStartup("server_created"));
   const ready = listen(server, port, inheritedFD);
   return {
     server,
     port,
     ready,
-    close: () => closeServer(server),
+    close: async () => {
+      try {
+        await closeServer(server);
+      } finally {
+        unregisterLogBuffer();
+      }
+    },
   };
 }
 
@@ -191,7 +214,7 @@ function listen(server: Server, port: number, inheritedFD: number | undefined): 
   return new Promise((resolve, reject) => {
     const listening = () => {
       server.removeListener("error", failed);
-      markSessionRuntimeStartup("listener_ready");
+      withoutRuntimeLogCapture(() => markSessionRuntimeStartup("listener_ready"));
       resolve();
     };
     const failed = (error: Error) => {

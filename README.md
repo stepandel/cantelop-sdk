@@ -324,9 +324,14 @@ from an application request.
 ### Message observability
 
 Platform-delivered Messages are `ObservableMessage` instances. Cantelop creates
-the trace context and records the Message lifecycle and `session.receive` span
-without application changes. Use `message.span()` and `message.log()` only for
-the application-specific detail that the platform cannot infer:
+the trace context, records the Message lifecycle and `session.receive` span,
+and captures `console.debug/log/info/warn/error` plus `process.stdout` and
+`process.stderr` without application changes. Output produced while a Message
+is active is attached to its current span. Startup and background output is
+retained at Sandbox scope. The original streams are still written normally.
+
+Use `message.span()` and `message.log()` only for application-specific structure
+and attributes that the platform cannot infer:
 
 ```ts
 export default defineSessionBehaviour<Input>(async ({ message }) => {
@@ -347,7 +352,9 @@ export default defineSessionBehaviour<Input>(async ({ message }) => {
 
 Nested spans retain their parent across asynchronous work. Logs emitted inside
 a span attach to that span; logs outside one attach directly to the delivery
-attempt. Names, bodies, and attributes are bounded and must be JSON
+attempt. Automatically captured output is bounded and fail-open: a full
+telemetry buffer never blocks application execution and a later warning reports
+dropped records when capacity returns. Names, bodies, and attributes are bounded and must be JSON
 serializable. Do not record secrets or full customer payloads in attributes or
 log bodies.
 

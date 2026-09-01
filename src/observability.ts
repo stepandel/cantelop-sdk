@@ -57,7 +57,7 @@ export type RuntimeObservation =
 
 export interface BufferedRuntimeObservation {
   readonly cursor: number;
-  readonly messageId: string;
+  readonly messageId: string | undefined;
   readonly observation: RuntimeObservation;
 }
 
@@ -77,7 +77,7 @@ export class RuntimeObservationBuffer {
   private nextCursor = 1;
   private pendingBytes = 0;
 
-  async publish(messageId: string, observation: RuntimeObservation): Promise<void> {
+  async publish(messageId: string | undefined, observation: RuntimeObservation): Promise<void> {
     const encoded = encodeObservation(observation);
     const bytes = Buffer.byteLength(encoded);
     if (bytes > MAX_OBSERVATION_BYTES) {
@@ -98,6 +98,29 @@ export class RuntimeObservationBuffer {
       this.pendingBytes += bytes;
       for (const wake of [...this.readers]) wake();
     });
+  }
+
+  /**
+   * Records synchronous runtime output without ever blocking application code.
+   * Explicit message.log() calls retain backpressure; console/stdout/stderr are
+   * dropped when the bounded observation buffer is full.
+   */
+  publishBestEffort(messageId: string | undefined, observation: RuntimeObservation): boolean {
+    const encoded = encodeObservation(observation);
+    const bytes = Buffer.byteLength(encoded);
+    if (bytes > MAX_OBSERVATION_BYTES ||
+        this.observations.length >= MAX_PENDING_OBSERVATIONS ||
+        this.pendingBytes + bytes > MAX_PENDING_BYTES) {
+      return false;
+    }
+    this.observations.push({
+      cursor: this.nextCursor++, messageId,
+      observation: JSON.parse(encoded) as RuntimeObservation,
+      bytes, resolve: () => undefined,
+    });
+    this.pendingBytes += bytes;
+    for (const wake of [...this.readers]) wake();
+    return true;
   }
 
   async read(after: number, signal?: AbortSignal, wait = true): Promise<readonly BufferedRuntimeObservation[]> {
@@ -211,6 +234,39 @@ export class MessageObserver {
       severity, body, occurred_at: new Date().toISOString(), attributes,
     }));
   }
+
+  recordRuntimeLog(body: string, severity: LogSeverity, source: "console" | "stdout" | "stderr"): boolean {
+    if (this.trace === undefined) return true;
+    return publishRuntimeLog(
+      this.buffer, this.messageId, this.activeSpan.getStore()?.spanId,
+      body, severity, source,
+    );
+  }
+}
+
+export function publishUnscopedRuntimeLog(
+  buffer: RuntimeObservationBuffer,
+  body: string,
+  severity: LogSeverity,
+  source: "console" | "stdout" | "stderr",
+): boolean {
+  return publishRuntimeLog(buffer, undefined, undefined, body, severity, source);
+}
+
+function publishRuntimeLog(
+  buffer: RuntimeObservationBuffer,
+  messageId: string | undefined,
+  spanId: string | undefined,
+  body: string,
+  severity: LogSeverity,
+  source: "console" | "stdout" | "stderr",
+): boolean {
+  return buffer.publishBestEffort(messageId, Object.freeze({
+    type: "log.recorded", log_id: `log_${randomHex(16)}`,
+    ...(spanId === undefined ? {} : { span_id: spanId }),
+    severity, body, occurred_at: new Date().toISOString(),
+    attributes: Object.freeze({ source, automatic: true }),
+  }));
 }
 
 function validateName(name: string): void {
