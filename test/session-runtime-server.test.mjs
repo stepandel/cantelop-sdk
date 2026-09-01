@@ -41,7 +41,11 @@ test("the native adapter receives the versioned message protocol", async (t) => 
     messageId,
   );
   assert.equal(response.headers.get("X-Cantelop-SDK-Session-Generation"), "1");
-  assert.deepEqual(received.message, {
+  assert.deepEqual({
+    id: received.message.id,
+    sequence: received.message.sequence,
+    payload: received.message.payload,
+  }, {
     id: messageId,
     sequence: 1,
     payload: { prompt: "hello" },
@@ -60,6 +64,100 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   );
   assert.equal(snapshot.status, 200);
   assert.deepEqual(await snapshot.json(), { events: [] });
+});
+
+test("the runtime emits the automatic receive span", async (t) => {
+  let observedMessage;
+  const server = createServer(
+    createSessionRuntimeHandler(behaviour(async ({ message }) => {
+      observedMessage = message;
+    })),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope({ prompt: "hello" }, "thread", messageId, traceContext())),
+  });
+  const observations = [];
+  let cursor = 0;
+  while (!observations.some(({ type }) => type === "span.completed")) {
+    const response = await fetch(
+      `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}`,
+    );
+    assert.equal(response.status, 200);
+    const batch = await response.json();
+    for (const record of batch.observations) {
+      observations.push(record.observation);
+      cursor = record.cursor;
+    }
+  }
+  const acknowledged = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}&wait=0`,
+  );
+  assert.deepEqual(await acknowledged.json(), { observations: [] });
+  assert.equal((await delivery).status, 204);
+
+  assert.deepEqual(observations.map(({ type }) => type), [
+    "span.started", "span.completed",
+  ]);
+  assert.equal(observations[0].name, "session.receive");
+  assert.deepEqual(observedMessage, {
+    id: messageId, sequence: 1, payload: { prompt: "hello" },
+  });
+  assert.equal(Object.isFrozen(observedMessage), true);
+});
+
+test("console and process output are captured automatically on the active Message span", async (t) => {
+  const server = createServer(
+    createSessionRuntimeHandler(behaviour(async () => {
+      console.debug("debug value", 1);
+      console.log("hello", { answer: 42 });
+      console.warn("careful");
+      console.error(new Error("broken"));
+      process.stdout.write("raw stdout\n");
+      process.stderr.write("raw stderr\n");
+    })),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope({}, "thread", messageId, traceContext())),
+  });
+  const observations = [];
+  let cursor = 0;
+  while (!observations.some(({ type }) => type === "span.completed")) {
+    const response = await fetch(
+      `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}`,
+    );
+    assert.equal(response.status, 200);
+    const batch = await response.json();
+    for (const record of batch.observations) {
+      observations.push(record.observation);
+      cursor = record.cursor;
+      assert.equal(record.message_id, messageId);
+    }
+  }
+  await fetch(`${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}&wait=0`);
+  assert.equal((await delivery).status, 204);
+
+  const logs = observations.filter(({ type }) => type === "log.recorded");
+  const selected = logs.filter(({ body }) =>
+    /^(debug value|hello|careful|Error: broken|raw stdout|raw stderr)/.test(body));
+  assert.deepEqual(selected.map(({ severity }) => severity), [
+    "debug", "info", "warn", "error", "info", "error",
+  ]);
+  assert.deepEqual(selected.map(({ attributes }) => attributes.source), [
+    "console", "console", "console", "console", "stdout", "stderr",
+  ]);
+  assert.ok(logs.every(({ span_id }) => span_id === observations[0].span_id));
+  assert.match(selected[1].body, /hello.*answer.*42/);
+  assert.match(selected[3].body, /Error: broken/);
 });
 
 test("the platform drains ordered Session output events", async (t) => {
@@ -525,6 +623,37 @@ test("serveSessionRuntime exposes an explicit listener-ready signal", async (t) 
   }
 });
 
+test("serveSessionRuntime exposes startup and background output at Sandbox scope", async () => {
+  const previous = process.env.CANTELOP_INTERNAL_PORT;
+  const reservation = createServer();
+  await listen(reservation);
+  const address = reservation.address();
+  assert.equal(typeof address, "object");
+  const port = address.port;
+  await close(reservation);
+  process.env.CANTELOP_INTERNAL_PORT = String(port);
+
+  let runtime;
+  try {
+    runtime = serveSessionRuntime(behaviour(async () => undefined));
+    await runtime.ready;
+    process.stdout.write("background runtime output\n");
+    const response = await fetch(
+      `http://127.0.0.1:${port}/__cantelop/v1/runtime/observations?after=0&wait=0`,
+    );
+    assert.equal(response.status, 200);
+    const batch = await response.json();
+    const record = batch.observations.find(({ observation }) =>
+      observation.body === "background runtime output");
+    assert.equal(record.message_id, undefined);
+    assert.deepEqual(record.observation.attributes, { source: "stdout", automatic: true });
+  } finally {
+    if (runtime) await runtime.close();
+    if (previous === undefined) delete process.env.CANTELOP_INTERNAL_PORT;
+    else process.env.CANTELOP_INTERNAL_PORT = previous;
+  }
+});
+
 test("serveSessionRuntime adopts the platform-prebound listener", async () => {
   const reservation = createServer();
   await listen(reservation);
@@ -609,7 +738,7 @@ function origin(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function messageEnvelope(payload, sessionId = "thread", id = messageId) {
+function messageEnvelope(payload, sessionId = "thread", id = messageId, observability) {
   return {
     session: {
       id: sessionId,
@@ -617,6 +746,16 @@ function messageEnvelope(payload, sessionId = "thread", id = messageId) {
       keep_alive_seconds: 300,
     },
     message: { id, payload },
+    ...(observability === undefined ? {} : { observability }),
+  };
+}
+
+function traceContext() {
+  return {
+    attempt_id: "att_11111111111111111111111111111111",
+    attempt: 1,
+    request_id: "req_abcdefabcdefabcdefabcdefabcdefab",
+    traceparent: "00-abcdefabcdefabcdefabcdefabcdefab-2222222222222222-01",
   };
 }
 

@@ -6,7 +6,7 @@ Cantelop applications use the SDK from both their Edge API build and native
 Session runtime image:
 
 ```sh
-pnpm add @cantelop/sdk@0.4.0
+pnpm add @cantelop/sdk@0.5.0
 ```
 
 The SDK requires Node.js 22 or newer. Cantelop's CLI invokes the
@@ -283,7 +283,7 @@ parity mode.
 CLI compatibility is explicit: `@cantelop/sdk/build` exports
 `CANTELOP_CLI_BUILD_PROTOCOL_VERSION` alongside the one-shot and watch build
 functions. Current CLIs require protocol version `3`, packaged in
-`@cantelop/sdk@0.4.0`. `cantelop doctor` rejects older or incomplete
+`@cantelop/sdk@0.5.0`. `cantelop doctor` rejects older or incomplete
 project installations before a build is attempted.
 
 ## Native Session behaviour
@@ -321,8 +321,29 @@ identity and `message.sequence` is its activation-local FIFO position. These
 objects are frozen and constructed by the trusted runtime rather than copied
 from an application request.
 
-The message protocol carries only the Session and the developer-defined
-payload. It does not assign meaning such as run, steer, or cancel. The active
+### Message observability
+
+Cantelop creates trace context, records the Message lifecycle and automatic
+`session.receive` span, and captures `console.debug/log/info/warn/error` plus
+JavaScript writes to `process.stdout` and `process.stderr` without application
+changes. Output produced while a Message is active is attached to that attempt;
+background output after runtime initialization is retained at Sandbox scope.
+The original streams are still written normally.
+
+Automatically captured output is bounded and fail-open: a full telemetry
+buffer never blocks application execution and a later warning reports dropped
+records when capacity returns. Do not write secrets or full customer payloads
+to application logs.
+
+Runtime observations travel over the private Sandbox-to-Fire-Fuse channel;
+applications do not configure a collector URL or receive an ingestion
+credential. Native subprocesses that write directly to inherited operating
+system file descriptors remain available in the host journal but are not copied
+into the application trace store.
+
+The application-visible message protocol carries the Session and the
+developer-defined payload; platform trace context is attached separately. It
+does not assign meaning such as run, steer, or cancel. The active
 runtime places messages in an in-memory FIFO mailbox and invokes the Session
 behaviour for one message at a time. Session behaviour can use a payload discriminator and its
 retained Agent instance to interpret each message.
