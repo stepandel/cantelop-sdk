@@ -6,7 +6,7 @@ Cantelop applications use the SDK from both their Edge API build and native
 Session runtime image:
 
 ```sh
-pnpm add @cantelop/sdk@0.4.0
+pnpm add @cantelop/sdk@0.5.0
 ```
 
 The SDK requires Node.js 22 or newer. Cantelop's CLI invokes the
@@ -283,7 +283,7 @@ parity mode.
 CLI compatibility is explicit: `@cantelop/sdk/build` exports
 `CANTELOP_CLI_BUILD_PROTOCOL_VERSION` alongside the one-shot and watch build
 functions. Current CLIs require protocol version `3`, packaged in
-`@cantelop/sdk@0.4.0`. `cantelop doctor` rejects older or incomplete
+`@cantelop/sdk@0.5.0`. `cantelop doctor` rejects older or incomplete
 project installations before a build is attempted.
 
 ## Native Session behaviour
