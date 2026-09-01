@@ -236,9 +236,9 @@ export class MessageObserver {
   }
 
   recordRuntimeLog(body: string, severity: LogSeverity, source: "console" | "stdout" | "stderr"): boolean {
-    if (this.trace === undefined) return true;
     return publishRuntimeLog(
-      this.buffer, this.messageId, this.activeSpan.getStore()?.spanId,
+      this.buffer, this.trace === undefined ? undefined : this.messageId,
+      this.trace === undefined ? undefined : this.activeSpan.getStore()?.spanId,
       body, severity, source,
     );
   }
