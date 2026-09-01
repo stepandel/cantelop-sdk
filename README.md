@@ -321,8 +321,45 @@ identity and `message.sequence` is its activation-local FIFO position. These
 objects are frozen and constructed by the trusted runtime rather than copied
 from an application request.
 
-The message protocol carries only the Session and the developer-defined
-payload. It does not assign meaning such as run, steer, or cancel. The active
+### Message observability
+
+Platform-delivered Messages are `ObservableMessage` instances. Cantelop creates
+the trace context and records the Message lifecycle and `session.receive` span
+without application changes. Use `message.span()` and `message.log()` only for
+the application-specific detail that the platform cannot infer:
+
+```ts
+export default defineSessionBehaviour<Input>(async ({ message }) => {
+  await message.log("message received", {
+    attributes: { kind: message.payload.type },
+  });
+
+  const answer = await message.span("model.generate", async () => {
+    await message.log("calling model", { severity: "debug" });
+    return model.generate(message.payload.prompt);
+  }, {
+    attributes: { model: "gpt-5" },
+  });
+
+  await persist(answer);
+});
+```
+
+Nested spans retain their parent across asynchronous work. Logs emitted inside
+a span attach to that span; logs outside one attach directly to the delivery
+attempt. Names, bodies, and attributes are bounded and must be JSON
+serializable. Do not record secrets or full customer payloads in attributes or
+log bodies.
+
+`message.observable` reports whether the platform supplied trace context. The
+methods remain safe with older or local delivery envelopes: `span()` runs its
+function normally and `log()` becomes a no-op. Runtime observations travel over
+the private Sandbox-to-Fire-Fuse channel; applications do not configure a
+collector URL or receive an ingestion credential.
+
+The application-visible message protocol carries the Session and the
+developer-defined payload; platform trace context is attached separately. It
+does not assign meaning such as run, steer, or cancel. The active
 runtime places messages in an in-memory FIFO mailbox and invokes the Session
 behaviour for one message at a time. Session behaviour can use a payload discriminator and its
 retained Agent instance to interpret each message.
