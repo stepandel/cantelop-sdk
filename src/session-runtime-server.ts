@@ -16,7 +16,6 @@ import type {
   SessionBehaviour,
   SessionOutput,
 } from "./session.js";
-import { ObservableMessage } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
 import {
   MessageObserver,
@@ -130,11 +129,11 @@ function createSessionRuntimeAdapter<Input, Event = never>(
         },
       });
       const observer = new MessageObserver(message.id, trace, observationBuffer);
-      const observableMessage = new ObservableMessage(message.id, sequence, message.payload, observer);
+      const sessionMessage = Object.freeze({ id: message.id, sequence, payload: message.payload });
       try {
         await runWithRuntimeLogContext(observer, () =>
           observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
-            message: observableMessage, session, env: options.env ?? process.env,
+            message: sessionMessage, session, env: options.env ?? process.env,
             activity: activityCapability, output, send,
           }))),
         );

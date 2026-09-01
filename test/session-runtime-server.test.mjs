@@ -7,7 +7,7 @@ import {
   serveSessionRuntime,
 } from "../dist/runtime.js";
 import { InMemoryMailbox } from "../dist/mailbox.js";
-import { defineSessionBehaviour, ObservableMessage } from "../dist/session.js";
+import { defineSessionBehaviour } from "../dist/session.js";
 
 const messageId = "msg_0123456789abcdef0123456789abcdef";
 const behaviour = defineSessionBehaviour;
@@ -50,8 +50,6 @@ test("the native adapter receives the versioned message protocol", async (t) => 
     sequence: 1,
     payload: { prompt: "hello" },
   });
-  assert.equal(received.message instanceof ObservableMessage, true);
-  assert.equal(received.message.observable, false);
   assert.deepEqual(received.session, {
     id: "thread",
     workspaceId: "wsp_0123456789abcdef0123456789abcdef",
@@ -68,15 +66,11 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.deepEqual(await snapshot.json(), { events: [] });
 });
 
-test("ObservableMessage emits automatic and user observations on the platform trace", async (t) => {
+test("the runtime emits the automatic receive span without a public tracing API", async (t) => {
   let observedMessage;
   const server = createServer(
     createSessionRuntimeHandler(behaviour(async ({ message }) => {
       observedMessage = message;
-      await message.log("handler entered", { attributes: { model: "test" } });
-      await message.span("model.generate", async () => {
-        await message.log("model completed", { severity: "debug" });
-      });
     })),
   );
   await listen(server);
@@ -89,7 +83,7 @@ test("ObservableMessage emits automatic and user observations on the platform tr
   });
   const observations = [];
   let cursor = 0;
-  while (observations.length < 6) {
+  while (!observations.some(({ type }) => type === "span.completed")) {
     const response = await fetch(
       `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}`,
     );
@@ -106,17 +100,14 @@ test("ObservableMessage emits automatic and user observations on the platform tr
   assert.deepEqual(await acknowledged.json(), { observations: [] });
   assert.equal((await delivery).status, 204);
 
-  assert.equal(observedMessage instanceof ObservableMessage, true);
-  assert.equal(observedMessage.observable, true);
   assert.deepEqual(observations.map(({ type }) => type), [
-    "span.started", "log.recorded", "span.started",
-    "log.recorded", "span.completed", "span.completed",
+    "span.started", "span.completed",
   ]);
   assert.equal(observations[0].name, "session.receive");
-  assert.equal(observations[2].name, "model.generate");
-  assert.equal(observations[2].parent_span_id, observations[0].span_id);
-  assert.equal(observations[1].span_id, observations[0].span_id);
-  assert.equal(observations[3].span_id, observations[2].span_id);
+  assert.deepEqual(observedMessage, {
+    id: messageId, sequence: 1, payload: { prompt: "hello" },
+  });
+  assert.equal(Object.isFrozen(observedMessage), true);
 });
 
 test("console and process output are captured automatically on the active Message span", async (t) => {

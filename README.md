@@ -323,46 +323,24 @@ from an application request.
 
 ### Message observability
 
-Platform-delivered Messages are `ObservableMessage` instances. Cantelop creates
-the trace context, records the Message lifecycle and `session.receive` span,
-and captures `console.debug/log/info/warn/error` plus `process.stdout` and
-`process.stderr` without application changes. Output produced while a Message
-is active is attached to its current span. Startup and background output is
-retained at Sandbox scope. The original streams are still written normally.
+Cantelop creates trace context, records the Message lifecycle and automatic
+`session.receive` span, and captures `console.debug/log/info/warn/error` plus
+JavaScript writes to `process.stdout` and `process.stderr` without application
+changes. Output produced while a Message is active is attached to that attempt;
+background output after runtime initialization is retained at Sandbox scope.
+The original streams are still written normally.
 
-Use `message.span()` and `message.log()` only for application-specific structure
-and attributes that the platform cannot infer:
+Automatically captured output is bounded and fail-open: a full telemetry
+buffer never blocks application execution and a later warning reports dropped
+records when capacity returns. Do not write secrets or full customer payloads
+to application logs.
 
-```ts
-export default defineSessionBehaviour<Input>(async ({ message }) => {
-  await message.log("message received", {
-    attributes: { kind: message.payload.type },
-  });
-
-  const answer = await message.span("model.generate", async () => {
-    await message.log("calling model", { severity: "debug" });
-    return model.generate(message.payload.prompt);
-  }, {
-    attributes: { model: "gpt-5" },
-  });
-
-  await persist(answer);
-});
-```
-
-Nested spans retain their parent across asynchronous work. Logs emitted inside
-a span attach to that span; logs outside one attach directly to the delivery
-attempt. Automatically captured output is bounded and fail-open: a full
-telemetry buffer never blocks application execution and a later warning reports
-dropped records when capacity returns. Names, bodies, and attributes are bounded and must be JSON
-serializable. Do not record secrets or full customer payloads in attributes or
-log bodies.
-
-`message.observable` reports whether the platform supplied trace context. The
-methods remain safe with older or local delivery envelopes: `span()` runs its
-function normally and `log()` becomes a no-op. Runtime observations travel over
-the private Sandbox-to-Fire-Fuse channel; applications do not configure a
-collector URL or receive an ingestion credential.
+Runtime observations travel over the private Sandbox-to-Fire-Fuse channel;
+applications do not configure a collector URL or receive an ingestion
+credential. This release intentionally exposes no public tracing or structured
+logging API. Native subprocesses that write directly to inherited operating
+system file descriptors remain available in the host journal but are not yet
+copied into the application trace store.
 
 The application-visible message protocol carries the Session and the
 developer-defined payload; platform trace context is attached separately. It

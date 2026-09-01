@@ -1,5 +1,4 @@
 import type { SessionIdentity } from "./resources.js";
-import type { LogOptions, MessageObserver, SpanOptions } from "./observability.js";
 
 export type Awaitable<T> = T | Promise<T>;
 
@@ -28,7 +27,7 @@ export interface SessionActivity<Message, Event> {
 }
 
 export interface SessionContext<Message, Event = never> {
-  readonly message: ObservableMessage<Message>;
+  readonly message: SessionMessage<Message>;
   readonly session: SessionIdentity;
   readonly env: SessionEnvironment;
   readonly activity: SessionActivity<Message, Event>;
@@ -36,38 +35,11 @@ export interface SessionContext<Message, Event = never> {
   send(message: Message): void;
 }
 
-/**
- * One platform-delivered Message with trace context attached automatically.
- * Lifecycle tracing requires no user code; span and log calls add application
- * detail to the same attempt trace.
- */
-export class ObservableMessage<Message> {
+/** One immutable Message delivered by the platform-owned Session mailbox. */
+export interface SessionMessage<Message> {
   readonly id: string;
   readonly sequence: number;
   readonly payload: Message;
-
-  constructor(id: string, sequence: number, payload: Message, private readonly observer: MessageObserver) {
-    this.id = id;
-    this.sequence = sequence;
-    this.payload = payload;
-    Object.freeze(this);
-  }
-
-  get observable(): boolean {
-    return this.observer.enabled;
-  }
-
-  span<Result>(name: string, work: () => Awaitable<Result>, options?: SpanOptions): Promise<Result> {
-    return options === undefined
-      ? this.observer.span(name, work)
-      : this.observer.span(name, work, options);
-  }
-
-  log(body: string, options?: LogOptions): Promise<void> {
-    return options === undefined
-      ? this.observer.log(body)
-      : this.observer.log(body, options);
-  }
 }
 
 export interface SessionBehaviour<Message, Event = never> {
@@ -81,4 +53,3 @@ export function defineSessionBehaviour<Message, Event = never>(
 }
 
 export type { SessionIdentity } from "./resources.js";
-export type { LogOptions, LogSeverity, ObservationAttributes, SpanOptions } from "./observability.js";

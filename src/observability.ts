@@ -11,15 +11,6 @@ const MAX_BATCH_OBSERVATIONS = 64;
 export type LogSeverity = "debug" | "info" | "warn" | "error";
 export type ObservationAttributes = Readonly<Record<string, unknown>>;
 
-export interface SpanOptions {
-  readonly attributes?: ObservationAttributes;
-}
-
-export interface LogOptions {
-  readonly severity?: LogSeverity;
-  readonly attributes?: ObservationAttributes;
-}
-
 export interface RuntimeTraceContext {
   readonly attemptId: string;
   readonly attempt: number;
@@ -102,8 +93,8 @@ export class RuntimeObservationBuffer {
 
   /**
    * Records synchronous runtime output without ever blocking application code.
-   * Explicit message.log() calls retain backpressure; console/stdout/stderr are
-   * dropped when the bounded observation buffer is full.
+   * Console/stdout/stderr records are dropped when the bounded observation
+   * buffer is full.
    */
   publishBestEffort(messageId: string | undefined, observation: RuntimeObservation): boolean {
     const encoded = encodeObservation(observation);
@@ -186,14 +177,9 @@ export class MessageObserver {
     private readonly buffer: RuntimeObservationBuffer,
   ) {}
 
-  get enabled(): boolean {
-    return this.trace !== undefined;
-  }
-
-  async span<Result>(name: string, work: () => Result | Promise<Result>, options: SpanOptions = {}): Promise<Result> {
-    if (typeof work !== "function") throw new TypeError("Observable Message span work must be a function");
+  async span<Result>(name: string, work: () => Result | Promise<Result>): Promise<Result> {
+    if (typeof work !== "function") throw new TypeError("Runtime span work must be a function");
     validateName(name);
-    const attributes = validateAttributes(options.attributes);
     if (this.trace === undefined) return work();
 
     const spanId = randomHex(8);
@@ -201,7 +187,7 @@ export class MessageObserver {
     await this.buffer.publish(this.messageId, Object.freeze({
       type: "span.started", span_id: spanId,
       ...(parentSpanId === undefined ? {} : { parent_span_id: parentSpanId }),
-      name, kind: "internal", started_at: new Date().toISOString(), attributes,
+      name, kind: "internal", started_at: new Date().toISOString(), attributes: Object.freeze({}),
     }));
     let status: "ok" | "error" = "ok";
     try {
@@ -215,24 +201,6 @@ export class MessageObserver {
         finished_at: new Date().toISOString(), attributes: Object.freeze({}),
       }));
     }
-  }
-
-  async log(body: string, options: LogOptions = {}): Promise<void> {
-    if (typeof body !== "string" || body.length < 1 || body.length > 16_384 || /[\0]/.test(body)) {
-      throw new TypeError("Observable Message log body must contain 1-16384 characters");
-    }
-    const severity = options.severity ?? "info";
-    if (!["debug", "info", "warn", "error"].includes(severity)) {
-      throw new TypeError("Observable Message log severity is invalid");
-    }
-    const attributes = validateAttributes(options.attributes);
-    if (this.trace === undefined) return;
-    const spanId = this.activeSpan.getStore()?.spanId;
-    await this.buffer.publish(this.messageId, Object.freeze({
-      type: "log.recorded", log_id: `log_${randomHex(16)}`,
-      ...(spanId === undefined ? {} : { span_id: spanId }),
-      severity, body, occurred_at: new Date().toISOString(), attributes,
-    }));
   }
 
   recordRuntimeLog(body: string, severity: LogSeverity, source: "console" | "stdout" | "stderr"): boolean {
@@ -271,24 +239,8 @@ function publishRuntimeLog(
 
 function validateName(name: string): void {
   if (typeof name !== "string" || name.length < 1 || name.length > 256 || /[\0\r\n]/.test(name)) {
-    throw new TypeError("Observable Message span name must contain 1-256 characters");
+    throw new TypeError("Runtime span name must contain 1-256 characters");
   }
-}
-
-function validateAttributes(attributes: ObservationAttributes | undefined): ObservationAttributes {
-  if (attributes === undefined) return Object.freeze({});
-  if (typeof attributes !== "object" || attributes === null || Array.isArray(attributes)) {
-    throw new TypeError("Observation attributes must be an object");
-  }
-  const encoded = JSON.stringify(attributes);
-  if (encoded === undefined || Buffer.byteLength(encoded) > 16_384) {
-    throw new TypeError("Observation attributes exceed 16384 bytes");
-  }
-  const decoded = JSON.parse(encoded) as unknown;
-  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
-    throw new TypeError("Observation attributes must be JSON serializable");
-  }
-  return Object.freeze(decoded as Record<string, unknown>);
 }
 
 function encodeObservation(observation: RuntimeObservation): string {
