@@ -91,7 +91,29 @@ function capture(rawBody: string, severity: LogSeverity, source: RuntimeLogSourc
   if (captureSuppressed.getStore()) return;
   const target = activeObserver.getStore() ?? soleRuntimeBuffer();
   if (target === undefined) return;
-  for (const line of normalizedLines(rawBody)) record(target, line, severity, source);
+  for (const line of normalizedLines(rawBody)) {
+    record(target, line, classifyRuntimeLogSeverity(line, severity, source), source);
+  }
+}
+
+export function classifyRuntimeLogSeverity(
+  body: string,
+  fallback: LogSeverity,
+  source: RuntimeLogSource,
+): LogSeverity {
+  if (source !== "stderr") return fallback;
+  try {
+    const value = JSON.parse(body) as unknown;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return fallback;
+    const event = value as Record<string, unknown>;
+    if (event.component === "cantelop.sdk" &&
+        (event.event === "message_lifecycle" || event.event === "session_runtime_startup_stage")) {
+      return "info";
+    }
+  } catch {
+    // User stderr remains an error when it is not a structured SDK record.
+  }
+  return fallback;
 }
 
 function soleRuntimeBuffer(): RuntimeObservationBuffer | undefined {
