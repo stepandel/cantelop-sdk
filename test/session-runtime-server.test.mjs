@@ -66,7 +66,7 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.deepEqual(await snapshot.json(), { events: [] });
 });
 
-test("the runtime emits the automatic receive span without a public tracing API", async (t) => {
+test("the runtime emits the automatic receive span", async (t) => {
   let observedMessage;
   const server = createServer(
     createSessionRuntimeHandler(behaviour(async ({ message }) => {

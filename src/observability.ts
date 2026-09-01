@@ -168,7 +168,7 @@ export class RuntimeObservationBuffer {
   }
 }
 
-export class MessageObserver {
+export class RuntimeObserver {
   private readonly activeSpan = new AsyncLocalStorage<ActiveSpan>();
 
   constructor(

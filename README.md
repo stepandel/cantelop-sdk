@@ -337,10 +337,9 @@ to application logs.
 
 Runtime observations travel over the private Sandbox-to-Fire-Fuse channel;
 applications do not configure a collector URL or receive an ingestion
-credential. This release intentionally exposes no public tracing or structured
-logging API. Native subprocesses that write directly to inherited operating
-system file descriptors remain available in the host journal but are not yet
-copied into the application trace store.
+credential. Native subprocesses that write directly to inherited operating
+system file descriptors remain available in the host journal but are not copied
+into the application trace store.
 
 The application-visible message protocol carries the Session and the
 developer-defined payload; platform trace context is attached separately. It

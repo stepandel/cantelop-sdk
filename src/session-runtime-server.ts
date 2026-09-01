@@ -18,7 +18,7 @@ import type {
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
 import {
-  MessageObserver,
+  RuntimeObserver,
   RuntimeObservationBuffer,
   type RuntimeTraceContext,
 } from "./observability.js";
@@ -128,12 +128,11 @@ function createSessionRuntimeAdapter<Input, Event = never>(
           return activity.cancel(reason);
         },
       });
-      const observer = new MessageObserver(message.id, trace, observationBuffer);
-      const sessionMessage = Object.freeze({ id: message.id, sequence, payload: message.payload });
+      const observer = new RuntimeObserver(message.id, trace, observationBuffer);
       try {
         await runWithRuntimeLogContext(observer, () =>
           observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
-            message: sessionMessage, session, env: options.env ?? process.env,
+            message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
             activity: activityCapability, output, send,
           }))),
         );

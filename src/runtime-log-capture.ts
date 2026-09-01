@@ -4,24 +4,24 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { format } from "node:util";
 
 import {
-  MessageObserver,
+  RuntimeObserver,
   RuntimeObservationBuffer,
   publishUnscopedRuntimeLog,
   type LogSeverity,
 } from "./observability.js";
 
 type RuntimeLogSource = "console" | "stdout" | "stderr";
-type CaptureTarget = MessageObserver | RuntimeObservationBuffer;
+type CaptureTarget = RuntimeObserver | RuntimeObservationBuffer;
 
 const MAX_LOG_BODY = 16_384;
-const activeObserver = new AsyncLocalStorage<MessageObserver>();
+const activeObserver = new AsyncLocalStorage<RuntimeObserver>();
 const captureSuppressed = new AsyncLocalStorage<boolean>();
 const runtimeBuffers = new Set<RuntimeObservationBuffer>();
 const droppedByTarget = new WeakMap<CaptureTarget, number>();
 let installed = false;
 
 export function runWithRuntimeLogContext<Result>(
-  observer: MessageObserver,
+  observer: RuntimeObserver,
   work: () => Result,
 ): Result {
   installRuntimeLogCapture();
@@ -137,7 +137,7 @@ function publish(
   source: RuntimeLogSource,
 ): boolean {
   try {
-    return target instanceof MessageObserver
+    return target instanceof RuntimeObserver
       ? target.recordRuntimeLog(body, severity, source)
       : publishUnscopedRuntimeLog(target, body, severity, source);
   } catch {

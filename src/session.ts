@@ -27,19 +27,16 @@ export interface SessionActivity<Message, Event> {
 }
 
 export interface SessionContext<Message, Event = never> {
-  readonly message: SessionMessage<Message>;
+  readonly message: Readonly<{
+    id: string;
+    sequence: number;
+    payload: Message;
+  }>;
   readonly session: SessionIdentity;
   readonly env: SessionEnvironment;
   readonly activity: SessionActivity<Message, Event>;
   readonly output: SessionOutput<Event>;
   send(message: Message): void;
-}
-
-/** One immutable Message delivered by the platform-owned Session mailbox. */
-export interface SessionMessage<Message> {
-  readonly id: string;
-  readonly sequence: number;
-  readonly payload: Message;
 }
 
 export interface SessionBehaviour<Message, Event = never> {
