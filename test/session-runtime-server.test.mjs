@@ -7,7 +7,7 @@ import {
   serveSessionRuntime,
 } from "../dist/runtime.js";
 import { InMemoryMailbox } from "../dist/mailbox.js";
-import { defineSessionBehaviour } from "../dist/session.js";
+import { defineSessionBehaviour, ObservableMessage } from "../dist/session.js";
 
 const messageId = "msg_0123456789abcdef0123456789abcdef";
 const behaviour = defineSessionBehaviour;
@@ -41,11 +41,17 @@ test("the native adapter receives the versioned message protocol", async (t) => 
     messageId,
   );
   assert.equal(response.headers.get("X-Cantelop-SDK-Session-Generation"), "1");
-  assert.deepEqual(received.message, {
+  assert.deepEqual({
+    id: received.message.id,
+    sequence: received.message.sequence,
+    payload: received.message.payload,
+  }, {
     id: messageId,
     sequence: 1,
     payload: { prompt: "hello" },
   });
+  assert.equal(received.message instanceof ObservableMessage, true);
+  assert.equal(received.message.observable, false);
   assert.deepEqual(received.session, {
     id: "thread",
     workspaceId: "wsp_0123456789abcdef0123456789abcdef",
@@ -60,6 +66,57 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   );
   assert.equal(snapshot.status, 200);
   assert.deepEqual(await snapshot.json(), { events: [] });
+});
+
+test("ObservableMessage emits automatic and user observations on the platform trace", async (t) => {
+  let observedMessage;
+  const server = createServer(
+    createSessionRuntimeHandler(behaviour(async ({ message }) => {
+      observedMessage = message;
+      await message.log("handler entered", { attributes: { model: "test" } });
+      await message.span("model.generate", async () => {
+        await message.log("model completed", { severity: "debug" });
+      });
+    })),
+  );
+  await listen(server);
+  t.after(() => close(server));
+
+  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(messageEnvelope({ prompt: "hello" }, "thread", messageId, traceContext())),
+  });
+  const observations = [];
+  let cursor = 0;
+  while (observations.length < 6) {
+    const response = await fetch(
+      `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}`,
+    );
+    assert.equal(response.status, 200);
+    const batch = await response.json();
+    for (const record of batch.observations) {
+      observations.push(record.observation);
+      cursor = record.cursor;
+    }
+  }
+  const acknowledged = await fetch(
+    `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}&wait=0`,
+  );
+  assert.deepEqual(await acknowledged.json(), { observations: [] });
+  assert.equal((await delivery).status, 204);
+
+  assert.equal(observedMessage instanceof ObservableMessage, true);
+  assert.equal(observedMessage.observable, true);
+  assert.deepEqual(observations.map(({ type }) => type), [
+    "span.started", "log.recorded", "span.started",
+    "log.recorded", "span.completed", "span.completed",
+  ]);
+  assert.equal(observations[0].name, "session.receive");
+  assert.equal(observations[2].name, "model.generate");
+  assert.equal(observations[2].parent_span_id, observations[0].span_id);
+  assert.equal(observations[1].span_id, observations[0].span_id);
+  assert.equal(observations[3].span_id, observations[2].span_id);
 });
 
 test("the platform drains ordered Session output events", async (t) => {
@@ -609,7 +666,7 @@ function origin(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function messageEnvelope(payload, sessionId = "thread", id = messageId) {
+function messageEnvelope(payload, sessionId = "thread", id = messageId, observability) {
   return {
     session: {
       id: sessionId,
@@ -617,6 +674,16 @@ function messageEnvelope(payload, sessionId = "thread", id = messageId) {
       keep_alive_seconds: 300,
     },
     message: { id, payload },
+    ...(observability === undefined ? {} : { observability }),
+  };
+}
+
+function traceContext() {
+  return {
+    attempt_id: "att_11111111111111111111111111111111",
+    attempt: 1,
+    request_id: "req_abcdefabcdefabcdefabcdefabcdefab",
+    traceparent: "00-abcdefabcdefabcdefabcdefabcdefab-2222222222222222-01",
   };
 }
 
