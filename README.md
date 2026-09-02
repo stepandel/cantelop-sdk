@@ -272,8 +272,6 @@ When native dependencies or system tools require a custom image, expand the
 The Docker build context is always the directory containing `cantelop.json`,
 even when the Dockerfile is in a subdirectory. Resolve Dockerfile `COPY` paths
 from that project root and place build ignore rules in its `.dockerignore`.
-`session.context` is no longer supported: remove it from existing manifests
-and adjust `COPY` paths and ignore rules if it previously named a subdirectory.
 
 ## Workspaces
 
