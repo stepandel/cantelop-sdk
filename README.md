@@ -74,6 +74,32 @@ process, and a mailbox that handles messages one at a time. Requests using the
 same Session ID reach the same logical actor. Your code decides how to handle
 each message.
 
+### Actor model and message lifecycle
+
+Cantelop separates the public Edge API from the native agent runtime. The Edge
+API validates HTTP requests and dispatches application-defined messages; the
+Session behaviour owns the agent, model, and business logic inside Linux.
+
+```text
+Client -> Edge API -> Session actor mailbox -> Session behaviour
+                                                   |-> managed activity
+                                                   `-> output events
+```
+
+A Session is an addressable actor. Opening the same App-scoped Session ID always
+targets the same logical actor, even when requests arrive at different Edge API
+workers. During each activation, Cantelop gives that actor a dedicated Sandbox
+running exactly one SDK-managed Session runtime process. The process is never
+shared by multiple Sessions, so module-level agent and conversation state is
+per-Session.
+
+The runtime processes the actor's in-memory mailbox one message at a time in  
+acceptance order. Long-running agent work can move into the Session's single  
+managed activity, allowing the mailbox to keep receiving commands such as  
+steer and cancel. The application defines what every message means; Cantelop  
+only provides identity, routing, serialization, activity management, and event  
+transport.
+
 ## Edge API
 
 In `src/api.ts`, define a `/chat` route that opens a Session and sends it a
@@ -230,32 +256,6 @@ even when the Dockerfile is in a subdirectory. Resolve Dockerfile `COPY` paths
 from that project root and place build ignore rules in its `.dockerignore`.
 `session.context` is no longer supported: remove it from existing manifests
 and adjust `COPY` paths and ignore rules if it previously named a subdirectory.
-
-## Actor model and message lifecycle
-
-Cantelop separates the public Edge API from the native agent runtime. The Edge
-API validates HTTP requests and dispatches application-defined messages; the
-Session behaviour owns the agent, model, and business logic inside Linux.
-
-```text
-Client -> Edge API -> Session actor mailbox -> Session behaviour
-                                                   |-> managed activity
-                                                   `-> output events
-```
-
-A Session is an addressable actor. Opening the same App-scoped Session ID always
-targets the same logical actor, even when requests arrive at different Edge API
-workers. During each activation, Cantelop gives that actor a dedicated Sandbox
-running exactly one SDK-managed Session runtime process. The process is never
-shared by multiple Sessions, so module-level agent and conversation state is
-per-Session.
-
-The runtime processes the actor's in-memory mailbox one message at a time in  
-acceptance order. Long-running agent work can move into the Session's single  
-managed activity, allowing the mailbox to keep receiving commands such as  
-steer and cancel. The application defines what every message means; Cantelop  
-only provides identity, routing, serialization, activity management, and event  
-transport.
 
 ## Workspaces
 
