@@ -43,6 +43,8 @@ Cantelop SDK can be installed directly in your app:
 bun add @cantelop/sdk@latest
 ```
 
+
+
 ## Initialize a project
 
 Start with a single command
@@ -60,6 +62,8 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
   "session": "src/session.ts"
 }
 ```
+
+
 
 ## Architecture overview
 
@@ -163,6 +167,8 @@ production value and cannot be used with `secret: true`.
 It defaults to `false`; setting it does not create or upload a secret.
 - `required` tells `cantelop doctor` to check that the target App has that name  
 configured with the declared kind.
+
+
 
 ### Run with local values
 
@@ -299,16 +305,18 @@ const workspaceId = workspace.id;
 
 ## Sessions and messages
 
-Every message belongs to a Session. `app.sessions.open()` is lazy: it only
-creates a local reference. The first `dispatch()` allocates a Sandbox if needed
-and sends the message. Omitting `id` generates one in the SDK, immediately
+Every message belongs to a Session. `app.sessions.open()` is lazy and creates
+a local reference. The first `dispatch()` allocates a Sandbox if needed  
+and sends the message. Omitting `id` generates one in the SDK, immediately  
 available as `session.id`.
 
-`Session<Message>` is the actor reference: it exposes immutable identity and
-configuration together with `dispatch()` and `events()`. Its `id`,
-`workspaceId`, and `keepAliveSeconds` properties are available before the first
-request. Native Session behaviour receives the same values as a read-only
-`SessionIdentity`.
+```ts
+const session = app.sessions.open({
+  id: "telegram",
+  workspaceId,
+  keepAliveSeconds: 300,
+});
+```
 
 A Session keeps its Sandbox warm for `keepAliveSeconds` after work completes.
 If the Sandbox has already been released, the platform can reactivate the same
@@ -319,21 +327,10 @@ soon as the mailbox and managed activity are idle.
 Releasing a Sandbox clears its temporary storage. Files in the persistent
 `/workspace` mount survive and are available to the next Sandbox.
 
-Distributed API workers converge on one Session by opening the same
-application-defined ID:
-
-```ts
-const session = app.sessions.open({
-  id: "telegram",
-  workspaceId,
-  keepAliveSeconds: 300,
-});
-```
-
 Opening a Session requires a `workspaceId` from [Workspaces](#workspaces) and
 an explicit `keepAliveSeconds`. The Session ID is immutable and App-scoped,
 while `keepAliveSeconds` applies to each request. Use a new ID for a distinct
-logical Session, not merely because its Sandbox was released.
+logical Session.
 
 ### Add steering
 
