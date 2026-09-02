@@ -287,8 +287,8 @@ storage: its files survive Sandbox termination and remain available when a new
 Sandbox starts.
 
 A Workspace can be shared by multiple Sessions, including Sandboxes running
-in parallel. They access the same files, so your application should coordinate
-concurrent writes.
+in parallel. They access the same files through NFS, which supports concurrent
+reads and writes across Sandboxes.
 
 Workspaces are scoped to an App and addressed by a server-selected slug:
 
