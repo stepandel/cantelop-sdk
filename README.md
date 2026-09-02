@@ -43,8 +43,6 @@ Cantelop SDK can be installed directly in your app:
 bun add @cantelop/sdk@latest
 ```
 
-
-
 ## Initialize a project
 
 Start with a single command
@@ -62,8 +60,6 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
   "session": "src/session.ts"
 }
 ```
-
-
 
 ## Architecture overview
 
@@ -167,8 +163,6 @@ production value and cannot be used with `secret: true`.
 It defaults to `false`; setting it does not create or upload a secret.
 - `required` tells `cantelop doctor` to check that the target App has that name  
 configured with the declared kind.
-
-
 
 ### Run with local values
 
@@ -367,7 +361,7 @@ provider-specific steering and cancellation.
 ## Response streaming (SSE and WebSockets)
 
 Publish responses from a Session behaviour or managed activity with
-`output.send()`. Events are separate from the HTTP response to `dispatch()`:
+`output.send()`.
 
 ```ts
 for await (const delta of generate(prompt)) {
@@ -397,10 +391,10 @@ router.route("GET", "/events", async ({ request }) => {
 Both transports use this route:
 
 - **SSE:** connect with `new EventSource("/events")` or
-  `Accept: text/event-stream`. Reconnects use `Last-Event-ID` automatically
-  with `EventSource`.
+`Accept: text/event-stream`. Reconnects use `Last-Event-ID` automatically
+with `EventSource`.
 - **WebSockets:** connect using subprotocol `cantelop.events.v1`. The stream is
-  output-only; send chat, steering, and cancellation through HTTP `dispatch()`.
+output-only; send chat, steering, and cancellation through HTTP `dispatch()`.
 
 Each event contains your payload plus `sequence`, `session_id`, `message_id`,
 and `created_at`. To resume either transport, use `?after=<sequence>`.
