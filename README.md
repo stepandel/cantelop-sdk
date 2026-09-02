@@ -63,27 +63,6 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
 }
 ```
 
-## Deploy
-
-For the first deployment, authenticate the CLI and deploy the App named in
-`cantelop.json`:
-
-```sh
-cantelop login
-cantelop deploy --create-app
-```
-
-Run `cantelop doctor` to check the toolchain, project, and required production
-configuration once the App exists. For subsequent deployments, use:
-
-```sh
-cantelop deploy
-```
-
-`cantelop deploy` builds the Edge API and `linux/amd64` Session image, uploads
-them, and creates a release. Run `cantelop deploy --dry-run` first to perform
-the same build without login, upload, or release creation.
-
 ## Environments
 
 The `environment` field in `cantelop.json` documents the configuration your app
@@ -167,6 +146,27 @@ Use `env set` or `secret set` again to update a value. Remove it with
 `cantelop app env unset APP_ID NAME` or
 `cantelop app secret unset APP_ID NAME`. A name cannot be both a variable and a
 secret; unset its existing value before changing its kind.
+
+## Deploy
+
+For the first deployment, authenticate the CLI and deploy the App named in
+`cantelop.json`:
+
+```sh
+cantelop login
+cantelop deploy --create-app
+```
+
+Run `cantelop doctor` to check the toolchain, project, and required production
+configuration once the App exists. For subsequent deployments, use:
+
+```sh
+cantelop deploy
+```
+
+`cantelop deploy` builds the Edge API and `linux/amd64` Session image, uploads
+them, and creates a release. Run `cantelop deploy --dry-run` first to perform
+the same build without login, upload, or release creation.
 
 ## Architecture
 
