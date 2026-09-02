@@ -6,7 +6,7 @@ Cantelop applications use the SDK from both their Edge API build and native
 Session runtime image:
 
 ```sh
-pnpm add @cantelop/sdk@0.5.1
+pnpm add @cantelop/sdk@0.6.0
 ```
 
 The SDK requires Node.js 22 or newer. Cantelop's CLI invokes the
@@ -124,19 +124,16 @@ otherwise it resumes that Session. Omitting `id`
 generates one in the SDK, which is immediately available as `session.id`.
 
 `Session<Message>` is the actor reference: it exposes immutable identity and
-configuration together with `dispatch()` and `terminate()`. Its `id`,
+configuration together with `dispatch()` and `events()`. Its `id`,
 `workspaceId`, and `keepAliveSeconds` properties are available before the first
 request. Native Session behaviour receives the same values as a read-only
 `SessionIdentity`.
 
 A Session keeps its Sandbox warm for `keepAliveSeconds` after work completes.
 If the Sandbox has already been released, the platform can reactivate the same
-logical Session on a new Sandbox. Explicitly terminating the Session makes it
-final:
-
-```ts
-await app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 }).terminate();
-```
+logical Session on a new Sandbox. The Session identity remains reusable when
+its Sandbox is released. Set `keepAliveSeconds: 0` to release the Sandbox as
+soon as the mailbox and managed activity are idle.
 
 Distributed API workers converge on one Session by opening the same
 application-defined ID:
@@ -497,10 +494,9 @@ For WebSockets, connect to that same App route with subprotocol
 Client data frames are rejected with a policy-violation close; steering and
 other input remain HTTP messages.
 
-Disconnecting either transport cancels only that subscription. It does not call
-`session.terminate()`, does not keep a Sandbox warm, and does not discard the
-Session. A reconnect resumes from its supplied cursor. Explicit
-`session.terminate()` closes the event stream normally.
+Disconnecting either transport cancels only that subscription. Event
+subscriptions do not keep a Sandbox warm or control Session lifetime. The
+Session remains reusable, and a reconnect resumes from its supplied cursor.
 
 Replay is a volatile, bounded platform cache rather than durable history. The
 default bound is 256 events and 1 MiB per Session, with global stream and byte

@@ -189,23 +189,6 @@ test("a Message reference reads each observable lifecycle state", async () => {
   assert.deepEqual(await message.status(), { state: "unknown" });
 });
 
-test("Session termination targets the logical Session", async () => {
-  let forwarded;
-  const app = createRemoteApp({
-    fetch: async (request) => {
-      forwarded = request;
-      return new Response(null, { status: 204 });
-    },
-  });
-
-  await app.sessions.open({ id: namedSessionId, workspaceId, keepAliveSeconds: 0 }).terminate();
-  assert.equal(forwarded.method, "DELETE");
-  assert.equal(
-    forwarded.url,
-    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}`,
-  );
-});
-
 test("Session events adapt an App route to the private streaming endpoint", async () => {
   let forwarded;
   const app = createRemoteApp({
@@ -281,7 +264,7 @@ test("resource configuration is validated before transport", async () => {
 test("remote errors expose stable codes without leaking messages", async () => {
   const app = createRemoteApp({
     fetch: async () => Response.json(
-      { error: { code: "session_terminated", message: "private detail" } },
+      { error: { code: "workspace_unavailable", message: "private detail" } },
       { status: 409 },
     ),
   });
@@ -289,7 +272,7 @@ test("remote errors expose stable codes without leaking messages", async () => {
   const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
   await assert.rejects(session.dispatch({}), (error) => {
     assert.ok(error instanceof RemoteAppError);
-    assert.equal(error.code, "session_terminated");
+    assert.equal(error.code, "workspace_unavailable");
     assert.equal(error.status, 409);
     assert.doesNotMatch(error.message, /private detail/);
     return true;

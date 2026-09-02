@@ -137,14 +137,6 @@ function createRemoteSession<Input>(
         signal: request.signal,
       }));
     },
-
-    async terminate(): Promise<void> {
-      await requestJSON(
-        runtimeFetch,
-        `/__cantelop/v1/sessions/${encodeURIComponent(this.id)}`,
-        { method: "DELETE" },
-      );
-    },
   });
 }
 
@@ -238,7 +230,7 @@ function readMessageStatus(envelope: unknown, expectedMessage: string): MessageS
 }
 
 interface RequestOptions {
-  readonly method: "DELETE" | "GET" | "POST";
+  readonly method: "GET" | "POST";
   readonly body?: unknown;
 }
 
