@@ -332,85 +332,35 @@ an explicit `keepAliveSeconds`. The Session ID is immutable and App-scoped,
 while `keepAliveSeconds` applies to each request. Use a new ID for a distinct
 logical Session.
 
-### Add steering
+### Implementing different message types
 
-Once chat works, extend the message union with a steer command:
+You define the message protocol and control how each message is handled.
+Cantelop routes messages to the Session's Sandbox; it does not assign business
+logic to names such as `chat`, `steer`, or `cancel`.
 
-```ts
-type SessionMessage =
-  | { type: "chat"; prompt: string }
-  | { type: "steer"; prompt: string };
-```
-
-Then add `/steer` inside the same `defineApi` callback. It requires the
-`sessionId` returned by `/chat`, ensuring the command reaches the same actor:
-
-```ts
-router.route("POST", "/steer", async ({ request }) => {
-  const body = await request.json() as {
-    sessionId: string;
-    keepAliveSeconds: number;
-    prompt: string;
-  };
-  const workspace = await app.workspaces.open({ slug: workspaceSlug });
-  const session = app.sessions.open({
-    id: body.sessionId,
-    workspaceId: workspace.id,
-    keepAliveSeconds: body.keepAliveSeconds,
-  });
-  const message = await session.dispatch({
-    type: "steer",
-    prompt: body.prompt,
-  });
-  return Response.json({ sessionId: session.id, message }, { status: 202 });
-});
-```
-
-The application developer owns the steering semantics. The SDK only routes the
-message to the Sandbox for that Session; the Session behaviour can pass it to a
-provider's steering API, queue it, treat it as a new prompt, or apply any other
-business logic. If steering must reach an active turn immediately, that
-long-running turn should run as a managed activity rather than blocking the
-actor's mailbox.
-
-### Add cancellation
-
-Finally, add cancel to the message union:
+Extend the message type used by your API and Session behaviour, then dispatch
+to the same Session reference:
 
 ```ts
 type SessionMessage =
   | { type: "chat"; prompt: string }
   | { type: "steer"; prompt: string }
   | { type: "cancel" };
+
+await session.dispatch({ type: "steer", prompt: "Focus on the tests first." });
+await session.dispatch({ type: "cancel" });
 ```
 
-The `/cancel` route dispatches to the same actor just like `/steer`:
+Your behaviour inspects `message.payload.type` and decides whether to queue
+work, call a provider's steering API, cancel an activity, or do something else.
+Use a managed activity for long-running work so later messages can be handled
+while it runs.
 
-```ts
-router.route("POST", "/cancel", async ({ request }) => {
-  const body = await request.json() as {
-    sessionId: string;
-    keepAliveSeconds: number;
-  };
-  const workspace = await app.workspaces.open({ slug: workspaceSlug });
-  const session = app.sessions.open({
-    id: body.sessionId,
-    workspaceId: workspace.id,
-    keepAliveSeconds: body.keepAliveSeconds,
-  });
-  const message = await session.dispatch({ type: "cancel" });
-  return Response.json({ sessionId: session.id, message }, { status: 202 });
-});
-```
+See the [OpenAI](./examples/openai), [Anthropic](./examples/anthropic), and
+[Pi](./examples/pi) examples for complete routes, message handlers, and
+provider-specific steering and cancellation.
 
-The application developer also owns cancellation semantics. Cancel is an
-application-defined message, not an automatic runtime action. The SDK delivers
-it to the relevant Sandbox, and the Session behaviour decides whether to abort
-a managed activity, call a provider-specific cancellation API, clear queued
-work, or do something else. Calling `activity.cancel()` requests cooperative
-cancellation through the activity's `AbortSignal`; it does not discard the
-Session or immediately release its Sandbox. Once all work is idle,
-`keepAliveSeconds` controls when the Sandbox is released.
+### Dispatching and tracking messages
 
 Webhook handlers can dispatch a message asynchronously and acknowledge after
 the platform accepts it for delivery:
@@ -583,49 +533,8 @@ retained Agent instance to interpret each message.
 
 Long-running work that must accept later steer or cancel messages runs as the
 Session's runtime-managed activity. Starting the activity does not block the
-mailbox. External and
-self-generated messages use the same FIFO sequence:
-
-```ts
-type SessionMessage =
-  | { type: "chat"; prompt: string }
-  | { type: "steer"; prompt: string }
-  | { type: "cancel" };
-
-type SessionEvent = { type: "done"; result: unknown };
-
-interface Agent {
-  run(prompt: string, options: { signal: AbortSignal }): Promise<unknown>;
-  steer(prompt: string): void;
-}
-
-declare function createAgent(): Agent;
-
-let agent: Agent | undefined;
-
-export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) => {
-  const command = context.message.payload;
-
-  if (command.type === "chat") {
-    agent ??= createAgent();
-    const activeAgent = agent;
-    context.activity.start(async ({ signal, output }) => {
-      const result = await activeAgent.run(command.prompt, { signal });
-      await output.send({ type: "done", result });
-    });
-    return;
-  }
-
-  if (command.type === "steer") {
-    agent?.steer(command.prompt);
-    return;
-  }
-
-  if (command.type === "cancel") {
-    context.activity.cancel();
-  }
-});
-```
+mailbox. External and self-generated messages use the same FIFO sequence.
+The [provider examples](#examples) demonstrate this pattern with real agents.
 
 Each Session has at most one managed activity. `activity.active` reports whether
 it is running, starting another activity fails the current message, and
