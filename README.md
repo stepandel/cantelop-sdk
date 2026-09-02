@@ -63,6 +63,8 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
 }
 ```
 
+
+
 ## Environments
 
 The `environment` field in `cantelop.json` documents the configuration your app
@@ -83,11 +85,11 @@ Add an `environment` block to your manifest:
 ```
 
 - `default` supplies a string value for local development. It never sets a
-  production value and cannot be used with `secret: true`.
+production value and cannot be used with `secret: true`.
 - `secret` tells the CLI to use encrypted environment variables for the production value.
-  It defaults to `false`; setting it does not create or upload a secret.
-- `required` tells `cantelop doctor` to check that the target App has that name
-  configured with the declared kind.
+It defaults to `false`; setting it does not create or upload a secret.
+- `required` tells `cantelop doctor` to check that the target App has that name  
+configured with the declared kind.
 
 ### Run with local values
 
