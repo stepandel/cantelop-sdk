@@ -292,6 +292,9 @@ Each Sandbox mounts its Session's Workspace at `/workspace`. This is durable
 storage: its files survive Sandbox termination and remain available when a new
 Sandbox starts.
 
+The platform default image starts the Session process in `/workspace`, so
+relative file paths resolve inside the durable Workspace.
+
 A Workspace can be shared by multiple Sessions, including Sandboxes running
 in parallel. They access the same files through NFS, which supports concurrent
 reads and writes across Sandboxes.
