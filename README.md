@@ -268,6 +268,24 @@ in-memory agent state. The logical Session identity and Workspace remain, but
 applications must persist any provider state they need to resume. Reactivation
 starts a new dedicated process for the same logical Session.
 
+## Workspaces
+
+A Workspace is the durable filesystem used by your agent. It outlives the
+Sandboxes that mount it, and Sessions in the same Workspace share its files.
+Workspaces are scoped to an App and addressed by a server-selected slug:
+
+```ts
+const workspace = await app.workspaces.open({ slug: "user-1" });
+const workspaceId = workspace.id;
+```
+
+Pass the returned `workspaceId` when opening a Session. The Session's Workspace
+is fixed when its first message creates it; opening the same Session ID against
+a different Workspace conflicts.
+
+Workspace creation takes a routing `slug`. The current App identity is derived
+by the trusted bridge and cannot be supplied or overridden by application code.
+
 ## Sessions and messages
 
 Every message belongs to a Session. `app.sessions.open()` creates a local
@@ -294,19 +312,10 @@ const session = app.sessions.open({
 });
 ```
 
-Existing Workspaces remain addressable by their App-scoped slug:
-
-```ts
-const workspace = await app.workspaces.open({ slug: "user-1" });
-```
-
-`workspaceId` and `keepAliveSeconds` are always required when opening a Session,
-so its Workspace and Sandbox lifetime remain explicit caller decisions.
-
-The Session ID is immutable and App-scoped. Its Workspace is fixed when the
-first message creates it, while `keepAliveSeconds` applies to each request.
-Opening an existing ID against a different Workspace conflicts. Termination is
-still final; use a new ID for a distinct logical Session.
+Opening a Session requires a `workspaceId` from [Workspaces](#workspaces) and
+an explicit `keepAliveSeconds`. The Session ID is immutable and App-scoped,
+while `keepAliveSeconds` applies to each request. Termination is final; use a
+new ID for a distinct logical Session.
 
 ### Add steering
 
@@ -440,9 +449,6 @@ reactivation loses queued messages and completed deduplication records. The
 message reference therefore confirms volatile acceptance, not durable persistence,
 and does not contain the eventual Session output. IDs also cannot make arbitrary
 external side effects exactly-once.
-
-Workspace creation takes a routing `slug`. The current App identity is derived
-by the trusted bridge and cannot be supplied or overridden by application code.
 
 API modules run in an Edge runtime. They may use standard ECMAScript and Web
 Platform APIs such as `fetch`, `Request`, `Response`, Web Streams, abort
