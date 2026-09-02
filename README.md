@@ -1,5 +1,10 @@
 # Cantelop SDK
 
+Cantelop is a platform for running agents in isolated Sandboxes with persistent
+Workspaces. This TypeScript SDK lets you define an agent's HTTP API and Session
+runtime, send messages to the agent, and stream its responses. You control the
+agent logic; Cantelop manages routing and Sandbox lifecycle.
+
 ## Prerequisites
 
 ### To use the SDK
