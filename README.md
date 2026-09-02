@@ -1,5 +1,12 @@
 # Cantelop SDK
 
+## Prerequisites
+
+- Node.js 22 or newer and Bun
+- Docker with `linux/amd64` build support for deployment
+- An API key for the agent provider you plan to use
+- A Cantelop account
+
 ## Install
 
 Cantelop applications use the SDK from both their Edge API build and native
@@ -9,8 +16,8 @@ Session runtime image:
 pnpm add @cantelop/sdk@0.5.1
 ```
 
-The SDK requires Node.js 22 or newer. Cantelop's CLI invokes the
-project-installed `@cantelop/sdk/build`; it does not carry a second SDK copy.
+Cantelop's CLI invokes the project-installed `@cantelop/sdk/build`; it does not
+carry a second SDK copy.
 
 ## Initialize a project
 
