@@ -14,7 +14,7 @@ import {
 } from "../dist/build.js";
 
 test("the build module declares its CLI compatibility protocol", () => {
-  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 3);
+  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 4);
   assert.equal(typeof buildLocalApi, "function");
   assert.equal(typeof watchLocalProject, "function");
 });

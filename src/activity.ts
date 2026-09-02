@@ -6,9 +6,10 @@ import type {
 } from "./session.js";
 
 interface ActiveActivity<Message> {
- readonly id: string;
+  readonly id: string;
   readonly controller: AbortController;
   readonly messages: Message[];
+  messageBytes: number;
   settled: boolean;
   deadline: number;
   cancelledAt?: string;
@@ -22,7 +23,7 @@ export class InMemoryActivity<Message, Event> {
     private readonly sendMessage: (payload: Message) => void,
     private readonly sendOutput: (messageId: string, event: Event, signal: AbortSignal) => Promise<void>,
     private readonly stateChanged: () => void = () => undefined,
-  ) {}
+  ) { }
 
   get active(): boolean {
     return this.current !== undefined;
@@ -31,16 +32,16 @@ export class InMemoryActivity<Message, Event> {
   start(
     messageId: string,
     work: SessionActivityFunction<Message, Event>,
- policy: { timeoutMs?: number } = {},
+    policy: { timeoutMs?: number; } = {},
   ): void {
     if (this.active) {
       throw new Error("Session runtime activity is already active");
     }
 
     const timeout = policy.timeoutMs ?? 1_800_000;
- validateTimeout(timeout);
- const controller = new AbortController();
-    const activity: ActiveActivity<Message> = { id: randomUUID(), controller, messages: [], settled: false, deadline: Date.now() + timeout };
+    validateTimeout(timeout);
+    const controller = new AbortController();
+    const activity: ActiveActivity<Message> = { id: randomUUID(), controller, messages: [], messageBytes: 0, settled: false, deadline: Date.now() + timeout };
     activity.timer = setTimeout(() => this.cancel(), timeout);
     activity.timer.unref();
     this.current = activity;
@@ -60,8 +61,10 @@ export class InMemoryActivity<Message, Event> {
         if (activity.settled) {
           throw new Error("Session runtime activity has already settled");
         }
-        if (activity.messages.length >= 256) throw new Error("activity mailbox capacity");
- activity.messages.push(payload);
+        const size = Buffer.byteLength(JSON.stringify(payload));
+        if (activity.messages.length >= 256 || activity.messageBytes + size > 8 * 1024 * 1024) throw new Error("activity mailbox capacity");
+        activity.messageBytes += size;
+        activity.messages.push(payload);
       },
     });
     const result = Promise.resolve().then(() => work(context));
@@ -81,14 +84,14 @@ export class InMemoryActivity<Message, Event> {
   }
 
   extend(timeoutMs: number): void {
- validateTimeout(timeoutMs);
- const activity = this.current;
- if (!activity || activity.controller.signal.aborted) throw new Error("activity is not extendable");
- activity.deadline = Math.max(activity.deadline, Date.now() + timeoutMs);
- clearTimeout(activity.timer); activity.timer = setTimeout(() => this.cancel(), activity.deadline - Date.now()); activity.timer.unref(); this.stateChanged();
- }
+    validateTimeout(timeoutMs);
+    const activity = this.current;
+    if (!activity || activity.controller.signal.aborted) throw new Error("activity is not extendable");
+    activity.deadline = Math.max(activity.deadline, Date.now() + timeoutMs);
+    clearTimeout(activity.timer); activity.timer = setTimeout(() => this.cancel(), activity.deadline - Date.now()); activity.timer.unref(); this.stateChanged();
+  }
 
- snapshot() { return this.current ? { id: this.current.id, deadline: new Date(this.current.deadline).toISOString(), cancellation_requested_at: this.current.cancelledAt } : null; }
+  snapshot() { return this.current ? { id: this.current.id, deadline: new Date(this.current.deadline).toISOString(), cancellation_requested_at: this.current.cancelledAt } : null; }
 
   get isIdle(): boolean {
     return !this.active;

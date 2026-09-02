@@ -6,6 +6,7 @@ export class RuntimeProtocolError extends Error {
 export interface MessageReceipt {
   sandbox_id: string;
   message_id: string;
+  attempt_id?: string;
   sequence: number;
   generation: number;
   accepted_at: string;
@@ -22,15 +23,15 @@ interface Reservation {
 /** Reservations and outcomes live until this sandbox retires. Never evict IDs. */
 export class RuntimeMessages {
   private pendingBytes = 0;
- private readonly records = new Map<string, Reservation>();
+  private readonly records = new Map<string, Reservation>();
   constructor(readonly sandboxId: string, private readonly timeoutMs = 300_000, private readonly maxMessages = 4096) {
     if (!/^sbx-[0-9a-f]{32}$/.test(sandboxId)) throw new Error("CANTELOP_SANDBOX_ID must identify this sandbox");
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 604_800_000) throw new Error("invalid message execution timeout");
   }
-  admit(id: string, semanticEnvelope: unknown, enqueue: (signal: AbortSignal, started: () => void) => { generation: number; settled: Promise<void> }, deadline?: string): { receipt: MessageReceipt; settled: Promise<void> } {
+  admit(id: string, semanticEnvelope: unknown, enqueue: (signal: AbortSignal, started: () => void) => { generation: number; settled: Promise<void>; }, deadline?: string, attemptId?: string): { receipt: MessageReceipt; settled: Promise<void>; } {
     const encoded = canonical(semanticEnvelope);
- const bytes = Buffer.byteLength(encoded);
- const fingerprint = createHash("sha256").update(encoded).digest("hex");
+    const bytes = Buffer.byteLength(encoded);
+    const fingerprint = createHash("sha256").update(encoded).digest("hex");
     const existing = this.records.get(id);
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new RuntimeProtocolError(409, "message_conflict");
@@ -41,12 +42,14 @@ export class RuntimeMessages {
     const expires = deadline === undefined ? now + this.timeoutMs : Date.parse(deadline);
     if (!Number.isFinite(expires) || expires <= now || expires > now + this.timeoutMs + 30_000) throw new RuntimeProtocolError(400, "invalid_execution_deadline");
     const controller = new AbortController();
-    const receipt: MessageReceipt = { sandbox_id: this.sandboxId, message_id: id, sequence: this.records.size + 1,
-      generation: 0, accepted_at: new Date(now).toISOString(), deadline: new Date(expires).toISOString(), state: "queued" };
+    const receipt: MessageReceipt = {
+      sandbox_id: this.sandboxId, message_id: id, sequence: this.records.size + 1,
+      ...(attemptId === undefined ? {} : { attempt_id: attemptId }), generation: 0, accepted_at: new Date(now).toISOString(), deadline: new Date(expires).toISOString(), state: "queued"
+    };
     const delivery = enqueue(controller.signal, () => { if (!controller.signal.aborted) receipt.state = "running"; });
     receipt.generation = delivery.generation;
     this.pendingBytes += bytes;
- const timer = setTimeout(() => this.cancel(id), expires - now);
+    const timer = setTimeout(() => this.cancel(id), expires - now);
     timer.unref();
     const settled = delivery.settled.then(() => { receipt.state = controller.signal.aborted ? "timed_out" : "succeeded"; }, () => {
       receipt.state = controller.signal.aborted ? "timed_out" : "failed";

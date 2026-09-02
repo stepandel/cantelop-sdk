@@ -87,7 +87,7 @@ export function createSessionRuntimeHandler<Input, Event = never>(
 function createSessionRuntimeAdapter<Input, Event = never>(
   behaviour: SessionBehaviour<Input, Event>,
   options: SessionRuntimeHandlerOptions = {},
-): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer } {
+): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);
   let boundSession: SessionIdentity | undefined;
@@ -98,7 +98,7 @@ function createSessionRuntimeAdapter<Input, Event = never>(
   let activity: InMemoryActivity<Input, Event>;
 
   const receiveMessage = (
-    message: Readonly<{ id: string; payload: Input }>,
+    message: Readonly<{ id: string; payload: Input; }>,
     session: SessionIdentity,
     trace: RuntimeTraceContext | undefined,
     signal: AbortSignal,
@@ -122,14 +122,14 @@ function createSessionRuntimeAdapter<Input, Event = never>(
             throw new Error("Session runtime message invocation has already settled");
           }
           const handoff = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
- await outputBuffer.publish(message.id, event, handoff);
+          await outputBuffer.publish(message.id, event, handoff);
         },
       });
       const activityCapability: SessionActivity<Input, Event> = Object.freeze({
         get active() {
           return activity.active;
         },
-        start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number }) {
+        start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number; }) {
           activity.start(message.id, work, policy);
         },
         extend(timeoutMs: number) { return activity.extend(timeoutMs); },
@@ -180,8 +180,8 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       () => boundSession,
       (session) => {
         if (boundSession !== undefined &&
-            (boundSession.id !== session.id ||
-              boundSession.workspaceId !== session.workspaceId)) {
+          (boundSession.id !== session.id ||
+            boundSession.workspaceId !== session.workspaceId)) {
           throw new ProtocolError(409, "session_mismatch");
         }
         boundSession ??= session;
@@ -246,7 +246,7 @@ async function handleRequest<Input>(
   request: IncomingMessage,
   response: ServerResponse,
   receiveMessage: (
-    message: Readonly<{ id: string; payload: Input }>,
+    message: Readonly<{ id: string; payload: Input; }>,
     session: SessionIdentity,
     trace: RuntimeTraceContext | undefined,
     signal: AbortSignal, started: () => void,
@@ -255,7 +255,7 @@ async function handleRequest<Input>(
   outputBuffer: SessionOutputBuffer,
   observationBuffer: RuntimeObservationBuffer,
   messages: RuntimeMessages,
-  activity: { active: boolean; cancel(reason?: unknown): boolean; snapshot(): unknown },
+  activity: { active: boolean; cancel(reason?: unknown): boolean; snapshot(): unknown; },
   boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
@@ -267,11 +267,17 @@ async function handleRequest<Input>(
     throw new RuntimeProtocolError(409, "sandbox_mismatch");
   }
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
-    writeJSON(response, 200, { sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
-      quiescent: quiescence.quiescent, activity: activity.snapshot(), observations: observationBuffer.metadata(), events: outputBuffer.metadata() });
+    writeJSON(response, 200, {
+      sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), observations: observationBuffer.metadata(), events: outputBuffer.metadata()
+    });
     return;
   }
   if (url.pathname === "/__cantelop/v2/runtime/activity/cancel" && request.method === "POST") {
+    const body = await readRequestEnvelope(request);
+    if (!isRecord(body) || Object.keys(body).length !== 1 || typeof body.activity_id !== "string") throw new ProtocolError(400, "invalid_activity_cancel");
+    const currentActivity = activity.snapshot();
+    if (!isRecord(currentActivity) || currentActivity.id !== body.activity_id) throw new RuntimeProtocolError(409, "activity_mismatch");
     activity.cancel(); writeJSON(response, 200, { active: activity.active }); return;
   }
   for (const [path, buffer] of [[OUTPUT_PATH, outputBuffer], [OBSERVATIONS_PATH, observationBuffer]] as const) {
@@ -298,7 +304,7 @@ async function handleRequest<Input>(
   const session = readSession(envelope.session);
   const trace = readObservabilityContext(envelope.observability);
   bindSession(session);
-  const result = messages.admit(message.id, { message, session }, (signal, started) => receiveMessage(message, session, trace, signal, started), typeof envelope.deadline === "string" ? envelope.deadline : undefined);
+  const result = messages.admit(message.id, { message, session }, (signal, started) => receiveMessage(message, session, trace, signal, started), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
   writeJSON(response, 202, result.receipt);
 }
 
@@ -316,8 +322,8 @@ async function handleObservationRequest(
   const values = url.searchParams.getAll("after");
   const waitValues = url.searchParams.getAll("wait");
   if ([...url.searchParams.keys()].some((key) => key !== "after" && key !== "wait") ||
-      values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
-      waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
+    values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
+    waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
     writeError(response, 400, "invalid_observation_request");
     return;
   }
@@ -365,14 +371,14 @@ async function handleOutputRequest(
   const values = url.searchParams.getAll("after");
   const waitValues = url.searchParams.getAll("wait");
   if ([...url.searchParams.keys()].some((key) => key !== "after" && key !== "wait") ||
-	  values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
-	  waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
+    values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
+    waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
     writeError(response, 400, "invalid_output_request");
     return;
   }
   const after = Number(values[0]);
   if (!Number.isSafeInteger(after)) {
-	  writeError(response, 400, "invalid_output_request");
+    writeError(response, 400, "invalid_output_request");
     return;
   }
 
@@ -415,7 +421,7 @@ async function handleQuiescenceRequest(
   }
   const values = url.searchParams.getAll("minimum_generation");
   if ([...url.searchParams.keys()].some((key) => key !== "minimum_generation") ||
-      values.length !== 1 || !/^\d+$/.test(values[0] ?? "")) {
+    values.length !== 1 || !/^\d+$/.test(values[0] ?? "")) {
     writeError(response, 400, "invalid_quiescence_request");
     return;
   }
@@ -531,15 +537,15 @@ function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
 function readObservabilityContext(value: unknown): RuntimeTraceContext | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value) || !exactKeys(value, ["attempt_id", "attempt", "traceparent"], ["request_id"]) ||
-      typeof value.attempt_id !== "string" || !ATTEMPT_ID_PATTERN.test(value.attempt_id) ||
-      typeof value.attempt !== "number" || !Number.isInteger(value.attempt) || value.attempt < 1 || value.attempt > 100 ||
-      typeof value.traceparent !== "string") {
+    typeof value.attempt_id !== "string" || !ATTEMPT_ID_PATTERN.test(value.attempt_id) ||
+    typeof value.attempt !== "number" || !Number.isInteger(value.attempt) || value.attempt < 1 || value.attempt > 100 ||
+    typeof value.traceparent !== "string") {
     throw new ProtocolError(400, "invalid_message_request");
   }
   const match = TRACE_PARENT_PATTERN.exec(value.traceparent);
   const requestId = value.request_id;
   if (match === null || (requestId !== undefined &&
-      (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId) || match[1] !== requestId.slice(4)))) {
+    (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId) || match[1] !== requestId.slice(4)))) {
     throw new ProtocolError(400, "invalid_message_request");
   }
   return Object.freeze({
@@ -555,10 +561,10 @@ function exactKeys(value: Record<string, unknown>, required: string[], optional:
     keys.every((key) => required.includes(key) || optional.includes(key));
 }
 
-function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Input }> {
+function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Input; }> {
   if (!isRecord(value) || Object.keys(value).length !== 2 ||
-      typeof value.id !== "string" || !MESSAGE_ID_PATTERN.test(value.id) ||
-      !("payload" in value)) {
+    typeof value.id !== "string" || !MESSAGE_ID_PATTERN.test(value.id) ||
+    !("payload" in value)) {
     throw new ProtocolError(400, "invalid_message_request");
   }
   return Object.freeze({ id: value.id, payload: value.payload as Input });
@@ -566,11 +572,11 @@ function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Inp
 
 function readSession(value: unknown): SessionIdentity {
   if (!isRecord(value) || Object.keys(value).length !== 3 ||
-      typeof value.id !== "string" || !SESSION_ID_PATTERN.test(value.id) ||
-      typeof value.workspace_id !== "string" || !WORKSPACE_ID_PATTERN.test(value.workspace_id) ||
-      typeof value.keep_alive_seconds !== "number" ||
-      !Number.isInteger(value.keep_alive_seconds) || value.keep_alive_seconds < 0 ||
-      value.keep_alive_seconds > MAX_KEEP_ALIVE_SECONDS) {
+    typeof value.id !== "string" || !SESSION_ID_PATTERN.test(value.id) ||
+    typeof value.workspace_id !== "string" || !WORKSPACE_ID_PATTERN.test(value.workspace_id) ||
+    typeof value.keep_alive_seconds !== "number" ||
+    !Number.isInteger(value.keep_alive_seconds) || value.keep_alive_seconds < 0 ||
+    value.keep_alive_seconds > MAX_KEEP_ALIVE_SECONDS) {
     throw new ProtocolError(400, "invalid_message_request");
   }
   return Object.freeze({
