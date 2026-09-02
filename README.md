@@ -335,8 +335,9 @@ logical Session.
 ### Implementing different message types
 
 You define the message protocol and control how each message is handled.
-Cantelop routes messages to the Session's Sandbox; it does not assign business
-logic to names such as `chat`, `steer`, or `cancel`.
+Cantelop routes messages to the Session's Sandbox and enqueues them in its
+mailbox, where they are handled one at a time in FIFO (acceptance) order. It
+does not assign business logic to names such as `chat`, `steer`, or `cancel`.
 
 Extend the message type used by your API and Session behaviour, then dispatch
 to the same Session reference:
