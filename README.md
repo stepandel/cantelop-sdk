@@ -80,13 +80,23 @@ Cantelop separates the public Edge API from the native agent runtime. The Edge
 API validates HTTP requests and dispatches application-defined messages; the
 Session behaviour owns the agent, model, and business logic inside Linux.
 
-```mermaid
-flowchart LR
-    client([Client]) --> api[Edge API]
-    api --> mailbox["Session actor mailbox<br/>(platform managed)"]
-    mailbox --> behaviour[Session behaviour]
-    behaviour --> activity[Managed activity]
-    behaviour --> output[Output events]
+```text
++--------+     +----------+     +-----------------------+
+| Client | --> | Edge API | --> | Session actor mailbox |
++--------+     +----------+     |  (platform managed)   |
+                               +-----------+-----------+
+                                           |
+                                           v
+                                 +-------------------+
+                                 | Session behaviour |
+                                 +---------+---------+
+                                           |
+                         +-----------------+----------------+
+                         |                                  |
+                         v                                  v
+                +------------------+                +---------------+
+                | Managed activity |                | Output events |
+                +------------------+                +---------------+
 ```
 
 A Session is an addressable actor. Opening the same App-scoped Session ID always
