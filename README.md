@@ -10,7 +10,7 @@
 ### To run locally
 
 - Cantelop CLI
-- Bun 
+- Bun
 - Docker with `linux/amd64` support
 
 ### To deploy
@@ -43,8 +43,6 @@ Cantelop SDK can be installed directly in your app:
 bun add @cantelop/sdk@latest
 ```
 
-
-
 ## Initialize a project
 
 Start with a single command
@@ -62,8 +60,6 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
   "session": "src/session.ts"
 }
 ```
-
-
 
 ## Architecture overview
 
@@ -167,8 +163,6 @@ production value and cannot be used with `secret: true`.
 It defaults to `false`; setting it does not create or upload a secret.
 - `required` tells `cantelop doctor` to check that the target App has that name  
 configured with the declared kind.
-
-
 
 ### Run with local values
 
