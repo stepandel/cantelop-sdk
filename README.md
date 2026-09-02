@@ -249,36 +249,12 @@ running exactly one SDK-managed Session runtime process. The process is never
 shared by multiple Sessions, so module-level agent and conversation state is
 per-Session.
 
-The runtime processes the actor's in-memory mailbox one message at a time in
-acceptance order. Long-running agent work can move into the Session's single
-managed activity, allowing the mailbox to keep receiving commands such as
-steer and cancel. The application defines what every message means; Cantelop
-only provides identity, routing, serialization, activity management, and event
+The runtime processes the actor's in-memory mailbox one message at a time in  
+acceptance order. Long-running agent work can move into the Session's single  
+managed activity, allowing the mailbox to keep receiving commands such as  
+steer and cancel. The application defines what every message means; Cantelop  
+only provides identity, routing, serialization, activity management, and event  
 transport.
-
-### Message lifecycle
-
-1. The Edge API opens a local Session reference and calls `dispatch()` with an
-  application-defined payload. The SDK assigns the message ID.
-2. Cantelop resolves the Session actor and forwards the message to its Sandbox.
-  The first dispatch creates the logical Session atomically when needed.
-3. Once accepted for delivery, `dispatch()` returns a `MessageRef` in
-  `accepted` state. This does not wait for the Session behaviour or agent work
-   to finish.
-4. The runtime dequeues messages in order and invokes the Session behaviour.
-  A message becomes `handling`, then `handled` when the behaviour returns or
-   `failed` when it throws.
-5. A managed activity can outlive the behaviour invocation that started it.
-  Later messages can steer or cancel that work, and the runtime is quiescent
-   only after both the mailbox and activity are idle.
-6. `output.send()` publishes application events independently of the mailbox;
-  clients receive them through an application-owned SSE or WebSocket route.
-
-Acceptance and mailbox state are intentionally volatile. A runtime crash or
-Sandbox replacement loses queued messages, deduplication records, and
-in-memory agent state. The logical Session identity and Workspace remain, but
-applications must persist any provider state they need to resume. Reactivation
-starts a new dedicated process for the same logical Session.
 
 ## Workspaces
 
@@ -379,9 +355,9 @@ until streaming finishes. Events must be JSON-compatible and at most 64 KiB.
 Your application chooses the public route and authorizes access.
 
 - **SSE:** the default transport. Browser `EventSource` reconnects with the last
-  event's sequence in `Last-Event-ID`; the SDK forwards it to resume replay.
+event's sequence in `Last-Event-ID`; the SDK forwards it to resume replay.
 - **WebSockets:** upgrade requests require the `cantelop.events.v1` subprotocol.
-  Cantelop enforces an output-only stream; send commands through `dispatch()`.
+Cantelop enforces an output-only stream; send commands through `dispatch()`.
 
 Both transports deliver your payload plus `sequence`, `session_id`,
 `message_id`, and `created_at`. WebSocket clients resume with `?after=<sequence>`,
