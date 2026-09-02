@@ -19,12 +19,6 @@
 
 ## Install
 
-Install the Cantelop SDK directly in your app:
-
-```sh
-bun add @cantelop/sdk@latest
-```
-
 For the best development experience, use the Cantelop CLI.
 
 ### Cantelop CLI
@@ -39,6 +33,14 @@ Alternatively, use the installer for macOS or Linux:
 
 ```sh
 curl -fsSL https://console.cantelop.dev/install.sh | sh
+```
+
+### SDK Package
+
+Cantelop SDK can be installed directly in your app:
+
+```sh
+bun add @cantelop/sdk@latest
 ```
 
 ## Initialize a project
