@@ -22,7 +22,8 @@ export type SessionActivityFunction<Message, Event> = (
 
 export interface SessionActivity<Message, Event> {
   readonly active: boolean;
-  start(work: SessionActivityFunction<Message, Event>): void;
+  start(work: SessionActivityFunction<Message, Event>, policy?: { timeoutMs?: number }): void;
+ extend(timeoutMs: number): void;
   cancel(reason?: unknown): boolean;
 }
 

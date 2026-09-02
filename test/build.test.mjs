@@ -143,10 +143,10 @@ test("buildSessionRuntime emits one deployable native module", async (t) => {
   assert.match(source, /message_lifecycle/);
   assert.match(source, /bun_entry/);
   assert.match(source, /module_evaluated/);
-  assert.match(source, /X-Cantelop-SDK-Message-Complete/);
-  assert.match(source, /X-Cantelop-SDK-Session-Generation/);
-  assert.match(source, /\/__cantelop\/v1\/runtime\/quiescence/);
-  assert.match(source, /\/__cantelop\/v1\/runtime\/events/);
+  assert.match(source, /X-Cantelop-Sandbox-ID/);
+  assert.match(source, /X-Cantelop-Message-Protocol/);
+  assert.match(source, /\/__cantelop\/v2\/runtime\/quiescence/);
+  assert.match(source, /\/__cantelop\/v2\/runtime\/events/);
   assert.match(source, /listener_ready/);
 });
 
@@ -171,6 +171,7 @@ test("a built Session runtime receives messages on the local development port", 
     env: {
       ...process.env,
       CANTELOP_INTERNAL_PORT: String(port),
+ CANTELOP_SANDBOX_ID: "sbx-" + "1".repeat(32),
       MODEL: "test-model",
     },
     stdio: ["ignore", "ignore", "pipe"],
@@ -184,19 +185,19 @@ test("a built Session runtime receives messages on the local development port", 
 
   const messageId = "msg_0123456789abcdef0123456789abcdef";
   const response = await waitForSessionRuntime(
-    `http://127.0.0.1:${port}/__cantelop/v1/messages`,
+    `http://127.0.0.1:${port}/__cantelop/v2/messages`,
     child,
     () => childError,
   );
 
-  assert.equal(response.status, 204);
+  assert.equal(response.status, 202);
   assert.equal(
-    response.headers.get("X-Cantelop-SDK-Message-Complete"),
+    (await response.json()).message_id,
     messageId,
   );
   assert.equal(
-    response.headers.get("X-Cantelop-SDK-Session-Generation"),
-    "1",
+    response.headers.get("X-Cantelop-Message-Protocol"),
+    "2",
   );
 });
 
@@ -261,7 +262,7 @@ async function waitForSessionRuntime(url, child, childError) {
     try {
       return await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Cantelop-Sandbox-ID": "sbx-" + "1".repeat(32) },
         body: JSON.stringify({
           session: {
             id: "thread",

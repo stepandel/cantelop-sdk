@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   SessionActivityContext,
   SessionActivityFunction,
@@ -5,6 +6,7 @@ import type {
 } from "./session.js";
 
 interface ActiveActivity<Message> {
+ readonly id: string;
   readonly controller: AbortController;
   readonly messages: Message[];
   settled: boolean;
@@ -18,7 +20,7 @@ export class InMemoryActivity<Message, Event> {
 
   constructor(
     private readonly sendMessage: (payload: Message) => void,
-    private readonly sendOutput: (messageId: string, event: Event) => Promise<void>,
+    private readonly sendOutput: (messageId: string, event: Event, signal: AbortSignal) => Promise<void>,
     private readonly stateChanged: () => void = () => undefined,
   ) {}
 
@@ -29,14 +31,17 @@ export class InMemoryActivity<Message, Event> {
   start(
     messageId: string,
     work: SessionActivityFunction<Message, Event>,
+ policy: { timeoutMs?: number } = {},
   ): void {
     if (this.active) {
       throw new Error("Session runtime activity is already active");
     }
 
-    const controller = new AbortController();
-    const activity: ActiveActivity<Message> = { controller, messages: [], settled: false, deadline: Date.now() + 1_800_000 };
-    activity.timer = setTimeout(() => this.cancel(), 1_800_000);
+    const timeout = policy.timeoutMs ?? 1_800_000;
+ validateTimeout(timeout);
+ const controller = new AbortController();
+    const activity: ActiveActivity<Message> = { id: randomUUID(), controller, messages: [], settled: false, deadline: Date.now() + timeout };
+    activity.timer = setTimeout(() => this.cancel(), timeout);
     activity.timer.unref();
     this.current = activity;
     this.stateChanged();
@@ -45,7 +50,7 @@ export class InMemoryActivity<Message, Event> {
         if (activity.settled) {
           throw new Error("Session runtime activity has already settled");
         }
-        await this.sendOutput(messageId, event);
+        await this.sendOutput(messageId, event, controller.signal);
       },
     });
     const context: SessionActivityContext<Message, Event> = Object.freeze({
@@ -55,7 +60,8 @@ export class InMemoryActivity<Message, Event> {
         if (activity.settled) {
           throw new Error("Session runtime activity has already settled");
         }
-        activity.messages.push(payload);
+        if (activity.messages.length >= 256) throw new Error("activity mailbox capacity");
+ activity.messages.push(payload);
       },
     });
     const result = Promise.resolve().then(() => work(context));
@@ -74,7 +80,15 @@ export class InMemoryActivity<Message, Event> {
     return true;
   }
 
-  snapshot() { return this.current ? { deadline: new Date(this.current.deadline).toISOString(), cancellation_requested_at: this.current.cancelledAt } : null; }
+  extend(timeoutMs: number): void {
+ validateTimeout(timeoutMs);
+ const activity = this.current;
+ if (!activity || activity.controller.signal.aborted) throw new Error("activity is not extendable");
+ activity.deadline = Math.max(activity.deadline, Date.now() + timeoutMs);
+ clearTimeout(activity.timer); activity.timer = setTimeout(() => this.cancel(), activity.deadline - Date.now()); activity.timer.unref(); this.stateChanged();
+ }
+
+ snapshot() { return this.current ? { id: this.current.id, deadline: new Date(this.current.deadline).toISOString(), cancellation_requested_at: this.current.cancelledAt } : null; }
 
   get isIdle(): boolean {
     return !this.active;
@@ -85,7 +99,9 @@ export class InMemoryActivity<Message, Event> {
     activity.settled = true;
     clearTimeout(activity.timer);
     this.current = undefined;
-    for (const payload of activity.messages) this.sendMessage(payload);
+    for (const payload of activity.messages) { try { this.sendMessage(payload); } catch (error) { console.error("Activity completion message rejected", error); } }
     this.stateChanged();
   }
 }
+
+function validateTimeout(value: number) { if (!Number.isSafeInteger(value) || value < 1 || value > 86_400_000) throw new Error("activity timeout must be between 1ms and 24h"); }

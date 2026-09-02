@@ -24,7 +24,7 @@ export class SessionOutputBuffer {
   private delivered = 0;
   private pendingBytes = 0;
 
-  async publish(messageId: string, event: unknown): Promise<void> {
+  async publish(messageId: string, event: unknown, signal?: AbortSignal): Promise<void> {
     const encoded = encodeEvent(event);
     const bytes = Buffer.byteLength(encoded);
     if (bytes > MAX_EVENT_BYTES) {
@@ -34,16 +34,25 @@ export class SessionOutputBuffer {
       this.events.length >= MAX_PENDING_EVENTS ||
       this.pendingBytes + bytes > MAX_PENDING_BYTES
     ) {
-      await new Promise<void>((resolve) => this.capacityWaiters.add(resolve));
+      signal?.throwIfAborted();
+ await new Promise<void>((resolve, reject) => {
+ const cleanup = () => { this.capacityWaiters.delete(ready); signal?.removeEventListener("abort", abort); };
+ const ready = () => { cleanup(); resolve(); };
+ const abort = () => { cleanup(); reject(signal!.reason); };
+ this.capacityWaiters.add(ready); signal?.addEventListener("abort", abort, {once:true});
+ });
     }
 
-    return new Promise<void>((resolve) => {
+    signal?.throwIfAborted();
+ return new Promise<void>((resolve, reject) => {
+ const abort = () => reject(signal!.reason);
+ signal?.addEventListener("abort", abort, {once:true});
       this.events.push({
         cursor: this.nextCursor++,
         messageId,
         event: JSON.parse(encoded) as unknown,
         bytes,
-        resolve,
+        resolve: () => { signal?.removeEventListener("abort", abort); resolve(); },
       });
       this.pendingBytes += bytes;
       this.wakeReaders();
