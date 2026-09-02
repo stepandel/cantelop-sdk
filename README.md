@@ -67,9 +67,7 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
 
 The `environment` field in `cantelop.json` documents the configuration your app
 expects, provides shared defaults for local development, and lets the CLI catch
-missing production configuration before deployment. Commit the declarations
-alongside your code; keep credentials in local `.env` files or the App's secret
-store.
+missing production configuration before deployment.
 
 ### Declare configuration
 
@@ -86,66 +84,37 @@ Add an `environment` block to your manifest:
 
 - `default` supplies a string value for local development. It never sets a
   production value and cannot be used with `secret: true`.
-- `secret` tells the CLI to expect a secret rather than a non-secret variable.
+- `secret` tells the CLI to use encrypted environment variables for the production value.
   It defaults to `false`; setting it does not create or upload a secret.
 - `required` tells `cantelop doctor` to check that the target App has that name
-  configured with the declared kind. It defaults to `false`.
-
-The field is not an allowlist: your app can read configuration that is not
-declared here. `CANTELOP_*` names are reserved by the runtime.
+  configured with the declared kind.
 
 ### Run with local values
 
-Create a `.env` beside `cantelop.json` and exclude it from version control:
-
-```dotenv
-OPENAI_API_KEY=your-provider-key
-```
-
-```sh
-cantelop dev
-```
-
-The CLI combines manifest defaults with `.env`, with file values taking
-precedence. In this example, the model comes from the manifest and the API key
-comes from `.env`. To use a different file, run
-`cantelop dev -env-file .env.local`. These values stay local; deployment does
-not copy them into the App.
-
-Both the Edge API and native Session behaviour receive the configuration
-through their `env` context. Secrets are available to both, so never return or
-log them.
+Variables in a `.env` file beside `cantelop.json` can be used for local development.
+Override the default values in `cantelop.json` with the values in `.env`.
 
 ### Configure and check production
 
 After `cantelop login`, find the App ID with `cantelop app list` and use it for
-configuration commands (replace `app_0123...` below with that ID):
+configuration commands:
 
 ```sh
-cantelop app env set app_0123... OPENAI_MODEL=gpt-4.1-mini
-printf %s "$OPENAI_API_KEY" |
-  cantelop app secret set app_0123... OPENAI_API_KEY
+cantelop app env set OPENAI_MODEL=gpt-4.1-mini
+printf %s "$OPENAI_API_KEY" | cantelop app secret set OPENAI_API_KEY
 ```
 
-The secret command reads standard input; here it uses a credential already
-loaded into your shell. Secrets are write-only. Inspect configuration with:
+Inspect configuration with:
 
 ```sh
-cantelop app env list app_0123...
-cantelop app secret list app_0123...
+cantelop app env list
+cantelop app secret list
 cantelop doctor
 ```
 
-Variable listings include values; secret listings show names only. Run
-`doctor` from the project directory so it checks the App named in the manifest.
-It reports missing required variables or secrets and exits non-zero on failed
-checks. This checks presence and kind, not whether a provider credential is
-valid. A local `default` does not satisfy a required production value.
-
 Use `env set` or `secret set` again to update a value. Remove it with
 `cantelop app env unset APP_ID NAME` or
-`cantelop app secret unset APP_ID NAME`. A name cannot be both a variable and a
-secret; unset its existing value before changing its kind.
+`cantelop app secret unset APP_ID NAME`.
 
 ## Deploy
 
