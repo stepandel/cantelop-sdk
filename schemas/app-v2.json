@@ -25,7 +25,7 @@
       "type": "string",
       "description": "Slug of the existing App that build and deploy commands target.",
       "pattern": "^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
-      "examples": ["vera"]
+      "examples": ["my-agent"]
     },
     "projectFile": {
       "type": "string",
@@ -120,12 +120,12 @@
   },
   "examples": [
     {
-      "app": "vera",
+      "app": "my-agent",
       "api": "src/api.ts",
       "session": "src/session.ts"
     },
     {
-      "app": "vera",
+      "app": "my-agent",
       "api": "src/api.ts",
       "session": "src/session.ts",
       "environment": {

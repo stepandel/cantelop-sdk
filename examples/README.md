@@ -49,10 +49,12 @@ Choose the `sessionId` in the client, open the subscription, and then send the
 first `POST /chat` with that ID. This ensures the live subscription exists
 before the Session can publish its first delta.
 
-`EventSource` automatically sends the last SSE event ID when it reconnects. To
-resume a newly created subscription, append `after=<last sequence>` to the
-query. The response envelope includes the application event fields plus the
-trusted `sequence`, `session_id`, `message_id`, and `created_at` fields.
+`EventSource` automatically sends the last SSE event ID (`stream_id:sequence`)
+when it reconnects. To resume a newly created subscription, append
+`stream_id=<stream ID>&after=<last sequence>` to the query. The response envelope
+includes the application event fields plus the trusted `stream_id`, `sequence`,
+`session_id`, `message_id`, and `created_at` fields. A replaced or evicted stream
+reports `event_stream_reset` rather than silently starting a new replay.
 
 The same route also supports an output-only WebSocket:
 
@@ -70,8 +72,9 @@ socket.onmessage = ({ data }) => {
 ```
 
 Send `prompt`, `steer`, and `cancel` through their HTTP routes, not through the
-WebSocket. A WebSocket reconnect should include `after=<last sequence>` because
-WebSockets do not provide SSE's `Last-Event-ID` header. In a real application,
+WebSocket. A WebSocket reconnect should include
+`stream_id=<stream ID>&after=<last sequence>` because WebSockets do not provide
+SSE's `Last-Event-ID` header. In a real application,
 authenticate and authorize `/events` before calling `session.events(request)`;
 the examples intentionally omit application-specific auth.
 

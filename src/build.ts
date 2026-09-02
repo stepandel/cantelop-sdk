@@ -1,5 +1,12 @@
 /// <reference types="node" />
 
+/**
+ * Build tooling reserved for the Cantelop CLI, not a supported application API.
+ * Application authors should use `cantelop dev` and `cantelop deploy`.
+ * Compatibility is governed by CANTELOP_CLI_BUILD_PROTOCOL_VERSION.
+ * @packageDocumentation
+ */
+
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
