@@ -6,7 +6,7 @@ Cantelop applications use the SDK from both their Edge API build and native
 Session runtime image:
 
 ```sh
-pnpm add @cantelop/sdk@0.6.0
+pnpm add @cantelop/sdk@0.7.0
 ```
 
 The SDK requires Node.js 22 or newer. Cantelop's CLI invokes the
@@ -284,8 +284,8 @@ parity mode.
 
 CLI compatibility is explicit: `@cantelop/sdk/build` exports
 `CANTELOP_CLI_BUILD_PROTOCOL_VERSION` alongside the one-shot and watch build
-functions. Current CLIs require protocol version `3`, packaged in
-`@cantelop/sdk@0.5.1`. `cantelop doctor` rejects older or incomplete
+functions. Current CLIs require protocol version `4`, packaged in
+`@cantelop/sdk@0.7.0`. `cantelop doctor` rejects older or incomplete
 project installations before a build is attempted.
 
 ## Native Session behaviour
@@ -536,3 +536,45 @@ pnpm check:package
 installs it into an empty project, imports every public entrypoint, and builds a
 customer API. See [`docs/releasing.md`](./docs/releasing.md) for the release
 boundary. Publishing is a separate production operation.
+
+## Mailbox acceptance and execution (SDK 0.7)
+
+The private runtime protocol is version 2. The platform injects
+`CANTELOP_SANDBOX_ID` after restore; one SDK process/mailbox lifetime belongs to
+one Sandbox ID. Restarting the workload retires that sandbox. Runtime requests
+and responses carry `X-Cantelop-Sandbox-ID` and responses attest
+`X-Cantelop-Message-Protocol: 2`; mismatches are rejected before mutation.
+
+Admission returns HTTP 202 immediately after reserving the Message ID and queueing
+its work. The receipt contains the original sequence, generation, acceptance time,
+and deadline. Identical semantic envelopes return the same reservation; conflicting
+payloads return 409. Reservations last until sandbox retirement, with a 4096-ID
+limit and an 8 MiB pending-envelope limit. Exhaustion rejects new admission.
+
+`context.signal` cancels handler work after its finite execution budget (five
+minutes by default, including queue wait). Pass this signal to model/network
+calls. Cancellation is a request: status remains `cancelling` until work settles.
+The platform terminates an unresponsive sandbox after ten seconds of grace.
+Activities are separately supervised: `activity.start(work, {timeoutMs})` defaults
+to 30 minutes; `activity.extend(timeoutMs)` explicitly extends a live activity,
+with each requested extension capped at 24 hours. There is no implicit unlimited
+heartbeat extension. Self-messages have their own execution deadlines.
+
+Telemetry is bounded and best effort, and never delays handler entry or completion.
+Output remains backpressured: `output.send()` waits for platform-broker acceptance,
+failing on cancellation or after 30 seconds. Acceptance is volatile, not durable
+storage or proof that a subscriber received the event. A timeout can be ambiguous.
+
+Runtime stream reads never acknowledge implicitly. Collectors discover each
+sandbox's acknowledged cursor, read retained records, hand them off, then explicitly
+ACK. Future, expired, and wrong-sandbox cursors fail rather than long-poll forever.
+The independent platform output broker supplies `stream_id`; SSE IDs are
+`stream_id:sequence`. Resuming with `after` requires `stream_id`; a recreated or
+evicted broker stream reports `event_stream_reset`. Replay and deduplication are
+bounded and do not survive broker loss or expired retention.
+
+`message.status().execution` exposes phase, outcome, owning sandbox, deadline,
+phase start, and work state. Mailbox acceptance, handler outcome, and background
+quiescence are separate milestones. `outcome: "unknown"` means the owning sandbox
+was lost without completion evidence; the platform does not replay that operation
+on a replacement automatically.

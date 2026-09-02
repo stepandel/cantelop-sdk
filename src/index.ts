@@ -18,6 +18,7 @@ export type {
   Router,
   MessageRef,
   MessageStatus,
+  MessageExecution,
   Session,
   SessionIdentity,
   SessionOpenConfig,
