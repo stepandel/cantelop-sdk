@@ -112,13 +112,9 @@ export default defineApi<SessionMessage>(({ app, router }) => {
 });
 ```
 
-Omit `sessionId` for a new Session; reuse the returned ID to continue it.
-`202` means the message was accepted, not that the agent has finished. Add
+Omit `sessionId` for a new Session; reuse the returned ID to continue it.  
+`202` means the message was accepted, not that the agent has finished. Add  
 request validation and caller authorization for your application.
-
-The server selects the shared `default` Workspace; clients do not send a
-`workspaceId`. `workspaces.open()` resolves its slug to the generated ID needed
-by `sessions.open()`.
 
 ## Session runtime
 
