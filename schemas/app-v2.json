@@ -32,11 +32,6 @@
       "minLength": 1,
       "description": "Path relative to cantelop.json. It must stay inside the project and name a regular file."
     },
-    "projectDirectory": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Directory relative to cantelop.json. It must stay inside the project and cannot be a symbolic link."
-    },
     "api": {
       "description": "Edge API entrypoint, as a path or an expanded configuration object.",
       "oneOf": [
@@ -69,13 +64,9 @@
             "entrypoint": {
               "$ref": "#/$defs/projectFile"
             },
-            "context": {
-              "$ref": "#/$defs/projectDirectory",
-              "default": "."
-            },
             "dockerfile": {
               "$ref": "#/$defs/projectFile",
-              "description": "Optional Dockerfile used only when the Session runtime needs native dependencies or system tools."
+              "description": "Optional Dockerfile used only when the Session runtime needs native dependencies or system tools. The build context is always the directory containing cantelop.json."
             }
           }
         }

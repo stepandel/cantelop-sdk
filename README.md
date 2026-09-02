@@ -36,8 +36,13 @@ do not select a schema or tie the manifest format to their installed SDK
 version. `app` is the exact human-readable slug of an existing App; generated
 `app_...` IDs do not belong in project source. Use `-config` and `-api` for
 non-default paths. The required `-provider` selects the generated agent starter.
-Add an expanded `session` object with `context` and `dockerfile` only when native
-dependencies or system tools require a custom image.
+Add an expanded `session` object with `dockerfile` only when native
+dependencies or system tools require a custom image. Custom images always use
+the directory containing `cantelop.json` as the Docker build context, even when
+the Dockerfile is in a subdirectory. Dockerfile `COPY` paths are relative to that
+directory. Remove `session.context` from existing manifests; it is no longer
+supported. If it previously named a subdirectory, update `COPY` paths and move
+the build ignore rules to the project root `.dockerignore`.
 
 Declare configuration requirements by name without committing production
 values:
