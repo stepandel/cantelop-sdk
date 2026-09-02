@@ -190,9 +190,12 @@ router.route("POST", "/steer", async ({ request }) => {
 });
 ```
 
-The actor applies this command to its active provider turn. To remain
-responsive, that long-running turn must run as a managed activity rather than
-blocking the actor's mailbox.
+The application developer owns the steering semantics. The SDK only routes the
+message to the Sandbox for that Session; the Session behaviour can pass it to a
+provider's steering API, queue it, treat it as a new prompt, or apply any other
+business logic. If steering must reach an active turn immediately, that
+long-running turn should run as a managed activity rather than blocking the
+actor's mailbox.
 
 ### Add cancellation
 
@@ -224,10 +227,13 @@ router.route("POST", "/cancel", async ({ request }) => {
 });
 ```
 
-Cancel is an application message, not Session termination. The Session actor
-handles it by cancelling its managed activity, which preserves the actor for a
-later `/chat`. `session.terminate()` is different: it permanently ends the
-logical Session.
+The application developer also owns cancellation semantics. Cancel is an
+application-defined message, not an automatic runtime action. The SDK delivers
+it to the relevant Sandbox, and the Session behaviour decides whether to abort
+a managed activity, call a provider-specific cancellation API, clear queued
+work, or do something else. Calling `activity.cancel()` is the usual
+cooperative implementation and preserves the actor for a later `/chat`.
+`session.terminate()` is different: it permanently ends the logical Session.
 
 Webhook handlers can dispatch a message asynchronously and acknowledge after
 the platform accepts it for delivery:
@@ -362,6 +368,13 @@ project installations before a build is attempted.
 Use `@cantelop/sdk/session` to define the actor behavior that runs inside the
 Linux VM. Each App has one deployed Session behaviour; callers opening a Session do
 not provide or replace its behavior.
+
+For each active Session, Cantelop guarantees one dedicated Sandbox with one
+SDK-managed Session runtime process. That process handles only that Session
+identity and is never shared with another Session. Module-level agent and
+conversation state is therefore per-Session. If a released Sandbox is later
+reactivated, Cantelop starts a new process for the same logical Session, so
+state that must survive reactivation still needs external persistence.
 
 ```ts
 import { defineSessionBehaviour } from "@cantelop/sdk/session";
@@ -501,16 +514,10 @@ responds only when the runtime is quiescent at or beyond that generation. This
 is a statement about SDK-managed actor work, not a Sandbox lifecycle decision:
 the SDK does not choose keep-alive, lease, or termination policy.
 
-The Session identity lets logic key provider state consistently, but it
-does not persist arbitrary in-memory objects. Module-level agents,
-conversation stores, and provider resume handles survive while the Sandbox is
-warm. Applications that must resume after Sandbox replacement must persist the
-provider's resumable state outside process memory.
-
-Each native Session runtime and Sandbox is bound to exactly one Session identity.
-Provider state can therefore be held as one module-level value; a per-Session
-map is unnecessary. The native adapter rejects any request for a different
-Session ID or Workspace rather than mixing tenants inside one runtime process.
+Module-level agents, conversation stores, and provider resume handles survive
+while the Sandbox is warm. They are not durable: applications that must resume
+after Sandbox replacement must persist the provider's resumable state outside
+process memory.
 
 The Session runtime is deployment infrastructure around the Session behaviour.
 Cantelop's generated native bootstrap calls `serveSessionRuntime()` internally. It accepts no
