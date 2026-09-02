@@ -299,11 +299,10 @@ const workspaceId = workspace.id;
 
 ## Sessions and messages
 
-Every message belongs to a Session. `app.sessions.open()` creates a local
-reference to the Session actor without making a request. The first `dispatch()` atomically
-creates the logical Session if its ID does not exist and accepts the message for delivery;
-otherwise it resumes that Session. Omitting `id`
-generates one in the SDK, which is immediately available as `session.id`.
+Every message belongs to a Session. `app.sessions.open()` is lazy: it only
+creates a local reference. The first `dispatch()` allocates a Sandbox if needed
+and sends the message. Omitting `id` generates one in the SDK, immediately
+available as `session.id`.
 
 `Session<Message>` is the actor reference: it exposes immutable identity and
 configuration together with `dispatch()` and `events()`. Its `id`,
