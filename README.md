@@ -282,8 +282,14 @@ starts a new dedicated process for the same logical Session.
 
 ## Workspaces
 
-A Workspace is the durable filesystem used by your agent. It outlives the
-Sandboxes that mount it, and Sessions in the same Workspace share its files.
+Each Sandbox mounts its Session's Workspace at `/workspace`. This is durable
+storage: its files survive Sandbox termination and remain available when a new
+Sandbox starts.
+
+A Workspace can be shared by multiple Sessions, including Sandboxes running
+in parallel. They access the same files, so your application should coordinate
+concurrent writes.
+
 Workspaces are scoped to an App and addressed by a server-selected slug:
 
 ```ts
