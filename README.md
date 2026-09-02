@@ -218,6 +218,24 @@ cantelop deploy
 them, and creates a release. Run `cantelop deploy --dry-run` first to perform
 the same build without login, upload, or release creation.
 
+### Custom runtime images
+
+When native dependencies or system tools require a custom image, expand the
+`session` entry in `cantelop.json`:
+
+```json
+"session": {
+  "entrypoint": "src/session.ts",
+  "dockerfile": "docker/Dockerfile"
+}
+```
+
+The Docker build context is always the directory containing `cantelop.json`,
+even when the Dockerfile is in a subdirectory. Resolve Dockerfile `COPY` paths
+from that project root and place build ignore rules in its `.dockerignore`.
+`session.context` is no longer supported: remove it from existing manifests
+and adjust `COPY` paths and ignore rules if it previously named a subdirectory.
+
 ## Actor model and message lifecycle
 
 Cantelop separates the public Edge API from the native agent runtime. The Edge
@@ -295,14 +313,19 @@ otherwise it resumes that Session. Omitting `id`
 generates one in the SDK, which is immediately available as `session.id`.
 
 `Session<Message>` is the actor reference: it exposes immutable identity and
-configuration together with `dispatch()` and `terminate()`. Its `id`,
+configuration together with `dispatch()` and `events()`. Its `id`,
 `workspaceId`, and `keepAliveSeconds` properties are available before the first
 request. Native Session behaviour receives the same values as a read-only
 `SessionIdentity`.
 
 A Session keeps its Sandbox warm for `keepAliveSeconds` after work completes.
 If the Sandbox has already been released, the platform can reactivate the same
-logical Session on a new Sandbox.
+logical Session on a new Sandbox. The Session identity remains reusable when
+its Sandbox is released. Set `keepAliveSeconds: 0` to release the Sandbox as
+soon as the mailbox and managed activity are idle.
+
+Distributed API workers converge on one Session by opening the same
+application-defined ID:
 
 ```ts
 const session = app.sessions.open({
@@ -314,8 +337,8 @@ const session = app.sessions.open({
 
 Opening a Session requires a `workspaceId` from [Workspaces](#workspaces) and
 an explicit `keepAliveSeconds`. The Session ID is immutable and App-scoped,
-while `keepAliveSeconds` applies to each request. Termination is final; use a
-new ID for a distinct logical Session.
+while `keepAliveSeconds` applies to each request. Use a new ID for a distinct
+logical Session, not merely because its Sandbox was released.
 
 ### Add steering
 
@@ -392,9 +415,10 @@ The application developer also owns cancellation semantics. Cancel is an
 application-defined message, not an automatic runtime action. The SDK delivers
 it to the relevant Sandbox, and the Session behaviour decides whether to abort
 a managed activity, call a provider-specific cancellation API, clear queued
-work, or do something else. Calling `activity.cancel()` is the usual
-cooperative implementation and preserves the actor for a later `/chat`.
-`session.terminate()` is different: it permanently ends the logical Session.
+work, or do something else. Calling `activity.cancel()` requests cooperative
+cancellation through the activity's `AbortSignal`; it does not discard the
+Session or immediately release its Sandbox. Once all work is idle,
+`keepAliveSeconds` controls when the Sandbox is released.
 
 Webhook handlers can dispatch a message asynchronously and acknowledge after
 the platform accepts it for delivery:
@@ -518,7 +542,7 @@ parity mode.
 CLI compatibility is explicit: `@cantelop/sdk/build` exports
 `CANTELOP_CLI_BUILD_PROTOCOL_VERSION` alongside the one-shot and watch build
 functions. Current CLIs require protocol version `3`, packaged in
-`@cantelop/sdk@0.5.1`. `cantelop doctor` rejects older or incomplete
+`@cantelop/sdk@0.6.0`. `cantelop doctor` rejects older or incomplete
 project installations before a build is attempted.
 
 ## Native Session behaviour details
@@ -645,7 +669,7 @@ Platform infrastructure can wait on the Session runtime's private
 `GET /__cantelop/v1/runtime/quiescence?minimum_generation=<n>` endpoint. It
 responds only when the runtime is quiescent at or beyond that generation. This
 is a statement about SDK-managed actor work, not a Sandbox lifecycle decision:
-the SDK does not choose keep-alive, lease, or termination policy.
+the SDK does not choose keep-alive, lease, or Sandbox release policy.
 
 Module-level agents, conversation stores, and provider resume handles survive
 while the Sandbox is warm. They are not durable: applications that must resume
@@ -717,10 +741,9 @@ For WebSockets, connect to that same App route with subprotocol
 Client data frames are rejected with a policy-violation close; steering and
 other input remain HTTP messages.
 
-Disconnecting either transport cancels only that subscription. It does not call
-`session.terminate()`, does not keep a Sandbox warm, and does not discard the
-Session. A reconnect resumes from its supplied cursor. Explicit
-`session.terminate()` closes the event stream normally.
+Disconnecting either transport cancels only that subscription. Event
+subscriptions do not keep a Sandbox warm or control Session lifetime. The
+Session remains reusable, and a reconnect resumes from its supplied cursor.
 
 Replay is a volatile, bounded platform cache rather than durable history. The
 default bound is 256 events and 1 MiB per Session, with global stream and byte

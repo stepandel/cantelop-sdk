@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 const runCommand = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
+const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-package-"));
 
 try {
@@ -17,7 +18,7 @@ try {
   );
   const [pack] = JSON.parse(stdout);
   assert.equal(pack.name, "@cantelop/sdk");
-  assert.equal(pack.version, "0.5.1");
+  assert.equal(pack.version, manifest.version);
   assert.ok(pack.size > 0);
   const paths = pack.files.map(({ path: file }) => file);
   assert.ok(paths.includes("dist/build.js"));
@@ -28,7 +29,6 @@ try {
   assert.ok(paths.includes("package.json"));
   assert.equal(paths.some((file) => /^(src|test|examples|scripts)\//.test(file)), false);
 
-  const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
   for (const [name, target] of Object.entries(manifest.exports)) {
     assert.equal(typeof target.import, "string", `${name} requires an import target`);
     assert.equal(typeof target.types, "string", `${name} requires a types target`);
