@@ -63,21 +63,6 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
 }
 ```
 
-Declare environment variables required for production deployment. They can be verified against the remote config using `cantelop doctor`
-
-```json
-"environment": {
-  "OPENAI_MODEL": { "default": "gpt-4.1-mini" },
-  "OPENAI_API_KEY": { "secret": true, "required": true }
-}
-```
-
-`secret` and `required` default to `false`. Non-secret `default` values seed
-`cantelop dev` and are overridden by `.env`; they are not copied into the
-production App. `cantelop doctor` verifies every entry marked `required`
-against that App's redacted configuration. Secret declarations cannot contain
-defaults, and `CANTELOP_*` names are reserved by the runtime.
-
 The canonical schema is owned by the Cantelop CLI/platform. This public
 repository mirrors it at `schemas/app-v2.json` so JSON Schema-aware editors can
 load it without platform credentials. Editor integrations can associate it with
@@ -97,14 +82,9 @@ The login command opens a browser authorization flow. App creation returns an
 `app_...` ID for management commands; keep the human-readable slug in source.
 Skip the create command when the App already exists.
 
-Set any production variables and secrets declared by the manifest against that
-App ID. Secrets are read from standard input and remain write-only:
-
-```sh
-cantelop app env set app_0123... LOG_LEVEL=debug
-printf %s "$OPENAI_API_KEY" |
-  cantelop app secret set app_0123... OPENAI_API_KEY
-```
+Set the production variables and secrets your app needs using the
+[environment commands below](#environments). Local `.env` files and manifest
+defaults are not uploaded to production.
 
 Check the toolchain, project, and required configuration before deploying:
 
@@ -118,6 +98,90 @@ them, and creates a release. Run `cantelop deploy --dry-run` first to perform
 the same build without login, upload, or release creation. If the App does not
 exist, an interactive deploy offers to create it; CI can opt in explicitly with
 `cantelop deploy --create-app`.
+
+## Environments
+
+The `environment` field in `cantelop.json` documents the configuration your app
+expects, provides shared defaults for local development, and lets the CLI catch
+missing production configuration before deployment. Commit the declarations
+alongside your code; keep credentials in local `.env` files or the App's secret
+store.
+
+### Declare configuration
+
+Add an `environment` block to your manifest:
+
+```json
+{
+  "environment": {
+    "OPENAI_MODEL": { "default": "gpt-4.1-mini", "required": true },
+    "OPENAI_API_KEY": { "secret": true, "required": true }
+  }
+}
+```
+
+- `default` supplies a string value for local development. It never sets a
+  production value and cannot be used with `secret: true`.
+- `secret` tells the CLI to expect a secret rather than a non-secret variable.
+  It defaults to `false`; setting it does not create or upload a secret.
+- `required` tells `cantelop doctor` to check that the target App has that name
+  configured with the declared kind. It defaults to `false`.
+
+The field is not an allowlist: your app can read configuration that is not
+declared here. `CANTELOP_*` names are reserved by the runtime.
+
+### Run with local values
+
+Create a `.env` beside `cantelop.json` and exclude it from version control:
+
+```dotenv
+OPENAI_API_KEY=your-provider-key
+```
+
+```sh
+cantelop dev
+```
+
+The CLI combines manifest defaults with `.env`, with file values taking
+precedence. In this example, the model comes from the manifest and the API key
+comes from `.env`. To use a different file, run
+`cantelop dev -env-file .env.local`. These values stay local; deployment does
+not copy them into the App.
+
+Both the Edge API and native Session behaviour receive the configuration
+through their `env` context. Secrets are available to both, so never return or
+log them.
+
+### Configure and check production
+
+After `cantelop login`, set values against the App ID returned by
+`cantelop app create` (replace `app_0123...` below with that ID):
+
+```sh
+cantelop app env set app_0123... OPENAI_MODEL=gpt-4.1-mini
+printf %s "$OPENAI_API_KEY" |
+  cantelop app secret set app_0123... OPENAI_API_KEY
+```
+
+The secret command reads standard input; here it uses a credential already
+loaded into your shell. Secrets are write-only. Inspect configuration with:
+
+```sh
+cantelop app env list app_0123...
+cantelop app secret list app_0123...
+cantelop doctor
+```
+
+Variable listings include values; secret listings show names only. Run
+`doctor` from the project directory so it checks the App named in the manifest.
+It reports missing required variables or secrets and exits non-zero on failed
+checks. This checks presence and kind, not whether a provider credential is
+valid. A local `default` does not satisfy a required production value.
+
+Use `env set` or `secret set` again to update a value. Remove it with
+`cantelop app env unset APP_ID NAME` or
+`cantelop app secret unset APP_ID NAME`. A name cannot be both a variable and a
+secret; unset its existing value before changing its kind.
 
 ## Architecture
 
