@@ -50,6 +50,7 @@ export type {
   HandlingMessageStatus,
   MessageRef,
   MessageStatus,
+  MessageExecution,
   Session,
   SessionIdentity,
   SessionOpenConfig,

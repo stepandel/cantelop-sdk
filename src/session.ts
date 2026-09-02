@@ -22,11 +22,13 @@ export type SessionActivityFunction<Message, Event> = (
 
 export interface SessionActivity<Message, Event> {
   readonly active: boolean;
-  start(work: SessionActivityFunction<Message, Event>): void;
+  start(work: SessionActivityFunction<Message, Event>, policy?: { timeoutMs?: number }): void;
+ extend(timeoutMs: number): void;
   cancel(reason?: unknown): boolean;
 }
 
 export interface SessionContext<Message, Event = never> {
+  readonly signal: AbortSignal;
   readonly message: Readonly<{
     id: string;
     sequence: number;

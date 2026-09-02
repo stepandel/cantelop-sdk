@@ -9,6 +9,12 @@ import {
 import { InMemoryMailbox } from "../dist/mailbox.js";
 import { defineSessionBehaviour } from "../dist/session.js";
 
+const sandboxID = "sbx-" + "1".repeat(32);
+process.env.CANTELOP_SANDBOX_ID = sandboxID;
+const fetch = (url, init = {}) => globalThis.fetch(url, { ...init, headers: { "X-Cantelop-Sandbox-ID": sandboxID, ...init.headers } });
+async function acknowledge(server, kind, through) {
+ const response = await fetch(`${origin(server)}/__cantelop/v2/runtime/${kind}/ack`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({through}) }); assert.equal(response.status,200);
+}
 const messageId = "msg_0123456789abcdef0123456789abcdef";
 const behaviour = defineSessionBehaviour;
 
@@ -27,7 +33,7 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   t.after(() => close(server));
 
   const response = await fetch(
-    `${origin(server)}/__cantelop/v1/messages`,
+    `${origin(server)}/__cantelop/v2/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -35,12 +41,9 @@ test("the native adapter receives the versioned message protocol", async (t) => 
     },
   );
 
-  assert.equal(response.status, 204);
-  assert.equal(
-    response.headers.get("X-Cantelop-SDK-Message-Complete"),
-    messageId,
-  );
-  assert.equal(response.headers.get("X-Cantelop-SDK-Session-Generation"), "1");
+  assert.equal(response.status, 202);
+  const receipt = await response.json();
+  assert.equal(receipt.message_id, messageId); assert.equal(receipt.generation, 1);
   assert.deepEqual({
     id: received.message.id,
     sequence: received.message.sequence,
@@ -60,7 +63,7 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.equal(received.env.MODEL, "test-model");
 
   const snapshot = await fetch(
-    `${origin(server)}/__cantelop/v1/runtime/events?after=0&wait=0`,
+    `${origin(server)}/__cantelop/v2/runtime/events?after=0&wait=0`,
   );
   assert.equal(snapshot.status, 200);
   assert.deepEqual(await snapshot.json(), { events: [] });
@@ -76,7 +79,7 @@ test("the runtime emits the automatic receive span", async (t) => {
   await listen(server);
   t.after(() => close(server));
 
-  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+  const delivery = fetch(`${origin(server)}/__cantelop/v2/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(messageEnvelope({ prompt: "hello" }, "thread", messageId, traceContext())),
@@ -85,7 +88,7 @@ test("the runtime emits the automatic receive span", async (t) => {
   let cursor = 0;
   while (!observations.some(({ type }) => type === "span.completed")) {
     const response = await fetch(
-      `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}`,
+      `${origin(server)}/__cantelop/v2/runtime/observations?after=${cursor}`,
     );
     assert.equal(response.status, 200);
     const batch = await response.json();
@@ -94,11 +97,12 @@ test("the runtime emits the automatic receive span", async (t) => {
       cursor = record.cursor;
     }
   }
+  await acknowledge(server, "observations", cursor);
   const acknowledged = await fetch(
-    `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}&wait=0`,
+    `${origin(server)}/__cantelop/v2/runtime/observations?after=${cursor}&wait=0`,
   );
   assert.deepEqual(await acknowledged.json(), { observations: [] });
-  assert.equal((await delivery).status, 204);
+  assert.equal((await delivery).status, 202);
 
   assert.deepEqual(observations.map(({ type }) => type), [
     "span.started", "span.completed",
@@ -124,7 +128,7 @@ test("console and process output are captured automatically on the active Messag
   await listen(server);
   t.after(() => close(server));
 
-  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+  const delivery = fetch(`${origin(server)}/__cantelop/v2/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(messageEnvelope({}, "thread", messageId, traceContext())),
@@ -133,7 +137,7 @@ test("console and process output are captured automatically on the active Messag
   let cursor = 0;
   while (!observations.some(({ type }) => type === "span.completed")) {
     const response = await fetch(
-      `${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}`,
+      `${origin(server)}/__cantelop/v2/runtime/observations?after=${cursor}`,
     );
     assert.equal(response.status, 200);
     const batch = await response.json();
@@ -143,8 +147,8 @@ test("console and process output are captured automatically on the active Messag
       assert.equal(record.message_id, messageId);
     }
   }
-  await fetch(`${origin(server)}/__cantelop/v1/runtime/observations?after=${cursor}&wait=0`);
-  assert.equal((await delivery).status, 204);
+  await fetch(`${origin(server)}/__cantelop/v2/runtime/observations?after=${cursor}&wait=0`);
+  assert.equal((await delivery).status, 202);
 
   const logs = observations.filter(({ type }) => type === "log.recorded");
   const selected = logs.filter(({ body }) =>
@@ -173,14 +177,14 @@ test("the platform drains ordered Session output events", async (t) => {
   await listen(server);
   t.after(() => close(server));
 
-  const delivery = fetch(`${origin(server)}/__cantelop/v1/messages`, {
+  const delivery = fetch(`${origin(server)}/__cantelop/v2/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(messageEnvelope({ prompt: "hello" })),
   });
   await outputStarted;
   const first = await fetch(
-    `${origin(server)}/__cantelop/v1/runtime/events?after=0`,
+    `${origin(server)}/__cantelop/v2/runtime/events?after=0`,
   );
   assert.equal(first.status, 200);
   assert.deepEqual(await first.json(), {
@@ -191,8 +195,9 @@ test("the platform drains ordered Session output events", async (t) => {
     }],
   });
 
+  await acknowledge(server, "events", 1);
   const second = await fetch(
-    `${origin(server)}/__cantelop/v1/runtime/events?after=1`,
+    `${origin(server)}/__cantelop/v2/runtime/events?after=1`,
   );
   assert.equal(second.status, 200);
   assert.deepEqual(await second.json(), {
@@ -203,11 +208,11 @@ test("the platform drains ordered Session output events", async (t) => {
     }],
   });
   const acknowledged = await fetch(
-    `${origin(server)}/__cantelop/v1/runtime/events?after=2&wait=0`,
+    `${origin(server)}/__cantelop/v2/runtime/events?after=2&wait=0`,
   );
   assert.equal(acknowledged.status, 200);
   assert.deepEqual(await acknowledged.json(), { events: [] });
-  assert.equal((await delivery).status, 204);
+  assert.equal((await delivery).status, 202);
 });
 
 test("runtime activity keeps the Session active while steer and cancel messages run", async (t) => {
@@ -239,7 +244,7 @@ test("runtime activity keeps the Session active while steer and cancel messages 
   );
   await listen(server);
   t.after(() => close(server));
-  const url = `${origin(server)}/__cantelop/v1/messages`;
+  const url = `${origin(server)}/__cantelop/v2/messages`;
   const send = (id, payload) => fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -247,7 +252,7 @@ test("runtime activity keeps the Session active while steer and cancel messages 
   });
 
   const first = send(messageId, { type: "start" });
-  assert.equal((await first).status, 204);
+  assert.equal((await first).status, 202);
   assert.equal(activity.active, true);
 
   const steer = send(
@@ -260,8 +265,8 @@ test("runtime activity keeps the Session active while steer and cancel messages 
     { type: "cancel" },
   );
 
-  assert.equal((await steer).status, 204);
-  assert.equal((await cancel).status, 204);
+  assert.equal((await steer).status, 202);
+  assert.equal((await cancel).status, 202);
   await waitFor(() => handled.length === 4);
   assert.deepEqual(handled, ["start", "steer", "cancel", "cancelled"]);
   assert.deepEqual(sequences, [1, 2, 3, 4]);
@@ -285,12 +290,12 @@ test("message and activity send capabilities close when their work settles", asy
   t.after(() => finishActivity());
   t.after(() => close(server));
 
-  const response = await fetch(`${origin(server)}/__cantelop/v1/messages`, {
+  const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(messageEnvelope({ type: "start" })),
   });
-  assert.equal(response.status, 204);
+  assert.equal(response.status, 202);
   assert.throws(
     () => invocation.send({ type: "late" }),
     /message invocation has already settled/,
@@ -336,20 +341,17 @@ test("the platform can wait for generation-fenced runtime quiescence", async (t)
   t.after(() => finishSelfMessage());
   t.after(() => close(server));
 
-  const messageResponse = await fetch(`${origin(server)}/__cantelop/v1/messages`, {
+  const messageResponse = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(messageEnvelope({ type: "start" })),
   });
-  assert.equal(messageResponse.status, 204);
-  assert.equal(
-    messageResponse.headers.get("X-Cantelop-SDK-Session-Generation"),
-    "1",
-  );
+  assert.equal(messageResponse.status, 202);
+  assert.equal((await messageResponse.json()).generation, 1);
 
   let quiescenceSettled = false;
   const quiescence = fetch(
-    `${origin(server)}/__cantelop/v1/runtime/quiescence?minimum_generation=1`,
+    `${origin(server)}/__cantelop/v2/runtime/quiescence?minimum_generation=1`,
   ).then((response) => {
     quiescenceSettled = true;
     return response;
@@ -380,10 +382,10 @@ test("runtime quiescence requires a bound Session and one valid generation", asy
   t.after(() => close(server));
 
   const unbound = await fetch(
-    `${origin(server)}/__cantelop/v1/runtime/quiescence?minimum_generation=0`,
+    `${origin(server)}/__cantelop/v2/runtime/quiescence?minimum_generation=0`,
   );
   const malformed = await fetch(
-    `${origin(server)}/__cantelop/v1/runtime/quiescence?minimum_generation=one`,
+    `${origin(server)}/__cantelop/v2/runtime/quiescence?minimum_generation=one`,
   );
   assert.equal(unbound.status, 409);
   assert.deepEqual(await unbound.json(), { error: { code: "session_unbound" } });
@@ -438,7 +440,7 @@ test("one Session runtime processes its Session mailbox in FIFO order", async (t
   t.after(() => close(server));
 
   const first = fetch(
-    `${origin(server)}/__cantelop/v1/messages`,
+    `${origin(server)}/__cantelop/v2/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -448,7 +450,7 @@ test("one Session runtime processes its Session mailbox in FIFO order", async (t
   await waitFor(() => started.length === 1);
   const secondMessageId = "msg_fedcba9876543210fedcba9876543210";
   const second = fetch(
-    `${origin(server)}/__cantelop/v1/messages`,
+    `${origin(server)}/__cantelop/v2/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -459,8 +461,9 @@ test("one Session runtime processes its Session mailbox in FIFO order", async (t
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(started, ["message"]);
   releaseFirst();
-  assert.equal((await first).status, 204);
-  assert.equal((await second).status, 204);
+  assert.equal((await first).status, 202);
+  assert.equal((await second).status, 202);
+  await waitFor(() => started.length === 2);
   assert.deepEqual(started, ["message", "steer"]);
 });
 
@@ -477,7 +480,7 @@ test("one Session runtime deduplicates a message ID for its activation", async (
   await listen(server);
   t.after(() => release());
   t.after(() => close(server));
-  const url = `${origin(server)}/__cantelop/v1/messages`;
+  const url = `${origin(server)}/__cantelop/v2/messages`;
   const request = () => fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -491,14 +494,11 @@ test("one Session runtime deduplicates a message ID for its activation", async (
   assert.equal(calls, 1);
 
   release();
-  assert.equal((await first).status, 204);
-  assert.equal((await duplicate).status, 204);
+  assert.equal((await first).status, 202);
+  assert.equal((await duplicate).status, 202);
   const completedDuplicate = await request();
-  assert.equal(completedDuplicate.status, 204);
-  assert.equal(
-    completedDuplicate.headers.get("X-Cantelop-SDK-Session-Generation"),
-    "1",
-  );
+  assert.equal(completedDuplicate.status, 202);
+  assert.equal((await completedDuplicate.json()).generation, 1);
   assert.equal(calls, 1);
 });
 
@@ -508,7 +508,7 @@ test("a Session runtime server is bound to one Session identity", async (t) => {
   );
   await listen(server);
   t.after(() => close(server));
-  const url = `${origin(server)}/__cantelop/v1/messages`;
+  const url = `${origin(server)}/__cantelop/v2/messages`;
 
   const first = await fetch(url, {
     method: "POST",
@@ -521,7 +521,7 @@ test("a Session runtime server is bound to one Session identity", async (t) => {
     body: JSON.stringify(messageEnvelope({}, "other-thread")),
   });
 
-  assert.equal(first.status, 204);
+  assert.equal(first.status, 202);
   assert.equal(second.status, 409);
   assert.deepEqual(await second.json(), { error: { code: "session_mismatch" } });
 });
@@ -536,7 +536,7 @@ test("the native adapter marks a failed user message as settled", async (t) => {
   t.after(() => close(server));
 
   const response = await fetch(
-    `${origin(server)}/__cantelop/v1/messages`,
+    `${origin(server)}/__cantelop/v2/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -544,11 +544,9 @@ test("the native adapter marks a failed user message as settled", async (t) => {
     },
   );
 
-  assert.equal(response.status, 500);
-  assert.equal(
-    response.headers.get("X-Cantelop-SDK-Message-Complete"),
-    messageId,
-  );
+  assert.equal(response.status, 202);
+ const status = await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`);
+ assert.equal((await status.json()).state, "failed");
 });
 
 test("the native adapter rejects malformed protocol requests", async (t) => {
@@ -562,7 +560,7 @@ test("the native adapter rejects malformed protocol requests", async (t) => {
   t.after(() => close(server));
 
   const malformed = await fetch(
-    `${origin(server)}/__cantelop/v1/messages`,
+    `${origin(server)}/__cantelop/v2/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -639,7 +637,7 @@ test("serveSessionRuntime exposes startup and background output at Sandbox scope
     await runtime.ready;
     process.stdout.write("background runtime output\n");
     const response = await fetch(
-      `http://127.0.0.1:${port}/__cantelop/v1/runtime/observations?after=0&wait=0`,
+      `http://127.0.0.1:${port}/__cantelop/v2/runtime/observations?after=0&wait=0`,
     );
     assert.equal(response.status, 200);
     const batch = await response.json();
@@ -691,14 +689,14 @@ test("serveSessionRuntime adopts the platform-prebound listener", async () => {
       });
     });
     const response = await fetch(
-      `http://127.0.0.1:${address.port}/__cantelop/v1/messages`,
+      `http://127.0.0.1:${address.port}/__cantelop/v2/messages`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(messageEnvelope({})),
       },
     );
-    assert.equal(response.status, 204);
+    assert.equal(response.status, 202);
   } finally {
     child.kill();
   }

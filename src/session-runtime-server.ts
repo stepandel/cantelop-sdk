@@ -32,17 +32,16 @@ import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
 import { SessionOutputBuffer } from "./output.js";
+import { RuntimeMessages, RuntimeProtocolError } from "./runtime-messages.js";
 
-const MESSAGE_PATH = "/__cantelop/v1/messages";
-const QUIESCENCE_PATH = "/__cantelop/v1/runtime/quiescence";
-const OUTPUT_PATH = "/__cantelop/v1/runtime/events";
-const OBSERVATIONS_PATH = "/__cantelop/v1/runtime/observations";
+const MESSAGE_PATH = "/__cantelop/v2/messages";
+const QUIESCENCE_PATH = "/__cantelop/v2/runtime/quiescence";
+const OUTPUT_PATH = "/__cantelop/v2/runtime/events";
+const OBSERVATIONS_PATH = "/__cantelop/v2/runtime/observations";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
 const INTERNAL_FD_VARIABLE = "CANTELOP_INTERNAL_FD";
-const MESSAGE_COMPLETE_HEADER = "X-Cantelop-SDK-Message-Complete";
-const SESSION_GENERATION_HEADER = "X-Cantelop-SDK-Session-Generation";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
@@ -52,6 +51,8 @@ const TRACE_PARENT_PATTERN = /^00-((?!0{32})[0-9a-f]{32})-((?!0{16})[0-9a-f]{16}
 
 export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
+  sandboxId?: string;
+  executionTimeoutMs?: number;
 }
 
 export interface SessionRuntimeServer {
@@ -86,7 +87,9 @@ export function createSessionRuntimeHandler<Input, Event = never>(
 function createSessionRuntimeAdapter<Input, Event = never>(
   behaviour: SessionBehaviour<Input, Event>,
   options: SessionRuntimeHandlerOptions = {},
-): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer } {
+): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; } {
+  const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
+  const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);
   let boundSession: SessionIdentity | undefined;
   let quiescence: RuntimeQuiescence;
   const outputBuffer = new SessionOutputBuffer();
@@ -95,12 +98,16 @@ function createSessionRuntimeAdapter<Input, Event = never>(
   let activity: InMemoryActivity<Input, Event>;
 
   const receiveMessage = (
-    message: Readonly<{ id: string; payload: Input }>,
+    message: Readonly<{ id: string; payload: Input; }>,
     session: SessionIdentity,
     trace: RuntimeTraceContext | undefined,
+    signal: AbortSignal,
+    started: () => void,
   ): RuntimeDelivery => {
     const generation = quiescence.observeMessage(message.id);
     const settled = mailbox.enqueue(message.id, async (sequence) => {
+      signal.throwIfAborted();
+      started();
       let invocationOpen = true;
       const send = (payload: Input): void => {
         if (!invocationOpen) {
@@ -114,16 +121,18 @@ function createSessionRuntimeAdapter<Input, Event = never>(
           if (!outputOpen) {
             throw new Error("Session runtime message invocation has already settled");
           }
-          await outputBuffer.publish(message.id, event);
+          const handoff = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+          await outputBuffer.publish(message.id, event, handoff);
         },
       });
       const activityCapability: SessionActivity<Input, Event> = Object.freeze({
         get active() {
           return activity.active;
         },
-        start(work: SessionActivityFunction<Input, Event>) {
-          activity.start(message.id, work);
+        start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number; }) {
+          activity.start(message.id, work, policy);
         },
+        extend(timeoutMs: number) { return activity.extend(timeoutMs); },
         cancel(reason?: unknown) {
           return activity.cancel(reason);
         },
@@ -132,7 +141,7 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       try {
         await runWithRuntimeLogContext(observer, () =>
           observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
-            message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
+            signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
             activity: activityCapability, output, send,
           }))),
         );
@@ -149,12 +158,12 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       throw new Error("Session runtime cannot send before its Session is bound");
     }
     const message = Object.freeze({ id: createMessageID(), payload });
-    void receiveMessage(message, boundSession, undefined).settled.catch(() => undefined);
+    messages.admit(message.id, { message, session: boundSession }, (signal, started) => receiveMessage(message, boundSession!, undefined, signal, started));
   };
 
   activity = new InMemoryActivity(
     sendMessage,
-    (messageId, event) => outputBuffer.publish(messageId, event),
+    (messageId, event, signal) => outputBuffer.publish(messageId, event, AbortSignal.any([signal, AbortSignal.timeout(30_000)])),
     () => quiescence.changed(),
   );
   quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
@@ -166,16 +175,23 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       quiescence,
       outputBuffer,
       observationBuffer,
+      messages,
+      activity,
       () => boundSession,
       (session) => {
         if (boundSession !== undefined &&
-            (boundSession.id !== session.id ||
-              boundSession.workspaceId !== session.workspaceId)) {
+          (boundSession.id !== session.id ||
+            boundSession.workspaceId !== session.workspaceId)) {
           throw new ProtocolError(409, "session_mismatch");
         }
         boundSession ??= session;
       },
-    );
+    ).catch((error: unknown) => {
+      if (response.destroyed || response.writableEnded) return;
+      if (error instanceof RuntimeProtocolError || error instanceof ProtocolError) writeError(response, error.status, error.code);
+      else if (error instanceof RangeError) writeError(response, 409, error.message);
+      else writeError(response, 500, "runtime_error");
+    });
   };
   return { handler, observationBuffer };
 }
@@ -230,84 +246,66 @@ async function handleRequest<Input>(
   request: IncomingMessage,
   response: ServerResponse,
   receiveMessage: (
-    message: Readonly<{ id: string; payload: Input }>,
+    message: Readonly<{ id: string; payload: Input; }>,
     session: SessionIdentity,
     trace: RuntimeTraceContext | undefined,
+    signal: AbortSignal, started: () => void,
   ) => RuntimeDelivery,
   quiescence: RuntimeQuiescence,
   outputBuffer: SessionOutputBuffer,
   observationBuffer: RuntimeObservationBuffer,
+  messages: RuntimeMessages,
+  activity: { active: boolean; cancel(reason?: unknown): boolean; snapshot(): unknown; },
   boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://session-runtime.cantelop.internal");
-  if (url.pathname === OUTPUT_PATH) {
-    await handleOutputRequest(request, response, url, outputBuffer);
+  response.setHeader("X-Cantelop-Sandbox-ID", messages.sandboxId);
+  response.setHeader("X-Cantelop-Message-Protocol", "2");
+  if (request.headers["x-cantelop-sandbox-id"] !== messages.sandboxId) {
+    throw new RuntimeProtocolError(409, "sandbox_mismatch");
+  }
+  if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
+    writeJSON(response, 200, {
+      sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), observations: observationBuffer.metadata(), events: outputBuffer.metadata()
+    });
     return;
   }
-  if (url.pathname === OBSERVATIONS_PATH) {
-    await handleObservationRequest(request, response, url, observationBuffer);
-    return;
+  if (url.pathname === "/__cantelop/v2/runtime/activity/cancel" && request.method === "POST") {
+    const body = await readRequestEnvelope(request);
+    if (!isRecord(body) || Object.keys(body).length !== 1 || typeof body.activity_id !== "string") throw new ProtocolError(400, "invalid_activity_cancel");
+    const currentActivity = activity.snapshot();
+    if (!isRecord(currentActivity) || currentActivity.id !== body.activity_id) throw new RuntimeProtocolError(409, "activity_mismatch");
+    activity.cancel(); writeJSON(response, 200, { active: activity.active }); return;
   }
-  if (url.pathname === QUIESCENCE_PATH) {
-    await handleQuiescenceRequest(request, response, url, quiescence, boundSession());
-    return;
-  }
-  if (url.pathname !== MESSAGE_PATH || url.search !== "") {
-    writeError(response, 404, "not_found");
-    return;
-  }
-  if (request.method !== "POST") {
-    response.setHeader("Allow", "POST");
-    writeError(response, 405, "method_not_allowed");
-    return;
-  }
-  if (!isJSONContentType(request.headers["content-type"])) {
-    writeError(response, 415, "unsupported_media_type");
-    return;
-  }
-  let messageSettled = false;
-  let acceptedMessageID: string | undefined;
-  let acceptedGeneration: number | undefined;
-
-  try {
-    const envelope = await readRequestEnvelope(request);
-    if (!isRecord(envelope) || !hasMessageEnvelopeShape(envelope)) {
-      writeError(response, 400, "invalid_message_request");
-      return;
+  for (const [path, buffer] of [[OUTPUT_PATH, outputBuffer], [OBSERVATIONS_PATH, observationBuffer]] as const) {
+    if (url.pathname === path + "/ack" && request.method === "POST") {
+      const body = await readRequestEnvelope(request);
+      if (!isRecord(body) || Object.keys(body).length !== 1 || !Number.isSafeInteger(body.through)) throw new ProtocolError(400, "invalid_acknowledgment");
+      buffer.acknowledge(body.through as number);
+      writeJSON(response, 200, buffer.metadata()); return;
     }
-    const message = readMessage<Input>(envelope.message);
-    acceptedMessageID = message.id;
-    const session = readSession(envelope.session);
-    const trace = readObservabilityContext(envelope.observability);
-    bindSession(session);
-    const delivery = receiveMessage(message, session, trace);
-    acceptedGeneration = delivery.generation;
-    try {
-      await delivery.settled;
-    } finally {
-      messageSettled = true;
-    }
-    if (response.destroyed) return;
-    response.setHeader(MESSAGE_COMPLETE_HEADER, message.id);
-    response.setHeader(SESSION_GENERATION_HEADER, String(delivery.generation));
-    response.statusCode = 204;
-    response.end();
-  } catch (error) {
-    if (response.destroyed) return;
-    if (messageSettled && acceptedMessageID !== undefined) {
-      response.setHeader(MESSAGE_COMPLETE_HEADER, acceptedMessageID);
-      if (acceptedGeneration !== undefined) {
-        response.setHeader(SESSION_GENERATION_HEADER, String(acceptedGeneration));
-      }
-    }
-    if (error instanceof ProtocolError) {
-      writeError(response, error.status, error.code);
-      return;
-    }
-    writeError(response, 500, "message_failed");
   }
+  if (url.pathname === OUTPUT_PATH) { await handleOutputRequest(request, response, url, outputBuffer); return; }
+  if (url.pathname === OBSERVATIONS_PATH) { await handleObservationRequest(request, response, url, observationBuffer); return; }
+  if (url.pathname === QUIESCENCE_PATH) { await handleQuiescenceRequest(request, response, url, quiescence, boundSession()); return; }
+  const status = /^\/__cantelop\/v2\/messages\/(msg_[0-9a-f]{32})(\/cancel)?$/.exec(url.pathname);
+  if (status && ((request.method === "GET" && !status[2]) || (request.method === "POST" && status[2]))) {
+    writeJSON(response, 200, status[2] ? messages.cancel(status[1]!) : messages.get(status[1]!)); return;
+  }
+  if (url.pathname !== MESSAGE_PATH || url.search !== "") { writeError(response, 404, "not_found"); return; }
+  if (request.method !== "POST") { writeError(response, 405, "method_not_allowed"); return; }
+  if (!isJSONContentType(request.headers["content-type"])) { writeError(response, 415, "unsupported_media_type"); return; }
+  const envelope = await readRequestEnvelope(request);
+  if (!isRecord(envelope) || !hasMessageEnvelopeShape(envelope)) throw new ProtocolError(400, "invalid_message_request");
+  const message = readMessage<Input>(envelope.message);
+  const session = readSession(envelope.session);
+  const trace = readObservabilityContext(envelope.observability);
+  bindSession(session);
+  const result = messages.admit(message.id, { message, session }, (signal, started) => receiveMessage(message, session, trace, signal, started), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
+  writeJSON(response, 202, result.receipt);
 }
 
 async function handleObservationRequest(
@@ -324,8 +322,8 @@ async function handleObservationRequest(
   const values = url.searchParams.getAll("after");
   const waitValues = url.searchParams.getAll("wait");
   if ([...url.searchParams.keys()].some((key) => key !== "after" && key !== "wait") ||
-      values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
-      waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
+    values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
+    waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
     writeError(response, 400, "invalid_observation_request");
     return;
   }
@@ -341,7 +339,7 @@ async function handleObservationRequest(
     if (!response.writableEnded) abort();
   });
   try {
-    const observations = await buffer.read(after, controller.signal, waitValues.length === 0);
+    const observations = await buffer.read(after, AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]), waitValues.length === 0, false);
     if (response.destroyed) return;
     writeJSON(response, 200, {
       observations: observations.map((observation) => ({
@@ -350,9 +348,9 @@ async function handleObservationRequest(
         observation: observation.observation,
       })),
     });
-  } catch {
+  } catch (error) {
     if (!controller.signal.aborted && !response.destroyed) {
-      writeError(response, 500, "observation_failed");
+      writeError(response, error instanceof RangeError ? 409 : 408, error instanceof RangeError ? error.message : "poll_timeout");
     }
   } finally {
     request.removeListener("aborted", abort);
@@ -373,14 +371,14 @@ async function handleOutputRequest(
   const values = url.searchParams.getAll("after");
   const waitValues = url.searchParams.getAll("wait");
   if ([...url.searchParams.keys()].some((key) => key !== "after" && key !== "wait") ||
-	  values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
-	  waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
+    values.length !== 1 || !/^\d+$/.test(values[0] ?? "") ||
+    waitValues.length > 1 || (waitValues.length === 1 && waitValues[0] !== "0")) {
     writeError(response, 400, "invalid_output_request");
     return;
   }
   const after = Number(values[0]);
   if (!Number.isSafeInteger(after)) {
-	  writeError(response, 400, "invalid_output_request");
+    writeError(response, 400, "invalid_output_request");
     return;
   }
 
@@ -391,7 +389,7 @@ async function handleOutputRequest(
     if (!response.writableEnded) abort();
   });
   try {
-    const events = await outputBuffer.read(after, controller.signal, waitValues.length === 0);
+    const events = await outputBuffer.read(after, AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]), waitValues.length === 0, false);
     if (response.destroyed) return;
     writeJSON(response, 200, {
       events: events.map((event) => ({
@@ -400,9 +398,9 @@ async function handleOutputRequest(
         event: event.event,
       })),
     });
-  } catch {
+  } catch (error) {
     if (!controller.signal.aborted && !response.destroyed) {
-      writeError(response, 500, "output_failed");
+      writeError(response, error instanceof RangeError ? 409 : 408, error instanceof RangeError ? error.message : "poll_timeout");
     }
   } finally {
     request.removeListener("aborted", abort);
@@ -423,7 +421,7 @@ async function handleQuiescenceRequest(
   }
   const values = url.searchParams.getAll("minimum_generation");
   if ([...url.searchParams.keys()].some((key) => key !== "minimum_generation") ||
-      values.length !== 1 || !/^\d+$/.test(values[0] ?? "")) {
+    values.length !== 1 || !/^\d+$/.test(values[0] ?? "")) {
     writeError(response, 400, "invalid_quiescence_request");
     return;
   }
@@ -446,7 +444,7 @@ async function handleQuiescenceRequest(
   try {
     const snapshot = await quiescence.waitForQuiescence(
       minimumGeneration,
-      controller.signal,
+      AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]),
     );
     if (response.destroyed) return;
     writeJSON(response, 200, {
@@ -530,7 +528,8 @@ function isJSONContentType(value: string | undefined): boolean {
 
 function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return (keys.length === 2 || (keys.length === 3 && keys.includes("observability"))) &&
+  return keys.every(key => ["session", "message", "observability", "deadline"].includes(key)) &&
+    (value.deadline === undefined || typeof value.deadline === "string") &&
     keys.includes("session") && keys.includes("message") &&
     isRecord(value.session) && isRecord(value.message);
 }
@@ -538,15 +537,15 @@ function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
 function readObservabilityContext(value: unknown): RuntimeTraceContext | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value) || !exactKeys(value, ["attempt_id", "attempt", "traceparent"], ["request_id"]) ||
-      typeof value.attempt_id !== "string" || !ATTEMPT_ID_PATTERN.test(value.attempt_id) ||
-      typeof value.attempt !== "number" || !Number.isInteger(value.attempt) || value.attempt < 1 || value.attempt > 100 ||
-      typeof value.traceparent !== "string") {
+    typeof value.attempt_id !== "string" || !ATTEMPT_ID_PATTERN.test(value.attempt_id) ||
+    typeof value.attempt !== "number" || !Number.isInteger(value.attempt) || value.attempt < 1 || value.attempt > 100 ||
+    typeof value.traceparent !== "string") {
     throw new ProtocolError(400, "invalid_message_request");
   }
   const match = TRACE_PARENT_PATTERN.exec(value.traceparent);
   const requestId = value.request_id;
   if (match === null || (requestId !== undefined &&
-      (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId) || match[1] !== requestId.slice(4)))) {
+    (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId) || match[1] !== requestId.slice(4)))) {
     throw new ProtocolError(400, "invalid_message_request");
   }
   return Object.freeze({
@@ -562,10 +561,10 @@ function exactKeys(value: Record<string, unknown>, required: string[], optional:
     keys.every((key) => required.includes(key) || optional.includes(key));
 }
 
-function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Input }> {
+function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Input; }> {
   if (!isRecord(value) || Object.keys(value).length !== 2 ||
-      typeof value.id !== "string" || !MESSAGE_ID_PATTERN.test(value.id) ||
-      !("payload" in value)) {
+    typeof value.id !== "string" || !MESSAGE_ID_PATTERN.test(value.id) ||
+    !("payload" in value)) {
     throw new ProtocolError(400, "invalid_message_request");
   }
   return Object.freeze({ id: value.id, payload: value.payload as Input });
@@ -573,11 +572,11 @@ function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Inp
 
 function readSession(value: unknown): SessionIdentity {
   if (!isRecord(value) || Object.keys(value).length !== 3 ||
-      typeof value.id !== "string" || !SESSION_ID_PATTERN.test(value.id) ||
-      typeof value.workspace_id !== "string" || !WORKSPACE_ID_PATTERN.test(value.workspace_id) ||
-      typeof value.keep_alive_seconds !== "number" ||
-      !Number.isInteger(value.keep_alive_seconds) || value.keep_alive_seconds < 0 ||
-      value.keep_alive_seconds > MAX_KEEP_ALIVE_SECONDS) {
+    typeof value.id !== "string" || !SESSION_ID_PATTERN.test(value.id) ||
+    typeof value.workspace_id !== "string" || !WORKSPACE_ID_PATTERN.test(value.workspace_id) ||
+    typeof value.keep_alive_seconds !== "number" ||
+    !Number.isInteger(value.keep_alive_seconds) || value.keep_alive_seconds < 0 ||
+    value.keep_alive_seconds > MAX_KEEP_ALIVE_SECONDS) {
     throw new ProtocolError(400, "invalid_message_request");
   }
   return Object.freeze({

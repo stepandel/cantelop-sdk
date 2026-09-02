@@ -66,7 +66,7 @@ try {
       "assert.equal(typeof buildSessionRuntime, \"function\");",
       "assert.equal(typeof buildLocalApi, \"function\");",
       "assert.equal(typeof watchLocalProject, \"function\");",
-      "assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 3);",
+      "assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 4);",
       "assert.equal(typeof defineApi, \"function\");",
       "assert.equal(typeof createApiWorker, \"function\");",
       "assert.equal(typeof defineSessionBehaviour, \"function\");",

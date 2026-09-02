@@ -29,7 +29,7 @@ const SESSION_RUNTIME_STARTUP_STATE_KEY = "dev.cantelop.sdk.session-runtime-star
 
 // The CLI checks this exact protocol before using the build module. Increment
 // it when an incompatible build/watch contract is introduced.
-export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 3;
+export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 4;
 
 export interface BuildApiOptions {
   readonly entrypoint: string;
