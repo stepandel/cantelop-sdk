@@ -43,17 +43,17 @@ Cantelop SDK can be installed directly in your app:
 bun add @cantelop/sdk@latest
 ```
 
+
+
 ## Initialize a project
 
-Choose the App slug this project will target and generate its deployment
-manifest. Initialization does not require login or an existing App:
+Start with a single command
 
 ```sh
-cantelop init -app my-agent -provider openai
+cantelop init -app <agent-name> -provider <openai, claude, or pi>
 ```
 
-This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`,
-and refuses to overwrite existing project files:
+This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`.  `cantelop.json` will look something like this.
 
 ```json
 {
@@ -63,17 +63,7 @@ and refuses to overwrite existing project files:
 }
 ```
 
-The CLI owns parsing, validation, and compatibility for this file; applications
-do not select a schema or tie the manifest format to their installed SDK
-version. `app` is the exact human-readable slug the project targets; generated
-`app_...` IDs do not belong in project source. The App must exist before the
-release is uploaded. Use `-config` and `-api` for non-default paths. The
-required `-provider` selects the generated agent starter. Add an expanded
-`session` object with `context` and `dockerfile` only when native dependencies
-or system tools require a custom image.
-
-Declare configuration requirements by name without committing production
-values:
+Declare environment variables required for production deployment. They can be verified against the remote config using `cantelop doctor`
 
 ```json
 "environment": {
