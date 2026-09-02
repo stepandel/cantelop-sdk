@@ -80,34 +80,32 @@ Use `@cantelop/sdk/api` for API middleware. Cantelop injects the current App and
 root router. The App is already authenticated and scoped by the platform; no
 API key, endpoint configuration, or router construction is required.
 
+Start with a `/chat` endpoint that opens a Session actor and dispatches one
+application-defined message:
+
 ```ts
 import { defineApi } from "@cantelop/sdk/api";
-import type { Input } from "./contracts.js";
 
-export default defineApi<Input>(({ app, router }) => {
-  router.route("POST", "/workspaces", async ({ request }) => {
-    const { slug } = await request.json() as { slug: string };
-    const workspace = await app.workspaces.create({ slug });
-    return Response.json(workspace, { status: 201 });
-  });
+type SessionMessage = { type: "chat"; prompt: string };
 
-  router.route("POST", "/dispatch", async ({ request }) => {
+export default defineApi<SessionMessage>(({ app, router }) => {
+  router.route("POST", "/chat", async ({ request }) => {
     const body = await request.json() as {
       sessionId?: string;
       workspaceId: string;
       keepAliveSeconds: number;
-      input: Input;
+      prompt: string;
     };
     const session = app.sessions.open({
       ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
       workspaceId: body.workspaceId,
       keepAliveSeconds: body.keepAliveSeconds,
     });
-    const message = await session.dispatch(body.input);
-    return Response.json({
-      sessionId: session.id,
-      message,
-    }, { status: 202 });
+    const message = await session.dispatch({
+      type: "chat",
+      prompt: body.prompt,
+    });
+    return Response.json({ sessionId: session.id, message }, { status: 202 });
   });
 });
 ```
@@ -158,177 +156,78 @@ first message creates it, while `keepAliveSeconds` applies to each request.
 Opening an existing ID against a different Workspace conflicts. Termination is
 still final; use a new ID for a distinct logical Session.
 
-### Chat, steer, and cancel with a Session actor
+### Add steering
 
-Chat, steering, and cancellation are application-level commands sent to the
-same Session actor. The Edge API translates HTTP requests into a typed message
-protocol; it does not run the agent itself. For example, the following
-`defineApi` exposes all three commands (authentication and request validation
-are application-specific and omitted here):
+Once chat works, extend the message union with a steer command:
 
 ```ts
-import { defineApi } from "@cantelop/sdk/api";
-
-type SessionCommand =
+type SessionMessage =
   | { type: "chat"; prompt: string }
-  | { type: "steer"; prompt: string }
-  | { type: "cancel" };
+  | { type: "steer"; prompt: string };
+```
 
-interface SessionCoordinates {
-  sessionId: string;
-  workspaceId: string;
-  keepAliveSeconds: number;
-}
+Then add `/steer` inside the same `defineApi` callback. It requires the
+`sessionId` returned by `/chat`, ensuring the command reaches the same actor:
 
-interface ChatRequest extends Omit<SessionCoordinates, "sessionId"> {
-  sessionId?: string;
-  prompt: string;
-}
-
-interface SteerRequest extends SessionCoordinates {
-  prompt: string;
-}
-
-export default defineApi<SessionCommand>(({ app, router }) => {
-  router.route("POST", "/chat", async ({ request }) => {
-    const body = await request.json() as ChatRequest;
-    const session = app.sessions.open({
-      ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
-      workspaceId: body.workspaceId,
-      keepAliveSeconds: body.keepAliveSeconds,
-    });
-    const message = await session.dispatch({
-      type: "chat",
-      prompt: body.prompt,
-    });
-    return Response.json({ sessionId: session.id, message }, { status: 202 });
+```ts
+router.route("POST", "/steer", async ({ request }) => {
+  const body = await request.json() as {
+    sessionId: string;
+    workspaceId: string;
+    keepAliveSeconds: number;
+    prompt: string;
+  };
+  const session = app.sessions.open({
+    id: body.sessionId,
+    workspaceId: body.workspaceId,
+    keepAliveSeconds: body.keepAliveSeconds,
   });
-
-  router.route("POST", "/steer", async ({ request }) => {
-    const body = await request.json() as SteerRequest;
-    const session = app.sessions.open({
-      id: body.sessionId,
-      workspaceId: body.workspaceId,
-      keepAliveSeconds: body.keepAliveSeconds,
-    });
-    const message = await session.dispatch({
-      type: "steer",
-      prompt: body.prompt,
-    });
-    return Response.json({ sessionId: session.id, message }, { status: 202 });
+  const message = await session.dispatch({
+    type: "steer",
+    prompt: body.prompt,
   });
-
-  router.route("POST", "/cancel", async ({ request }) => {
-    const body = await request.json() as SessionCoordinates;
-    const session = app.sessions.open({
-      id: body.sessionId,
-      workspaceId: body.workspaceId,
-      keepAliveSeconds: body.keepAliveSeconds,
-    });
-    const message = await session.dispatch({ type: "cancel" });
-    return Response.json({ sessionId: session.id, message }, { status: 202 });
-  });
+  return Response.json({ sessionId: session.id, message }, { status: 202 });
 });
 ```
 
-`/chat` may omit `sessionId` to create a new actor identity; the response
-returns the generated ID. `/steer` and `/cancel` require that ID so their
-messages are routed to the same actor. All three endpoints return `202` after
-the command is accepted into the actor's volatile mailbox, not after the agent
-finishes processing it.
+The actor applies this command to its active provider turn. To remain
+responsive, that long-running turn must run as a managed activity rather than
+blocking the actor's mailbox.
 
-The native Session behaviour supplies the other half of the actor. Module-level
-state belongs to this one Session runtime, mailbox handlers run serially, and a
-managed activity keeps the long-running agent turn outside the mailbox so steer
-and cancel messages can still be received:
+### Add cancellation
+
+Finally, add cancel to the message union:
 
 ```ts
-import {
-  defineSessionBehaviour,
-  type SessionContext,
-} from "@cantelop/sdk/session";
-
-type SessionCommand =
+type SessionMessage =
   | { type: "chat"; prompt: string }
   | { type: "steer"; prompt: string }
   | { type: "cancel" };
-
-type SessionEvent =
-  | { type: "text_delta"; delta: string }
-  | { type: "done"; answer: string };
-
-interface AgentTurn {
-  steer(prompt: string): void;
-  run(options: {
-    signal: AbortSignal;
-    onText(delta: string): Promise<void>;
-  }): Promise<string>;
-}
-
-// Adapt the model provider's streaming and steering APIs behind this function.
-declare function createAgentTurn(prompt: string): AgentTurn;
-
-type Context = SessionContext<SessionCommand, SessionEvent>;
-
-let activeTurn: AgentTurn | undefined;
-const queuedChats: string[] = [];
-
-export default defineSessionBehaviour<SessionCommand, SessionEvent>((context) => {
-  const command = context.message.payload;
-
-  if (command.type === "cancel") {
-    queuedChats.length = 0;
-    context.activity.cancel();
-    return;
-  }
-
-  if (command.type === "steer") {
-    if (activeTurn !== undefined) {
-      activeTurn.steer(command.prompt);
-    } else {
-      startTurn(context, command.prompt);
-    }
-    return;
-  }
-
-  if (context.activity.active) {
-    queuedChats.push(command.prompt);
-    return;
-  }
-
-  startTurn(context, command.prompt);
-});
-
-function startTurn(context: Context, prompt: string): void {
-  const turn = createAgentTurn(prompt);
-  activeTurn = turn;
-
-  context.activity.start(async ({ signal, send, output }) => {
-    try {
-      const answer = await turn.run({
-        signal,
-        onText: (delta) => output.send({ type: "text_delta", delta }),
-      });
-      await output.send({ type: "done", answer });
-    } finally {
-      if (activeTurn === turn) activeTurn = undefined;
-      const nextPrompt = queuedChats.shift();
-      if (!signal.aborted && nextPrompt !== undefined) {
-        send({ type: "chat", prompt: nextPrompt });
-      }
-    }
-  });
-}
 ```
 
-This policy queues a new chat while a turn is active, applies steer immediately
-to the active provider turn (and treats an idle steer as a new turn), and clears
-queued chats before aborting the active turn on cancel. Provider SDKs differ in
-how they accept steering, so `createAgentTurn()` is the adapter boundary. The
-activity must pass its `AbortSignal` to the provider for cancellation to be
-cooperative. A cancel command deliberately calls `activity.cancel()` rather
-than `session.terminate()`: the former stops current work while leaving the
-actor reusable, whereas termination makes the logical Session final.
+The `/cancel` route dispatches to the same actor just like `/steer`:
+
+```ts
+router.route("POST", "/cancel", async ({ request }) => {
+  const body = await request.json() as {
+    sessionId: string;
+    workspaceId: string;
+    keepAliveSeconds: number;
+  };
+  const session = app.sessions.open({
+    id: body.sessionId,
+    workspaceId: body.workspaceId,
+    keepAliveSeconds: body.keepAliveSeconds,
+  });
+  const message = await session.dispatch({ type: "cancel" });
+  return Response.json({ sessionId: session.id, message }, { status: 202 });
+});
+```
+
+Cancel is an application message, not Session termination. The Session actor
+handles it by cancelling its managed activity, which preserves the actor for a
+later `/chat`. `session.terminate()` is different: it permanently ends the
+logical Session.
 
 Webhook handlers can dispatch a message asynchronously and acknowledge after
 the platform accepts it for delivery:
@@ -526,23 +425,37 @@ mailbox. External and
 self-generated messages use the same FIFO sequence:
 
 ```ts
-export default defineSessionBehaviour<Message>(async (context) => {
+type SessionMessage =
+  | { type: "chat"; prompt: string }
+  | { type: "steer"; prompt: string }
+  | { type: "cancel" };
+
+type SessionEvent = { type: "done"; result: unknown };
+
+interface Agent {
+  run(prompt: string, options: { signal: AbortSignal }): Promise<unknown>;
+  steer(prompt: string): void;
+}
+
+declare function createAgent(): Agent;
+
+let agent: Agent | undefined;
+
+export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) => {
   const command = context.message.payload;
 
-  if (command.type === "start") {
-    context.activity.start(async ({ signal, send }) => {
-      try {
-        const result = await runAgent(command.prompt, { signal });
-        send({ type: "completed", result });
-      } catch {
-        send({ type: "failed" });
-      }
+  if (command.type === "chat") {
+    agent ??= createAgent();
+    const activeAgent = agent;
+    context.activity.start(async ({ signal, output }) => {
+      const result = await activeAgent.run(command.prompt, { signal });
+      await output.send({ type: "done", result });
     });
     return;
   }
 
   if (command.type === "steer") {
-    activeAgent?.steer(command.prompt);
+    agent?.steer(command.prompt);
     return;
   }
 
