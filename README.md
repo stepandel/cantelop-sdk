@@ -297,13 +297,6 @@ const workspace = await app.workspaces.open({ slug: "user-1" });
 const workspaceId = workspace.id;
 ```
 
-Pass the returned `workspaceId` when opening a Session. The Session's Workspace
-is fixed when its first message creates it; opening the same Session ID against
-a different Workspace conflicts.
-
-Workspace creation takes a routing `slug`. The current App identity is derived
-by the trusted bridge and cannot be supplied or overridden by application code.
-
 ## Sessions and messages
 
 Every message belongs to a Session. `app.sessions.open()` creates a local
