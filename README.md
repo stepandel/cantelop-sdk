@@ -364,36 +364,23 @@ See the [OpenAI](./examples/openai), [Anthropic](./examples/anthropic), and
 [Pi](./examples/pi) examples for complete routes, message handlers, and  
 provider-specific steering and cancellation.
 
-## Session event streaming
+## Response streaming (SSE and WebSockets)
 
-Native behaviour publishes JSON events through the asynchronous Session output:
+Publish responses from a Session behaviour or managed activity with
+`output.send()`. Events are separate from the HTTP response to `dispatch()`:
 
 ```ts
-export default defineSessionBehaviour<Input, RuntimeEvent>(
-  async ({ message, output }) => {
-    for await (const delta of generate(message.payload)) {
-      await output.send({ type: "text_delta", delta });
-    }
-    await output.send({ type: "done" });
-  },
-);
+for await (const delta of generate(prompt)) {
+  await output.send({ type: "text_delta", delta });
+}
+await output.send({ type: "done" });
 ```
 
-`output.send()` applies backpressure. It resolves after the platform collector
-has accepted the event, and rejects non-JSON values, events larger than 64 KiB,
-or calls made after their message or managed activity settles. Managed
-activities receive the same `output` capability. Output does not enqueue a new
-actor message and does not control Session lifetime.
+Await each send for backpressure, and keep the behaviour or activity running
+until streaming finishes. Events must be JSON-compatible and at most 64 KiB.
 
-The platform brokers events by logical Session and adds trusted `sequence`,
-`session_id`, `message_id`, and `created_at` fields. Sequence numbers are
-monotonic within a Session. Message commands continue to use `dispatch()` over
-HTTP; the WebSocket transport is output-only.
-
-An App exposes its own authenticated public route by returning
-`session.events(request)`. The SDK forwards only the private streaming
-handshake; the application still owns authorization, CORS, and which caller may
-observe a Session:
+Expose an Edge API route with `session.events(request)`. Your application
+controls authorization and which Session a caller may observe:
 
 ```ts
 router.route("GET", "/events", async ({ request }) => {
@@ -407,32 +394,22 @@ router.route("GET", "/events", async ({ request }) => {
 });
 ```
 
-For SSE, connect with `Accept: text/event-stream` (a browser `EventSource` does
-this automatically). Each default `message` event contains one JSON envelope,
-and its SSE `id` is the platform sequence. Reconnect sends `Last-Event-ID`; an
-explicit `?after=<sequence>` cursor is also supported.
+Both transports use this route:
 
-For WebSockets, connect to that same App route with subprotocol
-`cantelop.events.v1`. Each text frame contains the same JSON envelope as SSE.
-Client data frames are rejected with a policy-violation close; steering and
-other input remain HTTP messages.
+- **SSE:** connect with `new EventSource("/events")` or
+  `Accept: text/event-stream`. Reconnects use `Last-Event-ID` automatically
+  with `EventSource`.
+- **WebSockets:** connect using subprotocol `cantelop.events.v1`. The stream is
+  output-only; send chat, steering, and cancellation through HTTP `dispatch()`.
 
-Disconnecting either transport cancels only that subscription. Event
-subscriptions do not keep a Sandbox warm or control Session lifetime. The
-Session remains reusable, and a reconnect resumes from its supplied cursor.
+Each event contains your payload plus `sequence`, `session_id`, `message_id`,
+and `created_at`. To resume either transport, use `?after=<sequence>`.
+Replay is bounded and in-memory; expired cursors return `event_cursor_expired`.
+Persist events yourself if you need durable history.
 
-Replay is a volatile, bounded platform cache rather than durable history. The
-default bound is 256 events and 1 MiB per Session, with global stream and byte
-bounds. A stale, evicted, or post-restart cursor fails explicitly with
-`event_cursor_expired`; the platform never silently skips a requested range.
-Applications that require replay across platform restarts must persist events
-in their own durable store.
-
-`cantelop dev` uses the same Session runtime drain, platform envelope, cursor rules,
-SSE endpoint, and output-only WebSocket protocol through its loopback Session
-bridge.
-The Session activity must remain pending until any direct stream and associated
-background work that belongs to the message are complete.
+Disconnecting stops only the subscription, not the agent. Subscriptions do not
+keep a Sandbox warm. See the [provider examples](./examples/README.md) for
+complete SSE and WebSocket clients, also supported by `cantelop dev`.
 
 ## Examples
 
