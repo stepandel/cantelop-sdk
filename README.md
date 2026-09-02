@@ -375,35 +375,25 @@ until streaming finishes. Events must be JSON-compatible and at most 64 KiB.
 
 ### Transport behavior
 
-`session.events(request)` forwards an incoming `GET` request to Cantelop's
-event stream for that Session and returns the streaming response. It does not
-register a public route or invoke the Session behaviour. Your application
-chooses the route, authenticates callers, and authorizes access to the Session.
+`session.events(request)` adapts a `GET` request into a Session event stream.
+Your application chooses the public route and authorizes access.
 
-- **SSE:** for requests without a WebSocket upgrade, the SDK requests an SSE
-  stream. Each event's SSE `id` is its Session sequence number. A browser's
-  `EventSource` remembers that ID and sends it as `Last-Event-ID` when
-  reconnecting. The SDK forwards this header so Cantelop can replay events
-  after that sequence. This automatic reconnection is browser behavior, not
-  something the SDK initiates.
-- **WebSockets:** the SDK forwards WebSocket upgrade requests and the requested
-  subprotocol. Cantelop's streaming service requires `cantelop.events.v1` and
-  enforces an output-only connection. Client data messages are rejected; send
-  commands through HTTP `dispatch()` instead.
+- **SSE:** the default transport. Browser `EventSource` reconnects with the last
+  event's sequence in `Last-Event-ID`; the SDK forwards it to resume replay.
+- **WebSockets:** upgrade requests require the `cantelop.events.v1` subprotocol.
+  Cantelop enforces an output-only stream; send commands through `dispatch()`.
 
 Both transports deliver your payload plus `sequence`, `session_id`,
-`message_id`, and `created_at`. Use `?after=<sequence>` to resume explicitly;
-it takes precedence over `Last-Event-ID`. WebSocket clients must supply this
-cursor themselves when reconnecting. Replay is bounded and in-memory; expired
-cursors return `event_cursor_expired`. Persist events for durable history.
+`message_id`, and `created_at`. WebSocket clients resume with `?after=<sequence>`,
+which also works for SSE and overrides `Last-Event-ID`. Replay is bounded and
+in-memory; expired cursors return `event_cursor_expired`.
 
 Disconnecting stops only the subscription, not the agent. Subscriptions do not
 keep a Sandbox warm.
 
-### Example route and clients
+### Example route
 
-This example exposes both transports at `/events` for `agent:primary`. The
-route name and Session selection are application choices, not SDK requirements:
+Here, `/events` and `agent:primary` are example choices, not SDK requirements:
 
 ```ts
 router.route("GET", "/events", async ({ request }) => {
@@ -417,21 +407,9 @@ router.route("GET", "/events", async ({ request }) => {
 });
 ```
 
-Connect with either client (replace the WebSocket hostname with your App's):
-
-```ts
-// SSE, from a page on the same origin:
-const events = new EventSource("/events");
-
-// Alternatively, WebSocket with the required subprotocol:
-const socket = new WebSocket(
-  "wss://my-agent.cantelop.dev/events",
-  "cantelop.events.v1",
-);
-```
-
-See the [provider examples](./examples/README.md) for complete clients,
-including reconnection cursors. Both transports also work with `cantelop dev`.
+Connect with `new EventSource("/events")` or a WebSocket using
+`cantelop.events.v1`. See the [provider examples](./examples/README.md) for
+complete clients. Both transports also work with `cantelop dev`.
 
 ## Examples
 
