@@ -34,7 +34,6 @@ test("a router handles Web requests and can close over the current App", async (
               acceptedAt: new Date("2026-08-17T12:00:00Z"),
               status: async () => ({ state: "unknown" }),
             }),
-            terminate: async () => undefined,
           };
         },
       },
