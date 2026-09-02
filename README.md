@@ -86,19 +86,21 @@ message. Cantelop supplies the App and router:
 ```ts
 import { defineApi } from "@cantelop/sdk/api";
 
+const workspaceSlug = "default";
+
 type SessionMessage = { type: "chat"; prompt: string };
 
 export default defineApi<SessionMessage>(({ app, router }) => {
   router.route("POST", "/chat", async ({ request }) => {
     const body = await request.json() as {
       sessionId?: string;
-      workspaceId: string;
       keepAliveSeconds: number;
       prompt: string;
     };
+    const workspace = await app.workspaces.open({ slug: workspaceSlug });
     const session = app.sessions.open({
       ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
-      workspaceId: body.workspaceId,
+      workspaceId: workspace.id,
       keepAliveSeconds: body.keepAliveSeconds,
     });
     const message = await session.dispatch({
@@ -113,6 +115,10 @@ export default defineApi<SessionMessage>(({ app, router }) => {
 Omit `sessionId` for a new Session; reuse the returned ID to continue it.
 `202` means the message was accepted, not that the agent has finished. Add
 request validation and caller authorization for your application.
+
+The server selects the shared `default` Workspace; clients do not send a
+`workspaceId`. `workspaces.open()` resolves its slug to the generated ID needed
+by `sessions.open()`.
 
 ## Session runtime
 
@@ -331,13 +337,13 @@ Then add `/steer` inside the same `defineApi` callback. It requires the
 router.route("POST", "/steer", async ({ request }) => {
   const body = await request.json() as {
     sessionId: string;
-    workspaceId: string;
     keepAliveSeconds: number;
     prompt: string;
   };
+  const workspace = await app.workspaces.open({ slug: workspaceSlug });
   const session = app.sessions.open({
     id: body.sessionId,
-    workspaceId: body.workspaceId,
+    workspaceId: workspace.id,
     keepAliveSeconds: body.keepAliveSeconds,
   });
   const message = await session.dispatch({
@@ -372,12 +378,12 @@ The `/cancel` route dispatches to the same actor just like `/steer`:
 router.route("POST", "/cancel", async ({ request }) => {
   const body = await request.json() as {
     sessionId: string;
-    workspaceId: string;
     keepAliveSeconds: number;
   };
+  const workspace = await app.workspaces.open({ slug: workspaceSlug });
   const session = app.sessions.open({
     id: body.sessionId,
-    workspaceId: body.workspaceId,
+    workspaceId: workspace.id,
     keepAliveSeconds: body.keepAliveSeconds,
   });
   const message = await session.dispatch({ type: "cancel" });
