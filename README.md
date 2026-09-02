@@ -125,18 +125,55 @@ the same build without login, upload, or release creation. If the App does not
 exist, an interactive deploy offers to create it; CI can opt in explicitly with
 `cantelop deploy --create-app`.
 
-A TypeScript SDK with separate surfaces for Edge API middleware and native
-Session behaviour.
+## Architecture
+
+Cantelop separates the public Edge API from the native agent runtime. The Edge
+API validates HTTP requests and dispatches application-defined messages; the
+Session behaviour owns the agent, model, and business logic inside Linux.
 
 ```text
-Edge API  ->  Cantelop Session  ->  Linux-native Session runtime
+Client -> Edge API -> Session actor mailbox -> Session behaviour
+                                                   |-> managed activity
+                                                   `-> output events
 ```
 
-The API validates HTTP requests, dispatches messages, and returns accepted
-message references.
-Session behaviour owns agent and model behavior and can use the native Linux
-runtime. An App deploys one Session behaviour, which governs every Session opened
-for that App.
+A Session is an addressable actor. Opening the same App-scoped Session ID always
+targets the same logical actor, even when requests arrive at different Edge API
+workers. During each activation, Cantelop gives that actor a dedicated Sandbox
+running exactly one SDK-managed Session runtime process. The process is never
+shared by multiple Sessions, so module-level agent and conversation state is
+per-Session.
+
+The runtime processes the actor's in-memory mailbox one message at a time in
+acceptance order. Long-running agent work can move into the Session's single
+managed activity, allowing the mailbox to keep receiving commands such as
+steer and cancel. The application defines what every message means; Cantelop
+only provides identity, routing, serialization, activity management, and event
+transport.
+
+### Message lifecycle
+
+1. The Edge API opens a local Session reference and calls `dispatch()` with an
+   application-defined payload. The SDK assigns the message ID.
+2. Cantelop resolves the Session actor and forwards the message to its Sandbox.
+   The first dispatch creates the logical Session atomically when needed.
+3. Once accepted for delivery, `dispatch()` returns a `MessageRef` in
+   `accepted` state. This does not wait for the Session behaviour or agent work
+   to finish.
+4. The runtime dequeues messages in order and invokes the Session behaviour.
+   A message becomes `handling`, then `handled` when the behaviour returns or
+   `failed` when it throws.
+5. A managed activity can outlive the behaviour invocation that started it.
+   Later messages can steer or cancel that work, and the runtime is quiescent
+   only after both the mailbox and activity are idle.
+6. `output.send()` publishes application events independently of the mailbox;
+   clients receive them through an application-owned SSE or WebSocket route.
+
+Acceptance and mailbox state are intentionally volatile. A runtime crash or
+Sandbox replacement loses queued messages, deduplication records, and
+in-memory agent state. The logical Session identity and Workspace remain, but
+applications must persist any provider state they need to resume. Reactivation
+starts a new dedicated process for the same logical Session.
 
 ## Edge API
 
@@ -432,13 +469,6 @@ project installations before a build is attempted.
 Use `@cantelop/sdk/session` to define the actor behavior that runs inside the
 Linux VM. Each App has one deployed Session behaviour; callers opening a Session do
 not provide or replace its behavior.
-
-For each active Session, Cantelop guarantees one dedicated Sandbox with one
-SDK-managed Session runtime process. That process handles only that Session
-identity and is never shared with another Session. Module-level agent and
-conversation state is therefore per-Session. If a released Sandbox is later
-reactivated, Cantelop starts a new process for the same logical Session, so
-state that must survive reactivation still needs external persistence.
 
 ```ts
 import { defineSessionBehaviour } from "@cantelop/sdk/session";
