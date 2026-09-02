@@ -77,3 +77,36 @@ test('capacity rejection preserves duplicate reservations', async () => {
   assert.throws(() => registry.admit('other', {}, enqueue), /mailbox_capacity/);
   assert.equal(registry.admit(id, {}, enqueue).receipt.sequence, 1);
 });
+test('output handoff cancellation rejects without claiming broker acceptance', async () => {
+ const { SessionOutputBuffer } = await import('../dist/output.js');
+ const buffer = new SessionOutputBuffer(); const cancel = new AbortController();
+ const pending = buffer.publish(id, { text: 'pending' }, cancel.signal);
+ cancel.abort(new Error('handoff deadline'));
+ await assert.rejects(pending, /handoff deadline/);
+ assert.equal(buffer.metadata().acknowledged, 0);
+ assert.equal(buffer.metadata().latest, 1);
+});
+test('telemetry capacity drops do not block application execution', async () => {
+ const { RuntimeObservationBuffer, RuntimeObserver } = await import('../dist/observability.js');
+ const buffer = new RuntimeObservationBuffer();
+ const trace = { attemptId: 'att_'+'a'.repeat(32), attempt:1, traceId:'b'.repeat(32), parentSpanId:'c'.repeat(16), traceFlags:'01' };
+ const observer = new RuntimeObserver(id, trace, buffer); let calls=0;
+ for(let i=0;i<600;i++) await observer.span('work',async()=>{calls++});
+ assert.equal(calls,600); assert(buffer.metadata().dropped>0);
+});
+test('same counters in replacement sandbox cannot acknowledge its output', async t => {
+ const request = await fixture(t, async ({output}) => { await output.send({text:'new'}); });
+ await request('messages','POST',envelope());
+ const events=await (await request('runtime/events?after=0&wait=0')).json();
+ assert.equal(events.events[0].cursor,1);
+ assert.equal((await request('runtime/events/ack','POST',{through:1},'sbx-'+'f'.repeat(32))).status,409);
+ assert.equal((await (await request('runtime')).json()).events.acknowledged,0);
+ await request('runtime/events/ack','POST',{through:1});
+});
+test('internal messages remain deadline supervised after the external handler settles', async t => {
+ let release; const gate=new Promise(r=>{release=r});
+ const request=await fixture(t,async ({message,send})=>{if(message.payload.self){await gate}else{send({self:true})}}, {executionTimeoutMs:30});t.after(()=>release());
+ await request('messages','POST',envelope());
+ await until(async()=>!!(await (await request('runtime')).json()).message_work?.cancellation_requested_at);
+ const snapshot=await (await request('runtime')).json();assert.equal(snapshot.quiescent,false);assert(snapshot.message_work.deadline);
+});

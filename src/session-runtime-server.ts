@@ -121,16 +121,18 @@ function createSessionRuntimeAdapter<Input, Event = never>(
           if (!outputOpen) {
             throw new Error("Session runtime message invocation has already settled");
           }
-          await boundedOutput(outputBuffer.publish(message.id, event), signal);
+          const handoff = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+ await outputBuffer.publish(message.id, event, handoff);
         },
       });
       const activityCapability: SessionActivity<Input, Event> = Object.freeze({
         get active() {
           return activity.active;
         },
-        start(work: SessionActivityFunction<Input, Event>) {
-          activity.start(message.id, work);
+        start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number }) {
+          activity.start(message.id, work, policy);
         },
+        extend(timeoutMs: number) { return activity.extend(timeoutMs); },
         cancel(reason?: unknown) {
           return activity.cancel(reason);
         },
@@ -161,7 +163,7 @@ function createSessionRuntimeAdapter<Input, Event = never>(
 
   activity = new InMemoryActivity(
     sendMessage,
-    (messageId, event) => boundedOutput(outputBuffer.publish(messageId, event)),
+    (messageId, event, signal) => outputBuffer.publish(messageId, event, AbortSignal.any([signal, AbortSignal.timeout(30_000)])),
     () => quiescence.changed(),
   );
   quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
@@ -265,7 +267,7 @@ async function handleRequest<Input>(
     throw new RuntimeProtocolError(409, "sandbox_mismatch");
   }
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
-    writeJSON(response, 200, { sandbox_id: messages.sandboxId, protocol: 2, generation: quiescence.generation,
+    writeJSON(response, 200, { sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
       quiescent: quiescence.quiescent, activity: activity.snapshot(), observations: observationBuffer.metadata(), events: outputBuffer.metadata() });
     return;
   }
@@ -296,7 +298,7 @@ async function handleRequest<Input>(
   const session = readSession(envelope.session);
   const trace = readObservabilityContext(envelope.observability);
   bindSession(session);
-  const result = messages.admit(message.id, { message, session }, (signal, started) => receiveMessage(message, session, trace, signal, started));
+  const result = messages.admit(message.id, { message, session }, (signal, started) => receiveMessage(message, session, trace, signal, started), typeof envelope.deadline === "string" ? envelope.deadline : undefined);
   writeJSON(response, 202, result.receipt);
 }
 
@@ -390,9 +392,9 @@ async function handleOutputRequest(
         event: event.event,
       })),
     });
-  } catch {
+  } catch (error) {
     if (!controller.signal.aborted && !response.destroyed) {
-      writeError(response, 500, "output_failed");
+      writeError(response, error instanceof RangeError ? 409 : 408, error instanceof RangeError ? error.message : "poll_timeout");
     }
   } finally {
     request.removeListener("aborted", abort);
@@ -520,7 +522,8 @@ function isJSONContentType(value: string | undefined): boolean {
 
 function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return (keys.length === 2 || (keys.length === 3 && keys.includes("observability"))) &&
+  return keys.every(key => ["session", "message", "observability", "deadline"].includes(key)) &&
+    (value.deadline === undefined || typeof value.deadline === "string") &&
     keys.includes("session") && keys.includes("message") &&
     isRecord(value.session) && isRecord(value.message);
 }
@@ -613,12 +616,4 @@ class ProtocolError extends Error {
   ) {
     super(code);
   }
-}
-
-async function boundedOutput(work: Promise<void>, signal?: AbortSignal): Promise<void> {
-  const stop = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]);
-  stop.throwIfAborted();
-  let abort: () => void = () => {};
-  try { await Promise.race([work, new Promise<never>((_, reject) => { abort = () => reject(stop.reason); stop.addEventListener("abort", abort, { once: true }); })]); }
-  finally { stop.removeEventListener("abort", abort); }
 }

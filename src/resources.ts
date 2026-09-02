@@ -22,18 +22,30 @@ export interface SessionOpenConfig {
   readonly keepAliveSeconds: number;
 }
 
+export interface MessageExecution {
+ readonly phase: "sending" | "accepted" | "running" | "cancelling" | "settled" | "quiescent" | "unavailable";
+ readonly outcome: "pending" | "succeeded" | "failed" | "timed_out" | "unknown";
+ readonly sandboxId: string;
+ readonly deadline: Date;
+ readonly phaseAt: Date;
+ readonly workState: string;
+}
+
 export interface AcceptedMessageStatus {
+ readonly execution?: MessageExecution;
   readonly state: "accepted";
   readonly acceptedAt: Date;
 }
 
 export interface HandlingMessageStatus {
+ readonly execution?: MessageExecution;
   readonly state: "handling";
   readonly acceptedAt: Date;
   readonly startedAt: Date;
 }
 
 export interface HandledMessageStatus {
+ readonly execution?: MessageExecution;
   readonly state: "handled";
   readonly acceptedAt: Date;
   readonly startedAt: Date;
@@ -41,6 +53,7 @@ export interface HandledMessageStatus {
 }
 
 export interface FailedMessageStatus {
+ readonly execution?: MessageExecution;
   readonly state: "failed";
   readonly acceptedAt: Date;
   readonly startedAt: Date;

@@ -2,6 +2,7 @@ import type {
   CantelopApp,
   MessageRef,
   MessageStatus,
+ MessageExecution,
   Session,
   SessionOpenConfig,
   Workspace,
@@ -120,6 +121,8 @@ function createRemoteSession<Input>(
       );
       path.searchParams.set("workspace_id", config.workspaceId);
       if (afterValues.length === 1) path.searchParams.set("after", afterValues[0]!);
+ const streamID = sourceURL.searchParams.get("stream_id");
+ if (streamID !== null) path.searchParams.set("stream_id", streamID);
 
       const headers = new Headers({ Accept: "text/event-stream" });
       if (afterValues.length === 0) copyHeader(request.headers, headers, "Last-Event-ID");
@@ -195,9 +198,15 @@ function readMessageStatus(envelope: unknown, expectedMessage: string): MessageS
   if (typeof envelope.accepted_at !== "string") {
     throw new RemoteAppError("invalid_message_status_response", 0);
   }
+  let details: { execution?: MessageExecution } = {};
+  if (envelope.execution !== undefined) {
+    const e = envelope.execution;
+    if (!isRecord(e) || !["sending","accepted","running","cancelling","settled","quiescent","unavailable"].includes(String(e.phase)) || !["pending","succeeded","failed","timed_out","unknown"].includes(String(e.outcome)) || typeof e.sandbox_id !== "string" || typeof e.deadline !== "string" || typeof e.phase_at !== "string" || typeof e.work_state !== "string") throw new RemoteAppError("invalid_message_status_response",0);
+    details = {execution: Object.freeze({ phase:e.phase as MessageExecution["phase"], outcome:e.outcome as MessageExecution["outcome"], sandboxId:e.sandbox_id, deadline:readMessageStatusDate(e.deadline), phaseAt:readMessageStatusDate(e.phase_at),workState:e.work_state })};
+  }
   const acceptedAt = readMessageStatusDate(envelope.accepted_at);
   if (envelope.state === "accepted") {
-    return Object.freeze({ state: "accepted" as const, acceptedAt });
+    return Object.freeze({ state: "accepted" as const, acceptedAt, ...details });
   }
 
   if (typeof envelope.started_at !== "string") {
@@ -205,11 +214,11 @@ function readMessageStatus(envelope: unknown, expectedMessage: string): MessageS
   }
   const startedAt = readMessageStatusDate(envelope.started_at);
   if (envelope.state === "handling") {
-    return Object.freeze({ state: "handling" as const, acceptedAt, startedAt });
+    return Object.freeze({ state: "handling" as const, acceptedAt, startedAt, ...details });
   }
   if (envelope.state === "handled" && typeof envelope.handled_at === "string") {
     return Object.freeze({
-      state: "handled" as const,
+      state: "handled" as const, ...details,
       acceptedAt,
       startedAt,
       handledAt: readMessageStatusDate(envelope.handled_at),
@@ -219,7 +228,7 @@ function readMessageStatus(envelope: unknown, expectedMessage: string): MessageS
       isRecord(envelope.error) && typeof envelope.error.code === "string" &&
       envelope.error.code.length > 0) {
     return Object.freeze({
-      state: "failed" as const,
+      state: "failed" as const, ...details,
       acceptedAt,
       startedAt,
       failedAt: readMessageStatusDate(envelope.failed_at),
