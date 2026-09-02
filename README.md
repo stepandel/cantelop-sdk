@@ -2,27 +2,20 @@
 
 ## Prerequisites
 
-### Use the SDK
+### To use the SDK
 
 - Node.js 22 or newer
 - An API key for the LLM provider you plan to use
 
-### Run locally
+### To run locally
 
-In addition to the SDK requirements:
+- Cantelop CLI
+- Bun 
+- Docker with `linux/amd64` support
 
-- The Cantelop CLI
-- Bun for `cantelop dev`
-- Docker with `linux/amd64` support only when using `cantelop dev --container`
+### To deploy
 
-Local development does not require a Cantelop account or login.
-
-### Deploy
-
-In addition to the SDK requirements and Cantelop CLI:
-
-- Docker with `linux/amd64` build support
-- A Cantelop account, authenticated with `cantelop login`
+- A Cantelop account
 
 ## Install
 
@@ -171,20 +164,20 @@ transport.
 ### Message lifecycle
 
 1. The Edge API opens a local Session reference and calls `dispatch()` with an
-   application-defined payload. The SDK assigns the message ID.
+  application-defined payload. The SDK assigns the message ID.
 2. Cantelop resolves the Session actor and forwards the message to its Sandbox.
-   The first dispatch creates the logical Session atomically when needed.
+  The first dispatch creates the logical Session atomically when needed.
 3. Once accepted for delivery, `dispatch()` returns a `MessageRef` in
-   `accepted` state. This does not wait for the Session behaviour or agent work
+  `accepted` state. This does not wait for the Session behaviour or agent work
    to finish.
 4. The runtime dequeues messages in order and invokes the Session behaviour.
-   A message becomes `handling`, then `handled` when the behaviour returns or
+  A message becomes `handling`, then `handled` when the behaviour returns or
    `failed` when it throws.
 5. A managed activity can outlive the behaviour invocation that started it.
-   Later messages can steer or cancel that work, and the runtime is quiescent
+  Later messages can steer or cancel that work, and the runtime is quiescent
    only after both the mailbox and activity are idle.
 6. `output.send()` publishes application events independently of the mailbox;
-   clients receive them through an application-owned SSE or WebSocket route.
+  clients receive them through an application-owned SSE or WebSocket route.
 
 Acceptance and mailbox state are intentionally volatile. A runtime crash or
 Sandbox replacement loses queued messages, deduplication records, and
@@ -717,9 +710,9 @@ background work that belongs to the message are complete.
 
 Each provider example contains two independently checked entrypoints:
 
-- [`examples/openai`](./examples/openai)
-- [`examples/anthropic`](./examples/anthropic)
-- [`examples/pi`](./examples/pi)
+- `[examples/openai](./examples/openai)`
+- `[examples/anthropic](./examples/anthropic)`
+- `[examples/pi](./examples/pi)`
 
 In every example, `src/api.ts` is Edge-only and `src/session.ts` defines the
 native Session behaviour.
@@ -736,5 +729,5 @@ pnpm check:package
 
 `check:package` packs the exact npm artifact, rejects leaked development files,
 installs it into an empty project, imports every public entrypoint, and builds a
-customer API. See [`docs/releasing.md`](./docs/releasing.md) for the release
+customer API. See `[docs/releasing.md](./docs/releasing.md)` for the release
 boundary. Publishing is a separate production operation.
