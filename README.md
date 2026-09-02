@@ -2,10 +2,27 @@
 
 ## Prerequisites
 
-- Node.js 22 or newer and Bun
-- Docker with `linux/amd64` build support for deployment
-- An API key for the agent provider you plan to use
-- A Cantelop account
+### Use the SDK
+
+- Node.js 22 or newer
+- An API key for the LLM provider you plan to use
+
+### Run locally
+
+In addition to the SDK requirements:
+
+- The Cantelop CLI
+- Bun for `cantelop dev`
+- Docker with `linux/amd64` support only when using `cantelop dev --container`
+
+Local development does not require a Cantelop account or login.
+
+### Deploy
+
+In addition to the SDK requirements and Cantelop CLI:
+
+- Docker with `linux/amd64` build support
+- A Cantelop account, authenticated with `cantelop login`
 
 ## Install
 
