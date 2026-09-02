@@ -17,7 +17,7 @@ project-installed `@cantelop/sdk/build`; it does not carry a second SDK copy.
 After creating an App, generate the deployment manifest from its slug:
 
 ```sh
-cantelop init -app vera -provider openai
+cantelop init -app my-agent -provider openai
 ```
 
 This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`,
@@ -25,7 +25,7 @@ and refuses to overwrite existing project files:
 
 ```json
 {
-  "app": "vera",
+  "app": "my-agent",
   "api": "src/api.ts",
   "session": "src/session.ts"
 }
