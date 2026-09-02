@@ -19,6 +19,14 @@
 
 ## Install
 
+Install the Cantelop SDK directly in your app:
+
+```sh
+bun add @cantelop/sdk@latest
+```
+
+For the best development experience, use the Cantelop CLI.
+
 ### Cantelop CLI
 
 Install the CLI with Homebrew (recommended):
@@ -27,27 +35,11 @@ Install the CLI with Homebrew (recommended):
 brew install stepandel/tap/cantelop
 ```
 
-Or use the macOS and Linux installer:
+Alternatively, use the installer for macOS or Linux:
 
 ```sh
 curl -fsSL https://console.cantelop.dev/install.sh | sh
 ```
-
-The installer selects the archive for the current platform, verifies its
-checksum, and installs `cantelop` in `~/.local/bin`. Follow its prompt to reload
-your shell if it updates your shell profile.
-
-### SDK package
-
-Cantelop applications use the SDK from both their Edge API build and native
-Session runtime image:
-
-```sh
-pnpm add @cantelop/sdk@0.5.1
-```
-
-Cantelop's CLI invokes the project-installed `@cantelop/sdk/build`; it does not
-carry a second SDK copy.
 
 ## Initialize a project
 
