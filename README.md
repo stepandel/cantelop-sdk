@@ -65,6 +65,81 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
 
 
 
+## Architecture overview
+
+An App has two pieces:
+
+- **Edge API** (`src/api.ts`): receives HTTP requests and dispatches messages.
+- **Session runtime** (`src/session.ts`): runs your agent and business logic
+inside a native Sandbox.
+
+Cantelop uses the actor model: each Session has an identity, its own runtime
+process, and a mailbox that handles messages one at a time. Requests using the
+same Session ID reach the same logical actor. Your code decides how to handle
+each message.
+
+## Edge API
+
+In `src/api.ts`, define a `/chat` route that opens a Session and sends it a
+message. Cantelop supplies the App and router:
+
+```ts
+import { defineApi } from "@cantelop/sdk/api";
+
+type SessionMessage = { type: "chat"; prompt: string };
+
+export default defineApi<SessionMessage>(({ app, router }) => {
+  router.route("POST", "/chat", async ({ request }) => {
+    const body = await request.json() as {
+      sessionId?: string;
+      workspaceId: string;
+      keepAliveSeconds: number;
+      prompt: string;
+    };
+    const session = app.sessions.open({
+      ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
+      workspaceId: body.workspaceId,
+      keepAliveSeconds: body.keepAliveSeconds,
+    });
+    const message = await session.dispatch({
+      type: "chat",
+      prompt: body.prompt,
+    });
+    return Response.json({ sessionId: session.id, message }, { status: 202 });
+  });
+});
+```
+
+Omit `sessionId` for a new Session; reuse the returned ID to continue it.
+`202` means the message was accepted, not that the agent has finished. Add
+request validation and caller authorization for your application.
+
+## Session runtime
+
+In `src/session.ts`, handle the same chat message and publish the result.
+Here, `runAgent` is your own provider integration in `agent.ts`, not an SDK
+function:
+
+```ts
+import { defineSessionBehaviour } from "@cantelop/sdk/session";
+import { runAgent } from "./agent.js";
+
+type SessionMessage = { type: "chat"; prompt: string };
+type SessionEvent = { type: "done"; answer: string };
+
+export default defineSessionBehaviour<SessionMessage, SessionEvent>(
+  async ({ message, session, env, output }) => {
+    const answer = await runAgent(message.payload.prompt, {
+      sessionId: session.id,
+      apiKey: env.OPENAI_API_KEY,
+    });
+    await output.send({ type: "done", answer });
+  },
+);
+```
+
+This handler is an example of a queue behavior. It waits for the agent before handling the next message.
+
 ## Environments
 
 The `environment` field in `cantelop.json` documents the configuration your app
@@ -90,6 +165,8 @@ production value and cannot be used with `secret: true`.
 It defaults to `false`; setting it does not create or upload a secret.
 - `required` tells `cantelop doctor` to check that the target App has that name  
 configured with the declared kind.
+
+
 
 ### Run with local values
 
@@ -139,7 +216,7 @@ cantelop deploy
 them, and creates a release. Run `cantelop deploy --dry-run` first to perform
 the same build without login, upload, or release creation.
 
-## Architecture
+## Actor model and message lifecycle
 
 Cantelop separates the public Edge API from the native agent runtime. The Edge
 API validates HTTP requests and dispatches application-defined messages; the
@@ -189,41 +266,7 @@ in-memory agent state. The logical Session identity and Workspace remain, but
 applications must persist any provider state they need to resume. Reactivation
 starts a new dedicated process for the same logical Session.
 
-## Edge API
-
-Use `@cantelop/sdk/api` for API middleware. Cantelop injects the current App and
-root router. The App is already authenticated and scoped by the platform; no
-API key, endpoint configuration, or router construction is required.
-
-Start with a `/chat` endpoint that opens a Session actor and dispatches one
-application-defined message:
-
-```ts
-import { defineApi } from "@cantelop/sdk/api";
-
-type SessionMessage = { type: "chat"; prompt: string };
-
-export default defineApi<SessionMessage>(({ app, router }) => {
-  router.route("POST", "/chat", async ({ request }) => {
-    const body = await request.json() as {
-      sessionId?: string;
-      workspaceId: string;
-      keepAliveSeconds: number;
-      prompt: string;
-    };
-    const session = app.sessions.open({
-      ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
-      workspaceId: body.workspaceId,
-      keepAliveSeconds: body.keepAliveSeconds,
-    });
-    const message = await session.dispatch({
-      type: "chat",
-      prompt: body.prompt,
-    });
-    return Response.json({ sessionId: session.id, message }, { status: 202 });
-  });
-});
-```
+## Sessions and messages
 
 Every message belongs to a Session. `app.sessions.open()` creates a local
 reference to the Session actor without making a request. The first `dispatch()` atomically
@@ -478,29 +521,11 @@ functions. Current CLIs require protocol version `3`, packaged in
 `@cantelop/sdk@0.5.1`. `cantelop doctor` rejects older or incomplete
 project installations before a build is attempted.
 
-## Native Session behaviour
+## Native Session behaviour details
 
 Use `@cantelop/sdk/session` to define the actor behavior that runs inside the
 Linux VM. Each App has one deployed Session behaviour; callers opening a Session do
 not provide or replace its behavior.
-
-```ts
-import { defineSessionBehaviour } from "@cantelop/sdk/session";
-import type { Input, RuntimeEvent } from "./contracts.js";
-
-export default defineSessionBehaviour<Input, RuntimeEvent>(
-  async ({ message, session, env, output }) => {
-    const result = await runAgent(message.payload, {
-      messageId: message.id,
-      sessionId: session.id,
-      apiKey: env.MODEL_API_KEY,
-      onText: async (delta) => output.send({ type: "text_delta", delta }),
-    });
-
-    await output.send({ type: "done", result });
-  },
-);
-```
 
 Session behaviour may use Node.js, subprocesses, the Linux filesystem, provider
 SDKs, and VM environment variables. Cantelop supplies the same App variables
