@@ -32,17 +32,16 @@ import { InMemoryActivity } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
 import { SessionOutputBuffer } from "./output.js";
+import { RuntimeMessages, RuntimeProtocolError } from "./runtime-messages.js";
 
-const MESSAGE_PATH = "/__cantelop/v1/messages";
-const QUIESCENCE_PATH = "/__cantelop/v1/runtime/quiescence";
-const OUTPUT_PATH = "/__cantelop/v1/runtime/events";
-const OBSERVATIONS_PATH = "/__cantelop/v1/runtime/observations";
+const MESSAGE_PATH = "/__cantelop/v2/messages";
+const QUIESCENCE_PATH = "/__cantelop/v2/runtime/quiescence";
+const OUTPUT_PATH = "/__cantelop/v2/runtime/events";
+const OBSERVATIONS_PATH = "/__cantelop/v2/runtime/observations";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
 const INTERNAL_FD_VARIABLE = "CANTELOP_INTERNAL_FD";
-const MESSAGE_COMPLETE_HEADER = "X-Cantelop-SDK-Message-Complete";
-const SESSION_GENERATION_HEADER = "X-Cantelop-SDK-Session-Generation";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 const MAX_KEEP_ALIVE_SECONDS = 604_800;
@@ -52,6 +51,8 @@ const TRACE_PARENT_PATTERN = /^00-((?!0{32})[0-9a-f]{32})-((?!0{16})[0-9a-f]{16}
 
 export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
+  sandboxId?: string;
+  executionTimeoutMs?: number;
 }
 
 export interface SessionRuntimeServer {
@@ -87,6 +88,8 @@ function createSessionRuntimeAdapter<Input, Event = never>(
   behaviour: SessionBehaviour<Input, Event>,
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer } {
+  const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
+  const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);
   let boundSession: SessionIdentity | undefined;
   let quiescence: RuntimeQuiescence;
   const outputBuffer = new SessionOutputBuffer();
@@ -98,9 +101,13 @@ function createSessionRuntimeAdapter<Input, Event = never>(
     message: Readonly<{ id: string; payload: Input }>,
     session: SessionIdentity,
     trace: RuntimeTraceContext | undefined,
+    signal: AbortSignal,
+    started: () => void,
   ): RuntimeDelivery => {
     const generation = quiescence.observeMessage(message.id);
     const settled = mailbox.enqueue(message.id, async (sequence) => {
+      signal.throwIfAborted();
+      started();
       let invocationOpen = true;
       const send = (payload: Input): void => {
         if (!invocationOpen) {
@@ -114,7 +121,7 @@ function createSessionRuntimeAdapter<Input, Event = never>(
           if (!outputOpen) {
             throw new Error("Session runtime message invocation has already settled");
           }
-          await outputBuffer.publish(message.id, event);
+          await boundedOutput(outputBuffer.publish(message.id, event), signal);
         },
       });
       const activityCapability: SessionActivity<Input, Event> = Object.freeze({
@@ -132,7 +139,7 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       try {
         await runWithRuntimeLogContext(observer, () =>
           observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
-            message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
+            signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
             activity: activityCapability, output, send,
           }))),
         );
@@ -149,12 +156,12 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       throw new Error("Session runtime cannot send before its Session is bound");
     }
     const message = Object.freeze({ id: createMessageID(), payload });
-    void receiveMessage(message, boundSession, undefined).settled.catch(() => undefined);
+    messages.admit(message.id, { message, session: boundSession }, (signal, started) => receiveMessage(message, boundSession!, undefined, signal, started));
   };
 
   activity = new InMemoryActivity(
     sendMessage,
-    (messageId, event) => outputBuffer.publish(messageId, event),
+    (messageId, event) => boundedOutput(outputBuffer.publish(messageId, event)),
     () => quiescence.changed(),
   );
   quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
@@ -166,6 +173,8 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       quiescence,
       outputBuffer,
       observationBuffer,
+      messages,
+      activity,
       () => boundSession,
       (session) => {
         if (boundSession !== undefined &&
@@ -175,7 +184,12 @@ function createSessionRuntimeAdapter<Input, Event = never>(
         }
         boundSession ??= session;
       },
-    );
+    ).catch((error: unknown) => {
+      if (response.destroyed || response.writableEnded) return;
+      if (error instanceof RuntimeProtocolError || error instanceof ProtocolError) writeError(response, error.status, error.code);
+      else if (error instanceof RangeError) writeError(response, 409, error.message);
+      else writeError(response, 500, "runtime_error");
+    });
   };
   return { handler, observationBuffer };
 }
@@ -233,81 +247,57 @@ async function handleRequest<Input>(
     message: Readonly<{ id: string; payload: Input }>,
     session: SessionIdentity,
     trace: RuntimeTraceContext | undefined,
+    signal: AbortSignal, started: () => void,
   ) => RuntimeDelivery,
   quiescence: RuntimeQuiescence,
   outputBuffer: SessionOutputBuffer,
   observationBuffer: RuntimeObservationBuffer,
+  messages: RuntimeMessages,
+  activity: { active: boolean; cancel(reason?: unknown): boolean; snapshot(): unknown },
   boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
   setBaseHeaders(response);
   const url = new URL(request.url ?? "/", "http://session-runtime.cantelop.internal");
-  if (url.pathname === OUTPUT_PATH) {
-    await handleOutputRequest(request, response, url, outputBuffer);
+  response.setHeader("X-Cantelop-Sandbox-ID", messages.sandboxId);
+  response.setHeader("X-Cantelop-Message-Protocol", "2");
+  if (request.headers["x-cantelop-sandbox-id"] !== messages.sandboxId) {
+    throw new RuntimeProtocolError(409, "sandbox_mismatch");
+  }
+  if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
+    writeJSON(response, 200, { sandbox_id: messages.sandboxId, protocol: 2, generation: quiescence.generation,
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), observations: observationBuffer.metadata(), events: outputBuffer.metadata() });
     return;
   }
-  if (url.pathname === OBSERVATIONS_PATH) {
-    await handleObservationRequest(request, response, url, observationBuffer);
-    return;
+  if (url.pathname === "/__cantelop/v2/runtime/activity/cancel" && request.method === "POST") {
+    activity.cancel(); writeJSON(response, 200, { active: activity.active }); return;
   }
-  if (url.pathname === QUIESCENCE_PATH) {
-    await handleQuiescenceRequest(request, response, url, quiescence, boundSession());
-    return;
-  }
-  if (url.pathname !== MESSAGE_PATH || url.search !== "") {
-    writeError(response, 404, "not_found");
-    return;
-  }
-  if (request.method !== "POST") {
-    response.setHeader("Allow", "POST");
-    writeError(response, 405, "method_not_allowed");
-    return;
-  }
-  if (!isJSONContentType(request.headers["content-type"])) {
-    writeError(response, 415, "unsupported_media_type");
-    return;
-  }
-  let messageSettled = false;
-  let acceptedMessageID: string | undefined;
-  let acceptedGeneration: number | undefined;
-
-  try {
-    const envelope = await readRequestEnvelope(request);
-    if (!isRecord(envelope) || !hasMessageEnvelopeShape(envelope)) {
-      writeError(response, 400, "invalid_message_request");
-      return;
+  for (const [path, buffer] of [[OUTPUT_PATH, outputBuffer], [OBSERVATIONS_PATH, observationBuffer]] as const) {
+    if (url.pathname === path + "/ack" && request.method === "POST") {
+      const body = await readRequestEnvelope(request);
+      if (!isRecord(body) || Object.keys(body).length !== 1 || !Number.isSafeInteger(body.through)) throw new ProtocolError(400, "invalid_acknowledgment");
+      buffer.acknowledge(body.through as number);
+      writeJSON(response, 200, buffer.metadata()); return;
     }
-    const message = readMessage<Input>(envelope.message);
-    acceptedMessageID = message.id;
-    const session = readSession(envelope.session);
-    const trace = readObservabilityContext(envelope.observability);
-    bindSession(session);
-    const delivery = receiveMessage(message, session, trace);
-    acceptedGeneration = delivery.generation;
-    try {
-      await delivery.settled;
-    } finally {
-      messageSettled = true;
-    }
-    if (response.destroyed) return;
-    response.setHeader(MESSAGE_COMPLETE_HEADER, message.id);
-    response.setHeader(SESSION_GENERATION_HEADER, String(delivery.generation));
-    response.statusCode = 204;
-    response.end();
-  } catch (error) {
-    if (response.destroyed) return;
-    if (messageSettled && acceptedMessageID !== undefined) {
-      response.setHeader(MESSAGE_COMPLETE_HEADER, acceptedMessageID);
-      if (acceptedGeneration !== undefined) {
-        response.setHeader(SESSION_GENERATION_HEADER, String(acceptedGeneration));
-      }
-    }
-    if (error instanceof ProtocolError) {
-      writeError(response, error.status, error.code);
-      return;
-    }
-    writeError(response, 500, "message_failed");
   }
+  if (url.pathname === OUTPUT_PATH) { await handleOutputRequest(request, response, url, outputBuffer); return; }
+  if (url.pathname === OBSERVATIONS_PATH) { await handleObservationRequest(request, response, url, observationBuffer); return; }
+  if (url.pathname === QUIESCENCE_PATH) { await handleQuiescenceRequest(request, response, url, quiescence, boundSession()); return; }
+  const status = /^\/__cantelop\/v2\/messages\/(msg_[0-9a-f]{32})(\/cancel)?$/.exec(url.pathname);
+  if (status && ((request.method === "GET" && !status[2]) || (request.method === "POST" && status[2]))) {
+    writeJSON(response, 200, status[2] ? messages.cancel(status[1]!) : messages.get(status[1]!)); return;
+  }
+  if (url.pathname !== MESSAGE_PATH || url.search !== "") { writeError(response, 404, "not_found"); return; }
+  if (request.method !== "POST") { writeError(response, 405, "method_not_allowed"); return; }
+  if (!isJSONContentType(request.headers["content-type"])) { writeError(response, 415, "unsupported_media_type"); return; }
+  const envelope = await readRequestEnvelope(request);
+  if (!isRecord(envelope) || !hasMessageEnvelopeShape(envelope)) throw new ProtocolError(400, "invalid_message_request");
+  const message = readMessage<Input>(envelope.message);
+  const session = readSession(envelope.session);
+  const trace = readObservabilityContext(envelope.observability);
+  bindSession(session);
+  const result = messages.admit(message.id, { message, session }, (signal, started) => receiveMessage(message, session, trace, signal, started));
+  writeJSON(response, 202, result.receipt);
 }
 
 async function handleObservationRequest(
@@ -341,7 +331,7 @@ async function handleObservationRequest(
     if (!response.writableEnded) abort();
   });
   try {
-    const observations = await buffer.read(after, controller.signal, waitValues.length === 0);
+    const observations = await buffer.read(after, AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]), waitValues.length === 0, false);
     if (response.destroyed) return;
     writeJSON(response, 200, {
       observations: observations.map((observation) => ({
@@ -350,9 +340,9 @@ async function handleObservationRequest(
         observation: observation.observation,
       })),
     });
-  } catch {
+  } catch (error) {
     if (!controller.signal.aborted && !response.destroyed) {
-      writeError(response, 500, "observation_failed");
+      writeError(response, error instanceof RangeError ? 409 : 408, error instanceof RangeError ? error.message : "poll_timeout");
     }
   } finally {
     request.removeListener("aborted", abort);
@@ -391,7 +381,7 @@ async function handleOutputRequest(
     if (!response.writableEnded) abort();
   });
   try {
-    const events = await outputBuffer.read(after, controller.signal, waitValues.length === 0);
+    const events = await outputBuffer.read(after, AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]), waitValues.length === 0, false);
     if (response.destroyed) return;
     writeJSON(response, 200, {
       events: events.map((event) => ({
@@ -446,7 +436,7 @@ async function handleQuiescenceRequest(
   try {
     const snapshot = await quiescence.waitForQuiescence(
       minimumGeneration,
-      controller.signal,
+      AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]),
     );
     if (response.destroyed) return;
     writeJSON(response, 200, {
@@ -623,4 +613,12 @@ class ProtocolError extends Error {
   ) {
     super(code);
   }
+}
+
+async function boundedOutput(work: Promise<void>, signal?: AbortSignal): Promise<void> {
+  const stop = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]);
+  stop.throwIfAborted();
+  let abort: () => void = () => {};
+  try { await Promise.race([work, new Promise<never>((_, reject) => { abort = () => reject(stop.reason); stop.addEventListener("abort", abort, { once: true }); })]); }
+  finally { stop.removeEventListener("abort", abort); }
 }

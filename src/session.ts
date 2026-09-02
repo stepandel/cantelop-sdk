@@ -27,6 +27,7 @@ export interface SessionActivity<Message, Event> {
 }
 
 export interface SessionContext<Message, Event = never> {
+  readonly signal: AbortSignal;
   readonly message: Readonly<{
     id: string;
     sequence: number;
