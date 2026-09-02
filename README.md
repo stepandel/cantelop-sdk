@@ -63,41 +63,26 @@ This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`
 }
 ```
 
-The canonical schema is owned by the Cantelop CLI/platform. This public
-repository mirrors it at `schemas/app-v2.json` so JSON Schema-aware editors can
-load it without platform credentials. Editor integrations can associate it with
-`cantelop.json` by filename; applications do not need to include the schema URL
-in their manifests.
-
 ## Deploy
 
-First sign the CLI in, then create the App named in `cantelop.json`:
+For the first deployment, authenticate the CLI and deploy the App named in
+`cantelop.json`:
 
 ```sh
 cantelop login
-cantelop app create -slug my-agent
+cantelop deploy --create-app
 ```
 
-The login command opens a browser authorization flow. App creation returns an
-`app_...` ID for management commands; keep the human-readable slug in source.
-Skip the create command when the App already exists.
-
-Set the production variables and secrets your app needs using the
-[environment commands below](#environments). Local `.env` files and manifest
-defaults are not uploaded to production.
-
-Check the toolchain, project, and required configuration before deploying:
+Run `cantelop doctor` to check the toolchain, project, and required production
+configuration once the App exists. For subsequent deployments, use:
 
 ```sh
-cantelop doctor
 cantelop deploy
 ```
 
 `cantelop deploy` builds the Edge API and `linux/amd64` Session image, uploads
 them, and creates a release. Run `cantelop deploy --dry-run` first to perform
-the same build without login, upload, or release creation. If the App does not
-exist, an interactive deploy offers to create it; CI can opt in explicitly with
-`cantelop deploy --create-app`.
+the same build without login, upload, or release creation.
 
 ## Environments
 
@@ -154,8 +139,8 @@ log them.
 
 ### Configure and check production
 
-After `cantelop login`, set values against the App ID returned by
-`cantelop app create` (replace `app_0123...` below with that ID):
+After `cantelop login`, find the App ID with `cantelop app list` and use it for
+configuration commands (replace `app_0123...` below with that ID):
 
 ```sh
 cantelop app env set app_0123... OPENAI_MODEL=gpt-4.1-mini
