@@ -284,15 +284,7 @@ request. Native Session behaviour receives the same values as a read-only
 
 A Session keeps its Sandbox warm for `keepAliveSeconds` after work completes.
 If the Sandbox has already been released, the platform can reactivate the same
-logical Session on a new Sandbox. Explicitly terminating the Session makes it
-final:
-
-```ts
-await app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 }).terminate();
-```
-
-Distributed API workers converge on one Session by opening the same
-application-defined ID:
+logical Session on a new Sandbox.
 
 ```ts
 const session = app.sessions.open({
@@ -305,7 +297,7 @@ const session = app.sessions.open({
 Existing Workspaces remain addressable by their App-scoped slug:
 
 ```ts
-const workspace = await app.workspaces.open({ slug: "production" });
+const workspace = await app.workspaces.open({ slug: "user-1" });
 ```
 
 `workspaceId` and `keepAliveSeconds` are always required when opening a Session,
