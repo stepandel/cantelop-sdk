@@ -41,7 +41,8 @@ carry a second SDK copy.
 
 ## Initialize a project
 
-After creating an App, generate the deployment manifest from its slug:
+Choose the App slug this project will target and generate its deployment
+manifest. Initialization does not require login or an existing App:
 
 ```sh
 cantelop init -app my-agent -provider openai
@@ -60,11 +61,12 @@ and refuses to overwrite existing project files:
 
 The CLI owns parsing, validation, and compatibility for this file; applications
 do not select a schema or tie the manifest format to their installed SDK
-version. `app` is the exact human-readable slug of an existing App; generated
-`app_...` IDs do not belong in project source. Use `-config` and `-api` for
-non-default paths. The required `-provider` selects the generated agent starter.
-Add an expanded `session` object with `context` and `dockerfile` only when native
-dependencies or system tools require a custom image.
+version. `app` is the exact human-readable slug the project targets; generated
+`app_...` IDs do not belong in project source. The App must exist before the
+release is uploaded. Use `-config` and `-api` for non-default paths. The
+required `-provider` selects the generated agent starter. Add an expanded
+`session` object with `context` and `dockerfile` only when native dependencies
+or system tools require a custom image.
 
 Declare configuration requirements by name without committing production
 values:
@@ -83,10 +85,45 @@ against that App's redacted configuration. Secret declarations cannot contain
 defaults, and `CANTELOP_*` names are reserved by the runtime.
 
 The canonical schema is owned by the Cantelop CLI/platform. This public
-repository mirrors it at `schemas/app-v1.json` so JSON Schema-aware editors can
+repository mirrors it at `schemas/app-v2.json` so JSON Schema-aware editors can
 load it without platform credentials. Editor integrations can associate it with
 `cantelop.json` by filename; applications do not need to include the schema URL
 in their manifests.
+
+## Deploy
+
+First sign the CLI in, then create the App named in `cantelop.json`:
+
+```sh
+cantelop login
+cantelop app create -slug my-agent
+```
+
+The login command opens a browser authorization flow. App creation returns an
+`app_...` ID for management commands; keep the human-readable slug in source.
+Skip the create command when the App already exists.
+
+Set any production variables and secrets declared by the manifest against that
+App ID. Secrets are read from standard input and remain write-only:
+
+```sh
+cantelop app env set app_0123... LOG_LEVEL=debug
+printf %s "$OPENAI_API_KEY" |
+  cantelop app secret set app_0123... OPENAI_API_KEY
+```
+
+Check the toolchain, project, and required configuration before deploying:
+
+```sh
+cantelop doctor
+cantelop deploy
+```
+
+`cantelop deploy` builds the Edge API and `linux/amd64` Session image, uploads
+them, and creates a release. Run `cantelop deploy --dry-run` first to perform
+the same build without login, upload, or release creation. If the App does not
+exist, an interactive deploy offers to create it; CI can opt in explicitly with
+`cantelop deploy --create-app`.
 
 A TypeScript SDK with separate surfaces for Edge API middleware and native
 Session behaviour.
