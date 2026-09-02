@@ -82,7 +82,7 @@ Session behaviour owns the agent, model, and business logic inside Linux.
 
 ```text
 Client -> Edge API -> Session actor mailbox -> Session behaviour
-                                                   |-> managed activity
+                      (platform managed)           |-> managed activity
                                                    `-> output events
 ```
 
