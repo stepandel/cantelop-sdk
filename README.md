@@ -158,6 +158,178 @@ first message creates it, while `keepAliveSeconds` applies to each request.
 Opening an existing ID against a different Workspace conflicts. Termination is
 still final; use a new ID for a distinct logical Session.
 
+### Chat, steer, and cancel with a Session actor
+
+Chat, steering, and cancellation are application-level commands sent to the
+same Session actor. The Edge API translates HTTP requests into a typed message
+protocol; it does not run the agent itself. For example, the following
+`defineApi` exposes all three commands (authentication and request validation
+are application-specific and omitted here):
+
+```ts
+import { defineApi } from "@cantelop/sdk/api";
+
+type SessionCommand =
+  | { type: "chat"; prompt: string }
+  | { type: "steer"; prompt: string }
+  | { type: "cancel" };
+
+interface SessionCoordinates {
+  sessionId: string;
+  workspaceId: string;
+  keepAliveSeconds: number;
+}
+
+interface ChatRequest extends Omit<SessionCoordinates, "sessionId"> {
+  sessionId?: string;
+  prompt: string;
+}
+
+interface SteerRequest extends SessionCoordinates {
+  prompt: string;
+}
+
+export default defineApi<SessionCommand>(({ app, router }) => {
+  router.route("POST", "/chat", async ({ request }) => {
+    const body = await request.json() as ChatRequest;
+    const session = app.sessions.open({
+      ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
+      workspaceId: body.workspaceId,
+      keepAliveSeconds: body.keepAliveSeconds,
+    });
+    const message = await session.dispatch({
+      type: "chat",
+      prompt: body.prompt,
+    });
+    return Response.json({ sessionId: session.id, message }, { status: 202 });
+  });
+
+  router.route("POST", "/steer", async ({ request }) => {
+    const body = await request.json() as SteerRequest;
+    const session = app.sessions.open({
+      id: body.sessionId,
+      workspaceId: body.workspaceId,
+      keepAliveSeconds: body.keepAliveSeconds,
+    });
+    const message = await session.dispatch({
+      type: "steer",
+      prompt: body.prompt,
+    });
+    return Response.json({ sessionId: session.id, message }, { status: 202 });
+  });
+
+  router.route("POST", "/cancel", async ({ request }) => {
+    const body = await request.json() as SessionCoordinates;
+    const session = app.sessions.open({
+      id: body.sessionId,
+      workspaceId: body.workspaceId,
+      keepAliveSeconds: body.keepAliveSeconds,
+    });
+    const message = await session.dispatch({ type: "cancel" });
+    return Response.json({ sessionId: session.id, message }, { status: 202 });
+  });
+});
+```
+
+`/chat` may omit `sessionId` to create a new actor identity; the response
+returns the generated ID. `/steer` and `/cancel` require that ID so their
+messages are routed to the same actor. All three endpoints return `202` after
+the command is accepted into the actor's volatile mailbox, not after the agent
+finishes processing it.
+
+The native Session behaviour supplies the other half of the actor. Module-level
+state belongs to this one Session runtime, mailbox handlers run serially, and a
+managed activity keeps the long-running agent turn outside the mailbox so steer
+and cancel messages can still be received:
+
+```ts
+import {
+  defineSessionBehaviour,
+  type SessionContext,
+} from "@cantelop/sdk/session";
+
+type SessionCommand =
+  | { type: "chat"; prompt: string }
+  | { type: "steer"; prompt: string }
+  | { type: "cancel" };
+
+type SessionEvent =
+  | { type: "text_delta"; delta: string }
+  | { type: "done"; answer: string };
+
+interface AgentTurn {
+  steer(prompt: string): void;
+  run(options: {
+    signal: AbortSignal;
+    onText(delta: string): Promise<void>;
+  }): Promise<string>;
+}
+
+// Adapt the model provider's streaming and steering APIs behind this function.
+declare function createAgentTurn(prompt: string): AgentTurn;
+
+type Context = SessionContext<SessionCommand, SessionEvent>;
+
+let activeTurn: AgentTurn | undefined;
+const queuedChats: string[] = [];
+
+export default defineSessionBehaviour<SessionCommand, SessionEvent>((context) => {
+  const command = context.message.payload;
+
+  if (command.type === "cancel") {
+    queuedChats.length = 0;
+    context.activity.cancel();
+    return;
+  }
+
+  if (command.type === "steer") {
+    if (activeTurn !== undefined) {
+      activeTurn.steer(command.prompt);
+    } else {
+      startTurn(context, command.prompt);
+    }
+    return;
+  }
+
+  if (context.activity.active) {
+    queuedChats.push(command.prompt);
+    return;
+  }
+
+  startTurn(context, command.prompt);
+});
+
+function startTurn(context: Context, prompt: string): void {
+  const turn = createAgentTurn(prompt);
+  activeTurn = turn;
+
+  context.activity.start(async ({ signal, send, output }) => {
+    try {
+      const answer = await turn.run({
+        signal,
+        onText: (delta) => output.send({ type: "text_delta", delta }),
+      });
+      await output.send({ type: "done", answer });
+    } finally {
+      if (activeTurn === turn) activeTurn = undefined;
+      const nextPrompt = queuedChats.shift();
+      if (!signal.aborted && nextPrompt !== undefined) {
+        send({ type: "chat", prompt: nextPrompt });
+      }
+    }
+  });
+}
+```
+
+This policy queues a new chat while a turn is active, applies steer immediately
+to the active provider turn (and treats an idle steer as a new turn), and clears
+queued chats before aborting the active turn on cancel. Provider SDKs differ in
+how they accept steering, so `createAgentTurn()` is the adapter boundary. The
+activity must pass its `AbortSignal` to the provider for cancellation to be
+cooperative. A cancel command deliberately calls `activity.cancel()` rather
+than `session.terminate()`: the former stops current work while leaving the
+actor reusable, whereas termination makes the logical Session final.
+
 Webhook handlers can dispatch a message asynchronously and acknowledge after
 the platform accepts it for delivery:
 
