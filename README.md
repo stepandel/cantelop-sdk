@@ -93,11 +93,11 @@ running exactly one SDK-managed Session runtime process. The process is never
 shared by multiple Sessions, so module-level agent and conversation state is
 per-Session.
 
-The runtime processes the actor's in-memory mailbox one message at a time in  
-acceptance order. Long-running agent work can move into the Session's single  
-managed activity, allowing the mailbox to keep receiving commands such as  
-steer and cancel. The application defines what every message means; Cantelop  
-only provides identity, routing, serialization, activity management, and event  
+The runtime processes the actor's in-memory mailbox one message at a time in
+acceptance order. Long-running agent work can move into the Session's single
+managed activity, allowing the mailbox to keep receiving commands such as
+steer and cancel. The application defines what every message means; Cantelop
+only provides identity, routing, serialization, activity management, and event
 transport.
 
 ## Edge API
