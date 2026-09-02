@@ -8,6 +8,9 @@ interface ActiveActivity<Message> {
   readonly controller: AbortController;
   readonly messages: Message[];
   settled: boolean;
+  deadline: number;
+  cancelledAt?: string;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 export class InMemoryActivity<Message, Event> {
@@ -32,7 +35,9 @@ export class InMemoryActivity<Message, Event> {
     }
 
     const controller = new AbortController();
-    const activity: ActiveActivity<Message> = { controller, messages: [], settled: false };
+    const activity: ActiveActivity<Message> = { controller, messages: [], settled: false, deadline: Date.now() + 1_800_000 };
+    activity.timer = setTimeout(() => this.cancel(), 1_800_000);
+    activity.timer.unref();
     this.current = activity;
     this.stateChanged();
     const output: SessionOutput<Event> = Object.freeze({
@@ -62,11 +67,14 @@ export class InMemoryActivity<Message, Event> {
 
   cancel(reason?: unknown): boolean {
     if (this.current === undefined) return false;
+    this.current.cancelledAt ??= new Date().toISOString();
     this.current.controller.abort(
       reason ?? new DOMException("Session runtime activity cancelled", "AbortError"),
     );
     return true;
   }
+
+  snapshot() { return this.current ? { deadline: new Date(this.current.deadline).toISOString(), cancellation_requested_at: this.current.cancelledAt } : null; }
 
   get isIdle(): boolean {
     return !this.active;
@@ -75,6 +83,7 @@ export class InMemoryActivity<Message, Event> {
   private settle(activity: ActiveActivity<Message>): void {
     if (this.current !== activity) return;
     activity.settled = true;
+    clearTimeout(activity.timer);
     this.current = undefined;
     for (const payload of activity.messages) this.sendMessage(payload);
     this.stateChanged();

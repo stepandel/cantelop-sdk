@@ -66,6 +66,9 @@ export class RuntimeObservationBuffer {
   private readonly readers = new Set<() => void>();
   private readonly capacityWaiters = new Set<() => void>();
   private nextCursor = 1;
+  private acknowledged = 0;
+  private delivered = 0;
+  private dropped = 0;
   private pendingBytes = 0;
 
   async publish(messageId: string | undefined, observation: RuntimeObservation): Promise<void> {
@@ -102,6 +105,7 @@ export class RuntimeObservationBuffer {
     if (bytes > MAX_OBSERVATION_BYTES ||
         this.observations.length >= MAX_PENDING_OBSERVATIONS ||
         this.pendingBytes + bytes > MAX_PENDING_BYTES) {
+      this.dropped++;
       return false;
     }
     this.observations.push({
@@ -114,17 +118,20 @@ export class RuntimeObservationBuffer {
     return true;
   }
 
-  async read(after: number, signal?: AbortSignal, wait = true): Promise<readonly BufferedRuntimeObservation[]> {
+  async read(after: number, signal?: AbortSignal, wait = true, acknowledge = true): Promise<readonly BufferedRuntimeObservation[]> {
     if (!Number.isSafeInteger(after) || after < 0) {
       throw new TypeError("Runtime observation cursor must be a non-negative integer");
     }
-    this.acknowledge(after);
+    if (after > this.nextCursor - 1) throw new RangeError("cursor_ahead");
+    if (after < this.acknowledged) throw new RangeError("cursor_expired");
+    if (acknowledge) this.acknowledge(after);
     while (true) {
       if (signal?.aborted) throw abortReason(signal);
       const available = this.observations
         .filter((observation) => observation.cursor > after)
         .slice(0, MAX_BATCH_OBSERVATIONS);
       if (available.length > 0) {
+        this.delivered = Math.max(this.delivered, available.at(-1)!.cursor);
         return available.map(({ cursor, messageId, observation }) =>
           Object.freeze({ cursor, messageId, observation })
         );
@@ -134,7 +141,11 @@ export class RuntimeObservationBuffer {
     }
   }
 
-  private acknowledge(after: number): void {
+  metadata() { return { acknowledged: this.acknowledged, earliest: this.observations[0]?.cursor ?? this.nextCursor, latest: this.nextCursor - 1, dropped: this.dropped }; }
+
+  acknowledge(after: number): void {
+    if (!Number.isSafeInteger(after) || after < 0 || after > this.delivered) throw new RangeError("invalid_acknowledgment");
+    this.acknowledged = Math.max(this.acknowledged, after);
     let removed = false;
     while (this.observations[0] !== undefined && this.observations[0].cursor <= after) {
       const observation = this.observations.shift()!;
@@ -184,7 +195,7 @@ export class RuntimeObserver {
 
     const spanId = randomHex(8);
     const parentSpanId = this.activeSpan.getStore()?.spanId;
-    await this.buffer.publish(this.messageId, Object.freeze({
+    this.buffer.publishBestEffort(this.messageId, Object.freeze({
       type: "span.started", span_id: spanId,
       ...(parentSpanId === undefined ? {} : { parent_span_id: parentSpanId }),
       name, kind: "internal", started_at: new Date().toISOString(), attributes: Object.freeze({}),
@@ -196,7 +207,7 @@ export class RuntimeObserver {
       status = "error";
       throw error;
     } finally {
-      await this.buffer.publish(this.messageId, Object.freeze({
+      this.buffer.publishBestEffort(this.messageId, Object.freeze({
         type: "span.completed", span_id: spanId, status,
         finished_at: new Date().toISOString(), attributes: Object.freeze({}),
       }));
