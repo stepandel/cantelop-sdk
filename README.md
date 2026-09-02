@@ -316,6 +316,9 @@ logical Session on a new Sandbox. The Session identity remains reusable when
 its Sandbox is released. Set `keepAliveSeconds: 0` to release the Sandbox as
 soon as the mailbox and managed activity are idle.
 
+Releasing a Sandbox clears its temporary storage. Files in the persistent
+`/workspace` mount survive and are available to the next Sandbox.
+
 Distributed API workers converge on one Session by opening the same
 application-defined ID:
 
