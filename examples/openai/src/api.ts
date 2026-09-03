@@ -17,7 +17,7 @@ export default defineApi<SessionMessage>(
       const input = readEventsRequest(request);
       if (input === undefined) {
         return Response.json({
-          error: "valid sessionId, workspaceId, and keepAliveSeconds are required",
+          error: "valid sessionId, workspaceSlug, and keepAliveSeconds are required",
         }, { status: 400 });
       }
 
@@ -29,13 +29,13 @@ export default defineApi<SessionMessage>(
       const input = await readJson(request);
       if (!isChatRequest(input)) {
         return Response.json({
-          error: "valid workspaceId, keepAliveSeconds, and prompt are required",
+          error: "valid workspaceSlug, keepAliveSeconds, and prompt are required",
         }, { status: 400 });
       }
 
       const session = app.sessions.open({
         ...(input.sessionId === undefined ? {} : { id: input.sessionId }),
-        workspaceId: input.workspaceId,
+        workspaceSlug: input.workspaceSlug,
         keepAliveSeconds: input.keepAliveSeconds,
       });
       const message = await session.dispatch({ type: "prompt", prompt: input.prompt });
@@ -46,13 +46,13 @@ export default defineApi<SessionMessage>(
       const input = await readJson(request);
       if (!isSteerRequest(input)) {
         return Response.json({
-          error: "valid sessionId, workspaceId, keepAliveSeconds, and prompt are required",
+          error: "valid sessionId, workspaceSlug, keepAliveSeconds, and prompt are required",
         }, { status: 400 });
       }
 
       const session = app.sessions.open({
         id: input.sessionId,
-        workspaceId: input.workspaceId,
+        workspaceSlug: input.workspaceSlug,
         keepAliveSeconds: input.keepAliveSeconds,
       });
       const message = await session.dispatch({ type: "steer", prompt: input.prompt });
@@ -63,13 +63,13 @@ export default defineApi<SessionMessage>(
       const input = await readJson(request);
       if (!isCancelRequest(input)) {
         return Response.json({
-          error: "valid sessionId, workspaceId, and keepAliveSeconds are required",
+          error: "valid sessionId, workspaceSlug, and keepAliveSeconds are required",
         }, { status: 400 });
       }
 
       const session = app.sessions.open({
         id: input.sessionId,
-        workspaceId: input.workspaceId,
+        workspaceSlug: input.workspaceSlug,
         keepAliveSeconds: input.keepAliveSeconds,
       });
       const message = await session.dispatch({ type: "cancel" });
@@ -79,7 +79,7 @@ export default defineApi<SessionMessage>(
 );
 
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const WORKSPACE_ID = /^wsp_[0-9a-f]{32}$/;
+const WORKSPACE_SLUG = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 async function readJson(request: Request): Promise<unknown> {
   try {
@@ -97,8 +97,8 @@ function isSessionId(input: unknown): input is string {
   return typeof input === "string" && SESSION_ID.test(input);
 }
 
-function isWorkspaceId(input: unknown): input is string {
-  return typeof input === "string" && WORKSPACE_ID.test(input);
+function isWorkspaceSlug(input: unknown): input is string {
+  return typeof input === "string" && WORKSPACE_SLUG.test(input);
 }
 
 function isKeepAliveSeconds(input: unknown): input is number {
@@ -109,7 +109,7 @@ function isKeepAliveSeconds(input: unknown): input is number {
 function isChatRequest(input: unknown): input is ChatRequest {
   return isObject(input) &&
     (input.sessionId === undefined || isSessionId(input.sessionId)) &&
-    isWorkspaceId(input.workspaceId) &&
+    isWorkspaceSlug(input.workspaceSlug) &&
     isKeepAliveSeconds(input.keepAliveSeconds) &&
     typeof input.prompt === "string" && input.prompt.length > 0;
 }
@@ -117,7 +117,7 @@ function isChatRequest(input: unknown): input is ChatRequest {
 function isSteerRequest(input: unknown): input is SteerRequest {
   return isObject(input) &&
     isSessionId(input.sessionId) &&
-    isWorkspaceId(input.workspaceId) &&
+    isWorkspaceSlug(input.workspaceSlug) &&
     isKeepAliveSeconds(input.keepAliveSeconds) &&
     typeof input.prompt === "string" && input.prompt.length > 0;
 }
@@ -125,21 +125,21 @@ function isSteerRequest(input: unknown): input is SteerRequest {
 function isCancelRequest(input: unknown): input is CancelRequest {
   return isObject(input) &&
     isSessionId(input.sessionId) &&
-    isWorkspaceId(input.workspaceId) &&
+    isWorkspaceSlug(input.workspaceSlug) &&
     isKeepAliveSeconds(input.keepAliveSeconds);
 }
 
 function readEventsRequest(request: Request): EventsRequest | undefined {
   const search = new URL(request.url).searchParams;
-  if (["sessionId", "workspaceId", "keepAliveSeconds"].some(
+  if (["sessionId", "workspaceSlug", "keepAliveSeconds"].some(
     (name) => search.getAll(name).length !== 1,
   )) return undefined;
   const sessionId = search.get("sessionId");
-  const workspaceId = search.get("workspaceId");
+  const workspaceSlug = search.get("workspaceSlug");
   const keepAlive = search.get("keepAliveSeconds");
-  if (!isSessionId(sessionId) || !isWorkspaceId(workspaceId) ||
+  if (!isSessionId(sessionId) || !isWorkspaceSlug(workspaceSlug) ||
       keepAlive === null || !/^\d+$/.test(keepAlive)) return undefined;
   const keepAliveSeconds = Number(keepAlive);
   if (!isKeepAliveSeconds(keepAliveSeconds)) return undefined;
-  return { sessionId, workspaceId, keepAliveSeconds };
+  return { sessionId, workspaceSlug, keepAliveSeconds };
 }

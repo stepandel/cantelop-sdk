@@ -13,12 +13,12 @@ as a production secret.
 
 The API exposes `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
 `POST /cancel`.
-Chat requires `workspaceId`, `keepAliveSeconds`, and `prompt`, and accepts an
+Chat requires `workspaceSlug`, `keepAliveSeconds`, and `prompt`, and accepts an
 optional `sessionId`; it creates or reuses that Session. Steer requires
-`sessionId`, `workspaceId`, `keepAliveSeconds`, and `prompt` to reuse it. Cancel
+`sessionId`, `workspaceSlug`, `keepAliveSeconds`, and `prompt` to reuse it. Cancel
 requires the same Session fields without a prompt. All message routes return an
 accepted message reference with HTTP status `202`.
-`GET /events` accepts `sessionId`, `workspaceId`, and `keepAliveSeconds` as
+`GET /events` accepts `sessionId`, `workspaceSlug`, and `keepAliveSeconds` as
 query parameters and streams that Session's events over SSE or the
 `cantelop.events.v1` WebSocket subprotocol. See the [shared example
 guide](../README.md) for client and reconnect examples.

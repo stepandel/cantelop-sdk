@@ -137,10 +137,9 @@ export default defineApi<SessionMessage>(({ app, router }) => {
       keepAliveSeconds: number;
       prompt: string;
     };
-    const workspace = await app.workspaces.open({ slug: workspaceSlug });
     const session = app.sessions.open({
       ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
-      workspaceId: workspace.id,
+      workspaceSlug,
       keepAliveSeconds: body.keepAliveSeconds,
     });
     const message = await session.dispatch({
@@ -313,7 +312,9 @@ A Workspace can be shared by multiple Sessions, including Sandboxes running
 in parallel. They access the same files through NFS, which supports concurrent
 reads and writes across Sandboxes.
 
-Workspaces are scoped to an App and addressed by a server-selected slug:
+Workspaces are scoped to an App and addressed by a server-selected slug.
+Use `workspaces.open()` when an application needs to provision or inspect the
+Workspace independently of a Session:
 
 ```ts
 const workspace = await app.workspaces.open({ slug: "user-1" });
@@ -330,7 +331,7 @@ available as `session.id`.
 ```ts
 const session = app.sessions.open({
   id: "telegram",
-  workspaceId,
+  workspaceSlug: "user-1",
   keepAliveSeconds: 300,
 });
 ```
@@ -344,8 +345,10 @@ soon as the mailbox and managed activity are idle.
 Releasing a Sandbox clears its temporary storage. Files in the persistent
 `/workspace` mount survive and are available to the next Sandbox.
 
-Opening a Session requires a `workspaceId` from [Workspaces](#workspaces) and
-an explicit `keepAliveSeconds`. The Session ID is immutable and App-scoped,
+Opening a Session requires a `workspaceSlug` and an explicit `keepAliveSeconds`.
+The SDK resolves and, when absent, creates the App-scoped Workspace on the first
+`dispatch()` or `events()` call. Supplying a canonical `workspaceId` remains
+supported when the caller already has one. The Session ID is immutable and App-scoped,
 while `keepAliveSeconds` applies to each request. Use a new ID for a distinct
 logical Session.
 
@@ -421,7 +424,7 @@ router.route("GET", "/events", async ({ request }) => {
   await requireAuthenticatedViewer(request);
   const session = app.sessions.open({
     id: "agent:primary",
-    workspaceId,
+    workspaceSlug: "user-1",
     keepAliveSeconds: 300,
   });
   return session.events(request);

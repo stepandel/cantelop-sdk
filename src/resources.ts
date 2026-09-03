@@ -16,11 +16,22 @@ export interface Workspace {
   readonly archivedAt?: Date;
 }
 
-export interface SessionOpenConfig {
+interface SessionOpenBaseConfig {
   readonly id?: string;
-  readonly workspaceId: string;
   readonly keepAliveSeconds: number;
 }
+
+export interface SessionOpenByIDConfig extends SessionOpenBaseConfig {
+  readonly workspaceId: string;
+  readonly workspaceSlug?: never;
+}
+
+export interface SessionOpenBySlugConfig extends SessionOpenBaseConfig {
+  readonly workspaceId?: never;
+  readonly workspaceSlug: string;
+}
+
+export type SessionOpenConfig = SessionOpenByIDConfig | SessionOpenBySlugConfig;
 
 export interface MessageExecution {
  readonly phase: "sending" | "accepted" | "running" | "cancelling" | "settled" | "quiescent" | "unavailable";
@@ -83,7 +94,10 @@ export interface MessageRef {
 /** Canonical, read-only identity and configuration for a Session actor. */
 export interface SessionIdentity {
   readonly id: string;
-  readonly workspaceId: string;
+  /** Present when the Session was opened with a canonical Workspace ID. */
+  readonly workspaceId?: string;
+  /** Present when the Session will lazily resolve an App-scoped Workspace slug. */
+  readonly workspaceSlug?: string;
   readonly keepAliveSeconds: number;
 }
 
@@ -100,7 +114,8 @@ export interface WorkspaceService {
 }
 
 export interface SessionService<Input> {
-  open(config: SessionOpenConfig): Session<Input>;
+  open(config: SessionOpenByIDConfig): Session<Input> & { readonly workspaceId: string };
+  open(config: SessionOpenBySlugConfig): Session<Input> & { readonly workspaceSlug: string };
 }
 
 /** Capabilities of the current App, injected by Cantelop. */

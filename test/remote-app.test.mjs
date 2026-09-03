@@ -83,6 +83,46 @@ test("opening an anonymous Session generates its ID without a request", () => {
   assert.equal(session.id, sessionId);
 });
 
+test("a slug-based Session materializes its Workspace on first dispatch", async () => {
+  const forwarded = [];
+  const app = createRemoteApp({
+    sessionId: () => sessionId,
+    messageId: () => messageId,
+    fetch: async (request) => {
+      forwarded.push(request);
+      if (request.url.endsWith("/workspaces/open")) {
+        return Response.json({
+          id: workspaceId,
+          app_id: "app_0123456789abcdef0123456789abcdef",
+          slug: "user-1",
+          hostname: "user-1--agent.app.cantelop.dev",
+          created_at: "2026-08-14T12:00:00Z",
+          updated_at: "2026-08-14T12:00:00Z",
+        });
+      }
+      return Response.json({
+        id: messageId,
+        status: "accepted",
+        accepted_at: "2026-08-17T12:00:00Z",
+      }, { status: 202 });
+    },
+  });
+
+  const session = app.sessions.open({ workspaceSlug: "user-1", keepAliveSeconds: 300 });
+  assert.equal(session.workspaceSlug, "user-1");
+  assert.equal(forwarded.length, 0);
+
+  await session.dispatch({ event: "push" });
+  assert.equal(forwarded.length, 2);
+  assert.equal(forwarded[0].url, "https://runtime.cantelop.internal/__cantelop/v1/workspaces/open");
+  assert.deepEqual(await forwarded[0].json(), { slug: "user-1" });
+  assert.deepEqual((await forwarded[1].json()).session, {
+    id: sessionId,
+    workspace_id: workspaceId,
+    keep_alive_seconds: 300,
+  });
+});
+
 test("a Session dispatches asynchronously with the same identity and configuration", async () => {
   const forwarded = [];
   const app = createRemoteApp({
@@ -258,6 +298,19 @@ test("resource configuration is validated before transport", async () => {
   assert.throws(
     () => app.sessions.open({ id: "thread", workspaceId: "invalid", keepAliveSeconds: 0 }),
     /Workspace ID/,
+  );
+  assert.throws(
+    () => app.sessions.open({ id: "thread", workspaceSlug: "Bad Slug", keepAliveSeconds: 0 }),
+    /Workspace slug/,
+  );
+  assert.throws(
+    () => app.sessions.open({
+      id: "thread",
+      workspaceId,
+      workspaceSlug: "preview",
+      keepAliveSeconds: 0,
+    }),
+    /exactly one/,
   );
 });
 

@@ -13,7 +13,7 @@ const repositoryRoot = path.resolve(
 const schemaUrl =
   "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v2.json";
 const examples = ["openai", "anthropic", "pi"];
-const validWorkspaceId = `wsp_${"a".repeat(32)}`;
+const validWorkspaceSlug = "user-1";
 const expectedEnvironment = {
   openai: {
     OPENAI_MODEL: { default: "gpt-5-mini" },
@@ -106,23 +106,23 @@ try {
         body: "{",
       }),
       jsonRequest("/chat", {
-        workspaceId: validWorkspaceId,
+        workspaceSlug: validWorkspaceSlug,
         keepAliveSeconds: -1,
         prompt: "hello",
       }),
       jsonRequest("/steer", {
         sessionId: "invalid session",
-        workspaceId: validWorkspaceId,
+        workspaceSlug: validWorkspaceSlug,
         keepAliveSeconds: 30,
         prompt: "hello",
       }),
       jsonRequest("/cancel", {
         sessionId: "session-1",
-        workspaceId: "invalid-workspace",
+        workspaceSlug: "invalid--workspace",
         keepAliveSeconds: 30,
       }),
       new Request(
-        "https://example.invalid/events?sessionId=&workspaceId=&keepAliveSeconds=604801",
+        "https://example.invalid/events?sessionId=&workspaceSlug=&keepAliveSeconds=604801",
       ),
     ];
     for (const request of invalidRequests) {
