@@ -1,5 +1,8 @@
 {
   "app": "anthropic",
   "api": "src/api.ts",
-  "session": "src/session.ts"
+  "session": "src/session.ts",
+  "environment": {
+    "ANTHROPIC_API_KEY": {"secret": true, "required": true}
+  }
 }

@@ -196,7 +196,7 @@ Add an `environment` block to your manifest:
 ```json
 {
   "environment": {
-    "OPENAI_MODEL": { "default": "gpt-4.1-mini", "required": true },
+    "OPENAI_MODEL": { "default": "gpt-5-mini", "required": true },
     "OPENAI_API_KEY": { "secret": true, "required": true }
   }
 }
@@ -220,7 +220,7 @@ After `cantelop login`, find the App ID with `cantelop app list` and use it for
 configuration commands:
 
 ```sh
-cantelop app env set OPENAI_MODEL=gpt-4.1-mini
+cantelop app env set OPENAI_MODEL=gpt-5-mini
 printf %s "$OPENAI_API_KEY" | cantelop app secret set OPENAI_API_KEY
 ```
 
@@ -436,9 +436,9 @@ complete clients. Both transports also work with `cantelop dev`.
 
 Each provider example contains two independently checked entrypoints:
 
-- `[examples/openai](./examples/openai)`
-- `[examples/anthropic](./examples/anthropic)`
-- `[examples/pi](./examples/pi)`
+- [examples/openai](./examples/openai)
+- [examples/anthropic](./examples/anthropic)
+- [examples/pi](./examples/pi)
 
 In every example, `src/api.ts` is Edge-only and `src/session.ts` defines the
 native Session behaviour.
@@ -455,5 +455,5 @@ pnpm check:package
 
 `check:package` packs the exact npm artifact, rejects leaked development files,
 installs it into an empty project, imports every public entrypoint, and builds a
-customer API. See `[docs/releasing.md](./docs/releasing.md)` for the release
+customer API. See [docs/releasing.md](./docs/releasing.md) for the release
 boundary. Publishing is a separate production operation.

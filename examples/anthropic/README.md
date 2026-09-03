@@ -8,7 +8,8 @@ This example has two deployment artifacts:
 
 Cantelop injects the current App when it creates the API. The Edge API manages
 Workspaces and reusable Sessions without an API key; Anthropic credentials are
-supplied only to the Session runtime.
+supplied only to the Session runtime. The manifest requires `ANTHROPIC_API_KEY`
+as a production secret.
 
 The API exposes `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
 `POST /cancel`.

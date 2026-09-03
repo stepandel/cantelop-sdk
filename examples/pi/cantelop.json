@@ -1,5 +1,10 @@
 {
   "app": "pi",
   "api": "src/api.ts",
-  "session": "src/session.ts"
+  "session": "src/session.ts",
+  "environment": {
+    "ANTHROPIC_API_KEY": {"secret": true, "required": true},
+    "PI_PROVIDER": {"default": "anthropic"},
+    "PI_MODEL": {"default": "claude-sonnet-5"}
+  }
 }

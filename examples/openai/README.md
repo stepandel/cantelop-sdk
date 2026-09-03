@@ -9,7 +9,7 @@ This example has two deployment artifacts:
 Cantelop injects the current App when it creates the API. The Edge API manages
 Workspaces and reusable Sessions without an API key; `OPENAI_API_KEY` is
 supplied only to the Session runtime. The manifest requires that secret and declares
-`gpt-4.1-mini` as the non-secret local default for `OPENAI_MODEL`.
+`gpt-5-mini` as the non-secret local default for `OPENAI_MODEL`.
 
 The API exposes `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
 `POST /cancel`.

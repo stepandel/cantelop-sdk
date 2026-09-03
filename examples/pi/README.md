@@ -8,7 +8,10 @@ This example has two deployment artifacts:
 
 Cantelop injects the current App when it creates the API. The Edge API manages
 Workspaces and reusable Sessions without an API key; provider credentials and
-Pi configuration are supplied only to the Session runtime.
+Pi configuration are supplied only to the Session runtime. The manifest defaults
+to Anthropic's `claude-sonnet-5`, requires `ANTHROPIC_API_KEY`, and exposes
+`PI_PROVIDER` and `PI_MODEL` as local defaults. If you select another provider,
+replace the credential declaration with the secret that provider requires.
 
 The API exposes `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
 `POST /cancel`.
@@ -25,7 +28,7 @@ guide](../README.md) for client and reconnect examples.
 The App has one Session behaviour with an explicit actor protocol. `prompt` and an
 idle `steer` start a Pi run. A prompt received while busy enters a FIFO queue,
 an active `steer` enters the Agent's native steering queue, and `cancel` aborts
-the run and clears queued prompts. The actor owns one Pi `Agent`; no per-Session
+the run and clears both Cantelop and native Pi queues. The actor owns one Pi `Agent`; no per-Session
 registry is needed because the native runtime is already bound to one Session.
 The prompt lives in the Session activity so the mailbox remains available for
 new commands.

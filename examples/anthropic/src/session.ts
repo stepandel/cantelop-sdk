@@ -30,10 +30,8 @@ export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) =>
 });
 
 function startPrompt(context: Context, prompt: string): void {
-  if (!context.env.ANTHROPIC_API_KEY && !context.env.CLAUDE_CODE_OAUTH_TOKEN) {
-    throw new Error(
-      "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is not configured",
-    );
+  if (!context.env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY is not configured");
   }
 
   input = new ClaudeInput();
