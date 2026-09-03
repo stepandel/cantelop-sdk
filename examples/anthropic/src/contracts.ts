@@ -8,26 +8,26 @@ export type SessionEvent =
 
 export interface ChatRequest {
   sessionId?: string;
-  workspaceId: string;
+  workspaceSlug: string;
   keepAliveSeconds: number;
   prompt: string;
 }
 
 export interface SteerRequest {
   sessionId: string;
-  workspaceId: string;
+  workspaceSlug: string;
   keepAliveSeconds: number;
   prompt: string;
 }
 
 export interface CancelRequest {
   sessionId: string;
-  workspaceId: string;
+  workspaceSlug: string;
   keepAliveSeconds: number;
 }
 
 export interface EventsRequest {
   sessionId: string;
-  workspaceId: string;
+  workspaceSlug: string;
   keepAliveSeconds: number;
 }

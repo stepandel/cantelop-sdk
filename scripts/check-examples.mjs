@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { buildApi, buildSessionRuntime } from "../dist/build.js";
 
@@ -13,6 +13,21 @@ const repositoryRoot = path.resolve(
 const schemaUrl =
   "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v2.json";
 const examples = ["openai", "anthropic", "pi"];
+const validWorkspaceSlug = "user-1";
+const expectedEnvironment = {
+  openai: {
+    OPENAI_MODEL: { default: "gpt-5-mini" },
+    OPENAI_API_KEY: { secret: true, required: true },
+  },
+  anthropic: {
+    ANTHROPIC_API_KEY: { secret: true, required: true },
+  },
+  pi: {
+    ANTHROPIC_API_KEY: { secret: true, required: true },
+    PI_PROVIDER: { default: "anthropic" },
+    PI_MODEL: { default: "claude-sonnet-5" },
+  },
+};
 const temporaryRoot = await mkdtemp(
   path.join(os.tmpdir(), "cantelop-example-check-"),
 );
@@ -26,6 +41,10 @@ try {
   for (const example of schema.examples) {
     assert.equal(example.session, "src/session.ts");
   }
+  assert.equal(schema.examples[1].environment.OPENAI_MODEL.default, "gpt-5-mini");
+
+  const rootReadme = await readFile(path.join(repositoryRoot, "README.md"), "utf8");
+  assert.doesNotMatch(rootReadme, /`\[[^`]+\]\([^)]+\)`/);
 
   for (const example of examples) {
     const exampleRoot = path.join(repositoryRoot, "examples", example);
@@ -61,12 +80,55 @@ try {
     assert.match(contractsSource, /SessionEvent/);
     assert.match(sessionSource, /activity\.start\(/);
     assert.match(sessionSource, /defineSessionBehaviour/);
-    JSON.parse(await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"));
+    const manifest = JSON.parse(
+      await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"),
+    );
+    assert.deepEqual(manifest.environment, expectedEnvironment[example]);
+    if (example === "openai") {
+      assert.match(sessionSource, /OPENAI_MODEL \?\? "gpt-5-mini"/);
+    }
+    if (example === "pi") {
+      assert.match(sessionSource, /PI_MODEL \?\? "claude-sonnet-5"/);
+      assert.match(sessionSource, /agent\?\.clearAllQueues\(\)/);
+    }
 
-    await buildApi({
+    const apiArtifact = await buildApi({
       entrypoint: path.join(exampleRoot, "src/api.ts"),
       outdir: path.join(temporaryRoot, example, "api"),
     });
+    const worker = (await import(
+      `${pathToFileURL(apiArtifact.mainModule).href}?example=${example}`
+    )).default;
+    const invalidRequests = [
+      new Request("https://example.invalid/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      }),
+      jsonRequest("/chat", {
+        workspaceSlug: validWorkspaceSlug,
+        keepAliveSeconds: -1,
+        prompt: "hello",
+      }),
+      jsonRequest("/steer", {
+        sessionId: "invalid session",
+        workspaceSlug: validWorkspaceSlug,
+        keepAliveSeconds: 30,
+        prompt: "hello",
+      }),
+      jsonRequest("/cancel", {
+        sessionId: "session-1",
+        workspaceSlug: "invalid--workspace",
+        keepAliveSeconds: 30,
+      }),
+      new Request(
+        "https://example.invalid/events?sessionId=&workspaceSlug=&keepAliveSeconds=604801",
+      ),
+    ];
+    for (const request of invalidRequests) {
+      const response = await worker.fetch(request);
+      assert.equal(response.status, 400, `${example}: ${request.method} ${request.url}`);
+    }
     await buildSessionRuntime({
       entrypoint: path.join(exampleRoot, "src/session.ts"),
       outdir: path.join(temporaryRoot, example, "session-runtime"),
@@ -74,4 +136,12 @@ try {
   }
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
+}
+
+function jsonRequest(route, body) {
+  return new Request(`https://example.invalid${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }

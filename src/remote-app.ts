@@ -4,6 +4,8 @@ import type {
   MessageStatus,
  MessageExecution,
   Session,
+  SessionOpenByIDConfig,
+  SessionOpenBySlugConfig,
   SessionOpenConfig,
   Workspace,
   WorkspaceCreateConfig,
@@ -45,15 +47,21 @@ export function createRemoteApp<Input = unknown>(
   const sessionId = options.sessionId ?? createSessionID;
   const messageId = options.messageId ?? createMessageID;
 
-  const sessions = Object.freeze({
-    open(config: SessionOpenConfig): Session<Input> {
-      assertWorkspaceID(config.workspaceId);
-      assertKeepAliveSeconds(config.keepAliveSeconds);
-      const id = config.id ?? sessionId();
-      assertSessionID(id);
-      return createRemoteSession(id, config, runtimeFetch, messageId);
-    },
-  });
+  function openSession(
+    config: SessionOpenByIDConfig,
+  ): Session<Input> & { readonly workspaceId: string };
+  function openSession(
+    config: SessionOpenBySlugConfig,
+  ): Session<Input> & { readonly workspaceSlug: string };
+  function openSession(config: SessionOpenConfig): Session<Input> {
+    assertSessionWorkspace(config);
+    assertKeepAliveSeconds(config.keepAliveSeconds);
+    const id = config.id ?? sessionId();
+    assertSessionID(id);
+    return createRemoteSession(id, config, runtimeFetch, messageId);
+  }
+
+  const sessions = Object.freeze({ open: openSession });
 
   const workspaces = Object.freeze({
     async create(config: WorkspaceCreateConfig): Promise<Workspace> {
@@ -84,18 +92,34 @@ function createRemoteSession<Input>(
   runtimeFetch: RuntimeFetch,
   messageId: IDFactory,
 ): Session<Input> {
+  let workspaceRequest: Promise<string> | undefined;
+  const resolveWorkspaceId = (): Promise<string> => {
+    if (config.workspaceId !== undefined) return Promise.resolve(config.workspaceId);
+    workspaceRequest ??= requestJSON(runtimeFetch, "/__cantelop/v1/workspaces/open", {
+      method: "POST",
+      body: { slug: config.workspaceSlug },
+    }).then(readWorkspace).then((workspace) => workspace.id).catch((error: unknown) => {
+      workspaceRequest = undefined;
+      throw error;
+    });
+    return workspaceRequest;
+  };
+
   return Object.freeze({
     id,
-    workspaceId: config.workspaceId,
+    ...(config.workspaceId === undefined
+      ? { workspaceSlug: config.workspaceSlug }
+      : { workspaceId: config.workspaceId }),
     keepAliveSeconds: config.keepAliveSeconds,
 
     async dispatch(input: Input): Promise<MessageRef> {
+      const workspaceId = await resolveWorkspaceId();
       const message = messageId();
       assertMessageID(message);
       const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/messages", {
         method: "POST",
         body: {
-          session: sessionEnvelope(this.id, config),
+          session: sessionEnvelope(this.id, workspaceId, config.keepAliveSeconds),
           message: {
             id: message,
             payload: input,
@@ -115,11 +139,12 @@ function createRemoteSession<Input>(
           (afterValues.length === 1 && !/^\d+$/.test(afterValues[0] ?? ""))) {
         throw new TypeError("Session event cursor must be a non-negative integer");
       }
+      const workspaceId = await resolveWorkspaceId();
       const path = new URL(
         `/__cantelop/v1/sessions/${encodeURIComponent(this.id)}/events`,
         RUNTIME_ORIGIN,
       );
-      path.searchParams.set("workspace_id", config.workspaceId);
+      path.searchParams.set("workspace_id", workspaceId);
       if (afterValues.length === 1) path.searchParams.set("after", afterValues[0]!);
  const streamID = sourceURL.searchParams.get("stream_id");
  if (streamID !== null) path.searchParams.set("stream_id", streamID);
@@ -148,11 +173,15 @@ function copyHeader(source: Headers, destination: Headers, name: string): void {
   if (value !== null) destination.set(name, value);
 }
 
-function sessionEnvelope(id: string, config: SessionOpenConfig): Record<string, unknown> {
+function sessionEnvelope(
+  id: string,
+  workspaceId: string,
+  keepAliveSeconds: number,
+): Record<string, unknown> {
   return {
     id,
-    workspace_id: config.workspaceId,
-    keep_alive_seconds: config.keepAliveSeconds,
+    workspace_id: workspaceId,
+    keep_alive_seconds: keepAliveSeconds,
   };
 }
 
@@ -342,6 +371,20 @@ function readErrorCode(envelope: unknown): string {
 
 function assertWorkspaceID(id: string): void {
   if (!WORKSPACE_ID_PATTERN.test(id)) throw new TypeError("Invalid Cantelop Workspace ID");
+}
+
+function assertSessionWorkspace(config: SessionOpenConfig): void {
+  if (config.workspaceId !== undefined) {
+    if (config.workspaceSlug !== undefined) {
+      throw new TypeError("A Session requires exactly one Workspace ID or slug");
+    }
+    assertWorkspaceID(config.workspaceId);
+    return;
+  }
+  if (config.workspaceSlug === undefined) {
+    throw new TypeError("A Session requires exactly one Workspace ID or slug");
+  }
+  assertWorkspaceSlug(config.workspaceSlug);
 }
 
 function assertSessionID(id: string): void {

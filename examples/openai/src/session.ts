@@ -36,7 +36,7 @@ function startPrompt(context: Context, prompt: string): void {
   agent ??= new Agent({
     name: "Cantelop OpenAI example",
     instructions: "You are a concise, helpful assistant.",
-    model: context.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+    model: context.env.OPENAI_MODEL ?? "gpt-5-mini",
   });
   conversation ??= new MemorySession({ sessionId: context.session.id });
   const currentAgent = agent;

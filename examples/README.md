@@ -33,7 +33,7 @@ routes:
 ```ts
 const query = new URLSearchParams({
   sessionId,
-  workspaceId,
+  workspaceSlug,
   keepAliveSeconds: String(keepAliveSeconds),
 });
 const events = new EventSource(`/events?${query}`);

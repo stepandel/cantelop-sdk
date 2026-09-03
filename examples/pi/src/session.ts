@@ -18,7 +18,7 @@ function sessionAgent(
   if (agent !== undefined) return agent;
 
   const provider = env.PI_PROVIDER ?? "anthropic";
-  const modelId = env.PI_MODEL ?? "claude-sonnet-4-6";
+  const modelId = env.PI_MODEL ?? "claude-sonnet-5";
   const model = models.getModel(provider, modelId);
 
   if (!model) {
@@ -41,6 +41,7 @@ export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) =>
 
   if (command.type === "cancel") {
     promptQueue.length = 0;
+    agent?.clearAllQueues();
     context.activity.cancel();
     return;
   }

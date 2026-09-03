@@ -9,16 +9,16 @@ This example has two deployment artifacts:
 Cantelop injects the current App when it creates the API. The Edge API manages
 Workspaces and reusable Sessions without an API key; `OPENAI_API_KEY` is
 supplied only to the Session runtime. The manifest requires that secret and declares
-`gpt-4.1-mini` as the non-secret local default for `OPENAI_MODEL`.
+`gpt-5-mini` as the non-secret local default for `OPENAI_MODEL`.
 
 The API exposes `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
 `POST /cancel`.
-Chat requires `workspaceId`, `keepAliveSeconds`, and `prompt`, and accepts an
+Chat requires `workspaceSlug`, `keepAliveSeconds`, and `prompt`, and accepts an
 optional `sessionId`; it creates or reuses that Session. Steer requires
-`sessionId`, `workspaceId`, `keepAliveSeconds`, and `prompt` to reuse it. Cancel
+`sessionId`, `workspaceSlug`, `keepAliveSeconds`, and `prompt` to reuse it. Cancel
 requires the same Session fields without a prompt. All message routes return an
 accepted message reference with HTTP status `202`.
-`GET /events` accepts `sessionId`, `workspaceId`, and `keepAliveSeconds` as
+`GET /events` accepts `sessionId`, `workspaceSlug`, and `keepAliveSeconds` as
 query parameters and streams that Session's events over SSE or the
 `cantelop.events.v1` WebSocket subprotocol. See the [shared example
 guide](../README.md) for client and reconnect examples.

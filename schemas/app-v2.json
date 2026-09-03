@@ -129,7 +129,7 @@
       "api": "src/api.ts",
       "session": "src/session.ts",
       "environment": {
-        "OPENAI_MODEL": {"default": "gpt-4.1-mini"},
+        "OPENAI_MODEL": {"default": "gpt-5-mini"},
         "OPENAI_API_KEY": {"secret": true, "required": true}
       }
     }

@@ -53,6 +53,8 @@ export type {
   MessageExecution,
   Session,
   SessionIdentity,
+  SessionOpenByIDConfig,
+  SessionOpenBySlugConfig,
   SessionOpenConfig,
   SessionService,
   Workspace,
