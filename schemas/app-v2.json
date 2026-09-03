@@ -66,7 +66,7 @@
             },
             "dockerfile": {
               "$ref": "#/$defs/projectFile",
-              "description": "Optional Dockerfile used only when the Session runtime needs native dependencies or system tools. The build context is always the directory containing cantelop.json."
+              "description": "Optional Dockerfile for native dependencies, system tools, and assets. Cantelop supplies the runtime user, startup command, and /workspace working directory. The build context is always the directory containing cantelop.json."
             }
           }
         }

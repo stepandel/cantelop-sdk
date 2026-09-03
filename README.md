@@ -273,13 +273,40 @@ The Docker build context is always the directory containing `cantelop.json`,
 even when the Dockerfile is in a subdirectory. Resolve Dockerfile `COPY` paths
 from that project root and place build ignore rules in its `.dockerignore`.
 
+The Dockerfile installs dependencies and supplies assets. For example, to add
+Python:
+
+```dockerfile
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates python3 \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+Cantelop supplies the Session runtime, managed user, home and cache directories,
+startup command, and `/workspace` working directory. You do not need to set
+`USER`, `WORKDIR`, `ENTRYPOINT`, or `CMD` for the runtime. You can still use
+`USER` and `WORKDIR` within build steps; the CLI sets their final runtime values.
+
+Install dependencies and copy assets into system locations or a path such as
+`/opt/app`. Files baked into the image under `/workspace` would be hidden by the
+durable mount, so the CLI rejects them. Home, temporary files, and caches are
+ephemeral; write data that must survive a Sandbox restart under `/workspace`.
+
+Cantelop owns mounts, listener ports, health checks, and shutdown behavior. The
+final base image must not declare `VOLUME`, pending `ONBUILD` instructions, or
+`CANTELOP_*` environment variables. `/__cantelop` and `/opt/cantelop` are reserved
+for the runtime. Ordinary application `ENV` values remain available, while
+identity, home, temporary, and XDG paths are managed by Cantelop. Keep credentials
+in App environment variables and secrets.
+
 ## Workspaces
 
 Each Sandbox mounts its Session's Workspace at `/workspace`. This is durable
 storage: its files survive Sandbox termination and remain available when a new
 Sandbox starts.
 
-The platform default image starts the Session process in `/workspace`, so
+Both default and custom images start the Session process in `/workspace`, so
 relative file paths resolve inside the durable Workspace.
 
 A Workspace can be shared by multiple Sessions, including Sandboxes running
