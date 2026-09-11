@@ -5,7 +5,15 @@ import type {
   SessionOutput,
 } from "./session.js";
 
+export interface ActivityLifecycle {
+  readonly activityId: string;
+  readonly messageId: string;
+  readonly outcome: "started" | "completed" | "failed" | "cancellation_requested" | "cancelled";
+}
+
 interface ActiveActivity<Message> {
+  readonly messageId: string;
+  readonly observe: (event: ActivityLifecycle) => void;
   readonly id: string;
   readonly controller: AbortController;
   readonly messages: Message[];
@@ -33,6 +41,7 @@ export class InMemoryActivity<Message, Event> {
     messageId: string,
     work: SessionActivityFunction<Message, Event>,
     policy: { timeoutMs?: number; } = {},
+    observe: (event: ActivityLifecycle) => void = () => undefined,
   ): void {
     if (this.active) {
       throw new Error("Session runtime activity is already active");
@@ -41,10 +50,11 @@ export class InMemoryActivity<Message, Event> {
     const timeout = policy.timeoutMs ?? 1_800_000;
     validateTimeout(timeout);
     const controller = new AbortController();
-    const activity: ActiveActivity<Message> = { id: randomUUID(), controller, messages: [], messageBytes: 0, settled: false, deadline: Date.now() + timeout };
+    const activity: ActiveActivity<Message> = { id: randomUUID(), messageId, observe, controller, messages: [], messageBytes: 0, settled: false, deadline: Date.now() + timeout };
     activity.timer = setTimeout(() => this.cancel(), timeout);
     activity.timer.unref();
     this.current = activity;
+    this.report(activity, "started");
     this.stateChanged();
     const output: SessionOutput<Event> = Object.freeze({
       send: async (event: Event) => {
@@ -69,14 +79,18 @@ export class InMemoryActivity<Message, Event> {
     });
     const result = Promise.resolve().then(() => work(context));
     void result.then(
-      () => this.settle(activity),
-      () => this.settle(activity),
+      () => this.settle(activity, false),
+      () => this.settle(activity, true),
     );
   }
 
   cancel(reason?: unknown): boolean {
     if (this.current === undefined) return false;
-    this.current.cancelledAt ??= new Date().toISOString();
+    if (this.current.cancelledAt === undefined) {
+      this.current.cancelledAt = new Date().toISOString();
+      this.report(this.current, "cancellation_requested");
+      this.stateChanged();
+    }
     this.current.controller.abort(
       reason ?? new DOMException("Session runtime activity cancelled", "AbortError"),
     );
@@ -97,9 +111,15 @@ export class InMemoryActivity<Message, Event> {
     return !this.active;
   }
 
-  private settle(activity: ActiveActivity<Message>): void {
+  private report(activity: ActiveActivity<Message>, outcome: ActivityLifecycle["outcome"]): void {
+    // Observability is best effort and must never change activity scheduling.
+    try { activity.observe({ activityId: activity.id, messageId: activity.messageId, outcome }); } catch { }
+  }
+
+  private settle(activity: ActiveActivity<Message>, failed: boolean): void {
     if (this.current !== activity) return;
     activity.settled = true;
+    this.report(activity, activity.controller.signal.aborted ? "cancelled" : failed ? "failed" : "completed");
     clearTimeout(activity.timer);
     this.current = undefined;
     for (const payload of activity.messages) { try { this.sendMessage(payload); } catch (error) { console.error("Activity completion message rejected", error); } }
