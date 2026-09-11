@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import type { ActivityLifecycle } from "./activity.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 
@@ -212,6 +213,19 @@ export class RuntimeObserver {
         finished_at: new Date().toISOString(), attributes: Object.freeze({}),
       }));
     }
+  }
+
+  recordActivity(event: ActivityLifecycle): void {
+    this.buffer.publishBestEffort(this.trace === undefined ? undefined : this.messageId, Object.freeze({
+      type: "log.recorded", log_id: `log_${randomHex(16)}`,
+      severity: event.outcome === "failed" ? "error" : "info",
+      body: `Activity ${event.outcome}`,
+      occurred_at: new Date().toISOString(),
+      attributes: Object.freeze({
+        source: "activity", activity_id: event.activityId,
+        message_id: event.messageId, outcome: event.outcome,
+      }),
+    }));
   }
 
   recordRuntimeLog(body: string, severity: LogSeverity, source: "console" | "stdout" | "stderr"): boolean {

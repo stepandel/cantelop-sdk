@@ -55,7 +55,8 @@
     "test": "pnpm build && node --test test/*.test.mjs",
     "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
     "check:package": "pnpm build && node scripts/check-package.mjs",
-    "prepack": "pnpm build"
+    "prepack": "pnpm build",
+    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs"
   },
   "dependencies": {
     "esbuild": "^0.25.0"

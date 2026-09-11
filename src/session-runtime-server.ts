@@ -130,7 +130,7 @@ function createSessionRuntimeAdapter<Input, Event = never>(
           return activity.active;
         },
         start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number; }) {
-          activity.start(message.id, work, policy);
+          activity.start(message.id, work, policy, (event) => observer.recordActivity(event));
         },
         extend(timeoutMs: number) { return activity.extend(timeoutMs); },
         cancel(reason?: unknown) {
