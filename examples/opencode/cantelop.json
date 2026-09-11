@@ -1,0 +1,12 @@
+{
+  "app": "opencode",
+  "api": "src/api.ts",
+  "session": {
+    "entrypoint": "src/session.ts",
+    "dockerfile": "docker/Dockerfile"
+  },
+  "environment": {
+    "ANTHROPIC_API_KEY": { "secret": true, "required": true },
+    "OPENCODE_MODEL": { "default": "anthropic/claude-sonnet-4-5" }
+  }
+}

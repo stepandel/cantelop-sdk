@@ -377,9 +377,9 @@ work, call a provider's steering API, cancel an activity, or do something else.
 Use a managed activity for long-running work so later messages can be handled
 while it runs.
 
-See the [OpenAI](./examples/openai), [Anthropic](./examples/anthropic), and  
-[Pi](./examples/pi) examples for complete routes, message handlers, and  
-provider-specific steering and cancellation.
+See the [OpenAI](./examples/openai), [Anthropic](./examples/anthropic),
+[Pi](./examples/pi), and [OpenCode](./examples/opencode) examples for complete
+routes, message handlers, and provider-specific steering and cancellation.
 
 ## Response streaming (SSE and WebSockets)
 

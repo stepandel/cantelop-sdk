@@ -12,7 +12,7 @@ const repositoryRoot = path.resolve(
 );
 const schemaUrl =
   "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v2.json";
-const examples = ["openai", "anthropic", "pi"];
+const examples = ["openai", "anthropic", "pi", "opencode"];
 const validWorkspaceSlug = "user-1";
 const expectedEnvironment = {
   openai: {
@@ -21,6 +21,10 @@ const expectedEnvironment = {
   },
   anthropic: {
     ANTHROPIC_API_KEY: { secret: true, required: true },
+  },
+  opencode: {
+    ANTHROPIC_API_KEY: { secret: true, required: true },
+    OPENCODE_MODEL: { default: "anthropic/claude-sonnet-4-5" },
   },
   pi: {
     ANTHROPIC_API_KEY: { secret: true, required: true },

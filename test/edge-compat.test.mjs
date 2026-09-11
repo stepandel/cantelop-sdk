@@ -56,6 +56,8 @@ test("provider API entrypoints do not import native dependencies", async () => {
     "examples/anthropic/src/contracts.ts",
     "examples/pi/src/api.ts",
     "examples/pi/src/contracts.ts",
+    "examples/opencode/src/api.ts",
+    "examples/opencode/src/contracts.ts",
   ];
 
   for (const file of files) {
@@ -63,7 +65,7 @@ test("provider API entrypoints do not import native dependencies", async () => {
     assert.doesNotMatch(source, /["']node:/);
     assert.doesNotMatch(
       source,
-      /@(?:anthropic-ai|earendil-works|openai)\//,
+      /@(?:anthropic-ai|earendil-works|openai|opencode-ai)\//,
     );
     assert.doesNotMatch(source, /@cantelop\/sdk\/runtime/);
     assert.doesNotMatch(source, /\b(?:Buffer|process)\b/);

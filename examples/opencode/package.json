@@ -1,0 +1,18 @@
+{
+  "name": "@cantelop/example-opencode",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "tsc -p tsconfig.api.json && tsc -p tsconfig.session.json"
+  },
+  "dependencies": {
+    "@cantelop/sdk": "workspace:*",
+    "@opencode-ai/sdk": "1.18.30"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.3"
+  }
+}

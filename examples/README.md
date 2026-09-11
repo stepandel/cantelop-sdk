@@ -1,6 +1,6 @@
 # Provider examples
 
-The OpenAI, Anthropic, and Pi examples each contain two deployment artifacts:
+The OpenAI, Anthropic, Pi, and OpenCode examples each contain two deployment artifacts:
 
 ```text
 src/api.ts      Edge HTTP middleware
@@ -22,7 +22,10 @@ deltas and completion. A steer received while idle starts a provider turn.
 OpenAI keeps busy-time prompts in a per-Session FIFO because a text `run()`
 cannot accept more input. Anthropic feeds prompts and prioritized steer commands
 into its live `SDKUserMessage` stream. Pi applies active steer directly to its
-Agent and keeps ordinary busy-time prompts in a Cantelop FIFO. All three
+Agent and keeps ordinary busy-time prompts in a Cantelop FIFO. OpenCode runs a
+headless server per activity and queues busy-time prompts and
+steer commands. See its [setup guide](./opencode/README.md) for the custom image
+and warm-Sandbox conversation lifetime. All four
 propagate cancel through the Session activity's `AbortSignal`. The Session
 identity is propagated into the native Session runtime. The events route adapts
 the App route to the platform event broker with `session.events(request)`.
