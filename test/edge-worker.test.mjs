@@ -90,3 +90,37 @@ test("the Edge adapter turns an API definition into a standard Worker", async ()
 test("the Edge adapter rejects a malformed API definition at startup", () => {
   assert.throws(() => createApiWorker({}), /Invalid Cantelop API definition/);
 });
+
+test("D1 is exposed by identity only as db, with binding-context isolation", async () => {
+  const contexts = [];
+  const makeDB = () => ({ prepare() {}, batch() {}, exec() {}, withSession() {} });
+  const first = makeDB();
+  const second = makeDB();
+  const worker = createApiWorker(defineApi((context) => { contexts.push(context); }));
+  const bindings = { DB: first, OTHER: makeDB(), CANTELOP_DATABASE: makeDB() };
+  await worker.fetch(new Request("https://example.com/"), bindings);
+  await worker.fetch(new Request("https://example.com/"), bindings);
+  await worker.fetch(new Request("https://example.com/"), { DB: second });
+  assert.equal(contexts.length, 2);
+  assert.equal(contexts[0].db, first);
+  assert.equal(contexts[1].db, second);
+  assert.deepEqual({ ...contexts[0].env }, {});
+  assert.equal(Object.isFrozen(first), false);
+});
+
+test("D1 absence preserves existing APIs and legacy DB strings", async () => {
+  const contexts = [];
+  const worker = createApiWorker(defineApi((context) => { contexts.push(context); }));
+  await worker.fetch(new Request("https://example.com/"));
+  await worker.fetch(new Request("https://example.com/"), { DB: "connection-string" });
+  assert.equal(contexts[0].db, undefined);
+  assert.equal(contexts[1].db, undefined);
+  assert.equal(contexts[1].env.DB, "connection-string");
+});
+
+test("malformed database bindings fail before a handler executes", () => {
+  const worker = createApiWorker(defineApi(() => assert.fail("must not create router")));
+  for (const DB of [null, 42, {}, { prepare() {} }]) {
+    assert.throws(() => worker.fetch(new Request("https://example.com/"), { DB }), /database binding/);
+  }
+});
