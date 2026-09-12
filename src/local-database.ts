@@ -42,12 +42,12 @@ export async function serveLocalDatabaseApi(options: {
     script: await readFile(workerPath, "utf8"),
     host: "127.0.0.1", port: options.port, bindings: options.bindings ?? {},
   });
+  let version = (await stat(workerPath)).mtimeMs;
   const release = await acquireLocalDatabase(options.persist);
   let runtime: LocalRuntime;
   try { runtime = new Miniflare(convertV4MiniflareOptions(await config())); }
   catch (error) { await release(); throw error; }
   try { await runtime.ready; } catch (error) { try { await runtime.dispose(); } finally { await release(); } throw error; }
-  let version = (await stat(workerPath)).mtimeMs;
   let updating: Promise<void> | undefined;
   const timer = setInterval(() => {
     if (updating) return;
