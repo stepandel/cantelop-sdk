@@ -46,7 +46,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "docs/database.md"
   ],
   "sideEffects": false,
   "scripts": {
@@ -56,14 +57,19 @@
     "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
     "check:package": "pnpm build && node scripts/check-package.mjs",
     "prepack": "pnpm build",
-    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs"
+    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
+    "check:database-types": "pnpm build && tsc --noEmit --strict --types node --module nodenext --moduleResolution nodenext --target es2022 test/database-types.ts && tsc --noEmit --strict --skipLibCheck --types node --module nodenext --moduleResolution nodenext --target es2022 test/drizzle-database-types.ts"
   },
   "dependencies": {
     "@cloudflare/workers-types": "5.20260911.1",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "miniflare": "5.20260804.1-alpha",
+    "proper-lockfile": "4.1.2"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/proper-lockfile": "4.1.4",
+    "drizzle-orm": "0.45.2",
     "typescript": "^5.6.3"
   }
 }
