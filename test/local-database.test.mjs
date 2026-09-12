@@ -31,6 +31,10 @@ test("built Edge API reads persistent D1 and reloads without losing data", async
   await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const port = probe.address().port;
   await new Promise((resolve) => probe.close(resolve));
+  const { createServer: createHTTPServer } = await import("node:http");
+  const bridge = createHTTPServer((request, response) => { response.end("bridge-ok"); });
+  await new Promise((resolve) => bridge.listen(0, "127.0.0.1", resolve));
+  const bridgeOrigin = `http://127.0.0.1:${bridge.address().port}`;
   let host;
   try {
     const source = join(root, "api.mjs");
@@ -38,14 +42,14 @@ test("built Edge API reads persistent D1 and reloads without losing data", async
     // esbuild needs a filesystem import rather than a file URL.
     const { fileURLToPath } = await import("node:url");
     const writeAPI = async (version) => {
-      await writeFile(source, `import { defineApi } from ${JSON.stringify(fileURLToPath(sdkApi))}; export default defineApi(({db, router}) => router.route('GET', '/', async () => Response.json({version:${version}, row:await db.prepare('SELECT title FROM items WHERE id=1').first()})));`);
+      await writeFile(source, `import { defineApi } from ${JSON.stringify(fileURLToPath(sdkApi))}; export default defineApi(({db, router}) => router.route('GET', '/', async () => Response.json({version:${version}, row:await db.prepare('SELECT title FROM items WHERE id=1').first(),bridge:await (await fetch('${bridgeOrigin}')).text()})));`);
       await buildApi({ entrypoint: source, outdir: join(root, "built") });
     };
     await migrateLocalDatabase({ persist: join(root, "db"), name: "0001_items.sql", sql: "CREATE TABLE items(id INTEGER PRIMARY KEY, title TEXT); INSERT INTO items VALUES(1, 'persisted');" });
     await writeAPI(1);
     host = await serveLocalDatabaseApi({ workerPath: join(root, "built/worker.mjs"), persist: join(root, "db"), port });
     await assert.rejects(migrateLocalDatabase({ persist: join(root, "db"), name: "0002_blocked.sql", sql: "SELECT 1" }), /in use/);
-    assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}`)).json(), { version: 1, row: { title: "persisted" } });
+    assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}`)).json(), { version: 1, row: { title: "persisted" }, bridge: "bridge-ok" });
     await writeAPI(2);
     let response;
     for (let i = 0; i < 40; i++) {
@@ -53,6 +57,6 @@ test("built Edge API reads persistent D1 and reloads without losing data", async
       if (response.version === 2) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert.deepEqual(response, { version: 2, row: { title: "persisted" } });
-  } finally { await host?.close(); await rm(root, { recursive: true, force: true }); }
+    assert.deepEqual(response, { version: 2, row: { title: "persisted" }, bridge: "bridge-ok" });
+  } finally { await host?.close(); bridge.closeAllConnections(); await new Promise((resolve) => bridge.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });
