@@ -41,14 +41,30 @@ export interface SessionContext<Message, Event = never> {
   send(message: Message): void;
 }
 
+export interface SessionRecoveryContext<Message, Event = never> {
+  readonly signal: AbortSignal;
+  readonly recovery: Readonly<{
+    id: string;
+    interruptedMessageId: string;
+  }>;
+  readonly session: SessionIdentity;
+  readonly env: SessionEnvironment;
+  readonly activity: SessionActivity<Message, Event>;
+  readonly output: SessionOutput<Event>;
+  send(message: Message): void;
+}
+
 export interface SessionBehaviour<Message, Event = never> {
   receive(context: SessionContext<Message, Event>): Awaitable<void>;
+  onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }
 
 export function defineSessionBehaviour<Message, Event = never>(
-  receive: SessionBehaviour<Message, Event>["receive"],
+  behaviour: SessionBehaviour<Message, Event> | SessionBehaviour<Message, Event>["receive"],
 ): SessionBehaviour<Message, Event> {
-  return Object.freeze({ receive });
+  return Object.freeze(
+    typeof behaviour === "function" ? { receive: behaviour } : { ...behaviour },
+  );
 }
 
 export type { SessionIdentity } from "./resources.js";
