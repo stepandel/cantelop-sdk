@@ -182,6 +182,30 @@ export default defineSessionBehaviour<SessionMessage, SessionEvent>(
 
 This handler is an example of a queue behavior. It waits for the agent before handling the next message.
 
+Applications that can resume from durable Workspace state may opt into Sandbox
+recovery with an `onRecover` hook:
+
+```ts
+export default defineSessionBehaviour<SessionMessage, SessionEvent>({
+  async receive(context) {
+    // Handle ordinary messages.
+  },
+  async onRecover({ recovery, activity }) {
+    activity.start(async ({ signal }) => {
+      await resumeSavedWork(recovery.interruptedMessageId, { signal });
+    });
+  },
+});
+```
+
+After an unexpected Sandbox loss during outstanding work, Cantelop activates a
+replacement with the same Workspace and invokes this hook before admitting new
+messages. Recovery is at least once across replacement Sandboxes, so persist
+enough application state to make repeated calls safe. Returning from the hook
+finishes recovery initialization; managed activity remains supervised until it
+settles. Normal release, cancellation, idle expiry, and work timeout do not invoke
+the hook.
+
 ## Environments
 
 The `environment` field in `cantelop.json` documents the configuration your app
