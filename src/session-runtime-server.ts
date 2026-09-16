@@ -15,6 +15,7 @@ import type {
   SessionEnvironment,
   SessionBehaviour,
   SessionOutput,
+  SessionRecoveryContext,
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
 import {
@@ -38,6 +39,7 @@ const MESSAGE_PATH = "/__cantelop/v2/messages";
 const QUIESCENCE_PATH = "/__cantelop/v2/runtime/quiescence";
 const OUTPUT_PATH = "/__cantelop/v2/runtime/events";
 const OBSERVATIONS_PATH = "/__cantelop/v2/runtime/observations";
+const RECOVERY_PATH = "/__cantelop/v2/runtime/recoveries";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
@@ -48,6 +50,7 @@ const MAX_KEEP_ALIVE_SECONDS = 604_800;
 const ATTEMPT_ID_PATTERN = /^att_[0-9a-f]{32}$/;
 const REQUEST_ID_PATTERN = /^req_[0-9a-f]{32}$/;
 const TRACE_PARENT_PATTERN = /^00-((?!0{32})[0-9a-f]{32})-((?!0{16})[0-9a-f]{16})-01$/;
+const RECOVERY_ID_PATTERN = /^rcv_[0-9a-f]{32}$/;
 
 export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
@@ -73,6 +76,16 @@ interface RuntimeDelivery {
   readonly settled: Promise<void>;
 }
 
+interface RuntimeRecovery {
+  readonly fingerprint: string;
+  readonly generation: number;
+  readonly result: Promise<Readonly<{
+    recovery_id: string;
+    generation: number;
+    state: "completed" | "failed";
+  }>>;
+}
+
 /**
  * Creates the native HTTP protocol adapter. This lower-level entrypoint is
  * primarily useful to platform integration tests and custom native launchers.
@@ -96,6 +109,7 @@ function createSessionRuntimeAdapter<Input, Event = never>(
   const observationBuffer = new RuntimeObservationBuffer();
   const mailbox = new InMemoryMailbox<void>(markMessageLifecycle, () => quiescence.changed());
   let activity: InMemoryActivity<Input, Event>;
+  const recoveries = new Map<string, RuntimeRecovery>();
 
   const receiveMessage = (
     message: Readonly<{ id: string; payload: Input; }>,
@@ -161,6 +175,71 @@ function createSessionRuntimeAdapter<Input, Event = never>(
     messages.admit(message.id, { message, session: boundSession }, (signal, started) => receiveMessage(message, boundSession!, undefined, signal, started));
   };
 
+  const recover = (
+    recoveryId: string,
+    interruptedMessageId: string,
+    session: SessionIdentity,
+  ): RuntimeRecovery => {
+    const fingerprint = JSON.stringify({ interruptedMessageId, session });
+    const existing = recoveries.get(recoveryId);
+    if (existing !== undefined) {
+      if (existing.fingerprint !== fingerprint) throw new ProtocolError(409, "recovery_conflict");
+      return existing;
+    }
+    if (behaviour.onRecover === undefined) throw new ProtocolError(409, "recovery_unsupported");
+    const generation = quiescence.observeMessage(interruptedMessageId);
+    const signal = AbortSignal.timeout(options.executionTimeoutMs ?? 5 * 60_000);
+    const settled = mailbox.enqueue(recoveryId, async () => {
+      signal.throwIfAborted();
+      let invocationOpen = true;
+      const send = (payload: Input): void => {
+        if (!invocationOpen) throw new Error("Session recovery invocation has already settled");
+        sendMessage(payload);
+      };
+      let outputOpen = true;
+      const output: SessionOutput<Event> = Object.freeze({
+        async send(event: Event): Promise<void> {
+          if (!outputOpen) throw new Error("Session recovery invocation has already settled");
+          await outputBuffer.publish(
+            interruptedMessageId,
+            event,
+            AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+          );
+        },
+      });
+      const activityCapability: SessionActivity<Input, Event> = Object.freeze({
+        get active() { return activity.active; },
+        start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number; }) {
+          activity.start(interruptedMessageId, work, policy);
+        },
+        extend(timeoutMs: number) { return activity.extend(timeoutMs); },
+        cancel(reason?: unknown) { return activity.cancel(reason); },
+      });
+      const context: SessionRecoveryContext<Input, Event> = Object.freeze({
+        signal,
+        recovery: Object.freeze({ id: recoveryId, interruptedMessageId }),
+        session,
+        env: options.env ?? process.env,
+        activity: activityCapability,
+        output,
+        send,
+      });
+      try {
+        await behaviour.onRecover!(context);
+      } finally {
+        invocationOpen = false;
+        outputOpen = false;
+      }
+    });
+    const result = settled.then(
+      () => Object.freeze({ recovery_id: recoveryId, generation, state: "completed" as const }),
+      () => Object.freeze({ recovery_id: recoveryId, generation, state: "failed" as const }),
+    );
+    const recovery = Object.freeze({ fingerprint, generation, result });
+    recoveries.set(recoveryId, recovery);
+    return recovery;
+  };
+
   activity = new InMemoryActivity(
     sendMessage,
     (messageId, event, signal) => outputBuffer.publish(messageId, event, AbortSignal.any([signal, AbortSignal.timeout(30_000)])),
@@ -177,6 +256,8 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       observationBuffer,
       messages,
       activity,
+      behaviour.onRecover !== undefined,
+      recover,
       () => boundSession,
       (session) => {
         if (boundSession !== undefined &&
@@ -256,6 +337,8 @@ async function handleRequest<Input>(
   observationBuffer: RuntimeObservationBuffer,
   messages: RuntimeMessages,
   activity: { active: boolean; cancel(reason?: unknown): boolean; snapshot(): unknown; },
+  recoverySupported: boolean,
+  recover: (recoveryId: string, interruptedMessageId: string, session: SessionIdentity) => RuntimeRecovery,
   boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
@@ -269,8 +352,22 @@ async function handleRequest<Input>(
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
     writeJSON(response, 200, {
       sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
-      quiescent: quiescence.quiescent, activity: activity.snapshot(), observations: observationBuffer.metadata(), events: outputBuffer.metadata()
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported },
+      observations: observationBuffer.metadata(), events: outputBuffer.metadata()
     });
+    return;
+  }
+  if (url.pathname === RECOVERY_PATH && request.method === "POST") {
+    if (!isJSONContentType(request.headers["content-type"])) throw new ProtocolError(415, "unsupported_media_type");
+    const body = await readRequestEnvelope(request);
+    if (!isRecord(body) || Object.keys(body).length !== 3 ||
+      typeof body.recovery_id !== "string" || !RECOVERY_ID_PATTERN.test(body.recovery_id) ||
+      typeof body.message_id !== "string" || !MESSAGE_ID_PATTERN.test(body.message_id)) {
+      throw new ProtocolError(400, "invalid_recovery_request");
+    }
+    const session = readSession(body.session);
+    bindSession(session);
+    writeJSON(response, 200, await recover(body.recovery_id, body.message_id, session).result);
     return;
   }
   if (url.pathname === "/__cantelop/v2/runtime/activity/cancel" && request.method === "POST") {

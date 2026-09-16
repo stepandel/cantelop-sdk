@@ -103,6 +103,48 @@ test('same counters in replacement sandbox cannot acknowledge its output', async
  assert.equal((await (await request('runtime')).json()).events.acknowledged,0);
  await request('runtime/events/ack','POST',{through:1});
 });
+test('recovery is opt-in, serialized with messages, and deduplicated by recovery ID', async t => {
+ let releaseRecovery; const gate=new Promise(resolve=>{releaseRecovery=resolve});
+ let recoveries=0; let messages=0;
+ const behaviour={
+  async onRecover(context){
+   recoveries++;
+   assert.equal(context.recovery.id,'rcv_'+'4'.repeat(32));
+   assert.equal(context.recovery.interruptedMessageId,id);
+   await gate;
+  },
+  receive(){messages++},
+ };
+ const server=createServer(createSessionRuntimeHandler(behaviour,{sandboxId:sandbox}));
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve)}));
+ const request=(path,method='GET',body)=>fetch(`http://127.0.0.1:${server.address().port}/__cantelop/v2/${path}`,{
+  method,headers:{'X-Cantelop-Sandbox-ID':sandbox,'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),
+ });
+ const session=envelope().session;
+ const recovery={recovery_id:'rcv_'+'4'.repeat(32),message_id:id,session};
+ const first=request('runtime/recoveries','POST',recovery);
+ await until(()=>recoveries===1);
+ const admitted=await request('messages','POST',envelope());
+ assert.equal(admitted.status,202);
+ assert.equal(messages,0,'message waits behind recovery');
+ releaseRecovery();
+ assert.deepEqual(await (await first).json(),{recovery_id:recovery.recovery_id,generation:1,state:'completed'});
+ await until(()=>messages===1);
+ assert.deepEqual(await (await request('runtime/recoveries','POST',recovery)).json(),{recovery_id:recovery.recovery_id,generation:1,state:'completed'});
+ assert.equal(recoveries,1);
+ const runtime=await (await request('runtime')).json();
+ assert.equal(runtime.capabilities.recovery,true);
+});
+test('runtime rejects recovery when the application did not opt in', async t => {
+ const request=await fixture(t,async()=>{});
+ const runtime=await (await request('runtime')).json();
+ assert.equal(runtime.capabilities.recovery,false);
+ const response=await request('runtime/recoveries','POST',{
+  recovery_id:'rcv_'+'4'.repeat(32),message_id:id,session:envelope().session,
+ });
+ assert.equal(response.status,409);
+});
 test('internal messages remain deadline supervised after the external handler settles', async t => {
  let release; const gate=new Promise(r=>{release=r});
  const request=await fixture(t,async ({message,send})=>{if(message.payload.self){await gate}else{send({self:true})}}, {executionTimeoutMs:30});t.after(()=>release());
