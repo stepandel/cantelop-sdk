@@ -1,3 +1,4 @@
+import type { D1Database } from "@cloudflare/workers-types";
 import type { ApiDefinition, ApiEnvironment } from "./api.js";
 import {
   createRemoteApp,
@@ -46,9 +47,11 @@ export function createApiWorker<Input = unknown>(
 
     const cached = routers.get(bindings);
     if (cached) return cached;
+    const db = customerDatabase(bindings);
     const router = definition.create({
       app,
       env: customerEnvironment(bindings),
+      ...(db === undefined ? {} : { db }),
     });
     routers.set(bindings, router);
     return router;
@@ -78,4 +81,15 @@ function customerEnvironment(
     }
   }
   return Object.freeze(env);
+}
+
+function customerDatabase(bindings: Readonly<Record<string, unknown>>): D1Database | undefined {
+  const value = bindings.DB;
+  // Legacy string variables named DB remain valid until database enablement.
+  if (value === undefined || typeof value === "string") return undefined;
+  if (value === null || typeof value !== "object" ||
+      !["prepare", "batch", "exec", "withSession"].every(
+        (method) => typeof (value as Record<string, unknown>)[method] === "function",
+      )) throw new TypeError("Invalid Cantelop database binding");
+  return value as D1Database;
 }

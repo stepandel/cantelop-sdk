@@ -484,3 +484,5 @@ pnpm check:package
 installs it into an empty project, imports every public entrypoint, and builds a
 customer API. See [docs/releasing.md](./docs/releasing.md) for the release
 boundary. Publishing is a separate production operation.
+
+App-scoped SQL databases are available through the native `db` handle in Edge APIs. See [App databases](docs/database.md) for setup, migrations, local development, and Drizzle usage.
