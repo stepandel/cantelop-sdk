@@ -14,7 +14,7 @@ import {
 } from "../dist/build.js";
 
 test("the build module declares its CLI compatibility protocol", () => {
-  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 4);
+  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 5);
   assert.equal(typeof buildLocalApi, "function");
   assert.equal(typeof watchLocalProject, "function");
 });
@@ -30,17 +30,26 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
     [
       `import { defineApi } from ${JSON.stringify(sdkApi)};`,
       "export default defineApi(({ router }) => {",
+      '  console.log("registering routes");',
+      '  router.route("POST", "/chat", () => new Response(null, { status: 202 }));',
       '  router.route("GET", "/health", () => Response.json({ status: "ok" }));',
+      '  router.route("GET", "/chat/", () => new Response(null));',
       "});",
     ].join("\n"),
   );
 
   const artifact = await buildApi({ entrypoint, outdir });
   assert.equal(artifact.mainModule, path.join(outdir, "worker.mjs"));
+  assert.equal(artifact.routeDiscoveryError, undefined);
   assert.deepEqual(artifact.manifest, {
-    schema_version: 2,
+    schema_version: 3,
     kind: "cantelop-edge-api",
     main_module: "worker.mjs",
+    routes: [
+      { method: "GET", path: "/chat" },
+      { method: "POST", path: "/chat" },
+      { method: "GET", path: "/health" },
+    ],
   });
   assert.deepEqual(
     JSON.parse(await readFile(artifact.manifestFile, "utf8")),
@@ -52,6 +61,47 @@ test("buildApi emits a self-contained standard Worker and manifest", async (t) =
   assert.match(workerSource, /fetch\(request\)/);
   assert.doesNotMatch(workerSource, /@cantelop\/sdk/);
   assert.doesNotMatch(workerSource, /node:/);
+});
+
+test("buildApi keeps an artifact deployable when its routes cannot be discovered", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-build-routes-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sdkApi = new URL("../dist/api.js", import.meta.url).pathname;
+  const cases = {
+    "requires-env": [
+      "export default defineApi(({ env, router }) => {",
+      '  if (!env.API_KEY) throw new Error("API_KEY is required");',
+      '  router.route("GET", "/health", () => new Response(null));',
+      "});",
+    ],
+    "uses-app": [
+      "export default defineApi(({ app, router }) => {",
+      '  app.sessions.open({ id: "eager", workspaceId: "wsp_0123456789abcdef0123456789abcdef" });',
+      '  router.route("GET", "/health", () => new Response(null));',
+      "});",
+    ],
+    "unlistable-path": [
+      "export default defineApi(({ router }) => {",
+      '  router.route("GET", "/with space", () => new Response(null));',
+      "});",
+    ],
+  };
+  const expected = {
+    "requires-env": /API_KEY is required/,
+    "uses-app": /not available during route discovery/,
+    "unlistable-path": /cannot be listed/,
+  };
+  for (const [name, lines] of Object.entries(cases)) {
+    const entrypoint = path.join(directory, `${name}.ts`);
+    const outdir = path.join(directory, `${name}-artifact`);
+    await writeFile(entrypoint, [`import { defineApi } from ${JSON.stringify(sdkApi)};`, ...lines].join("\n"));
+
+    const artifact = await buildApi({ entrypoint, outdir });
+    assert.equal(artifact.manifest.routes, null, name);
+    assert.match(artifact.routeDiscoveryError, expected[name], name);
+    assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
+    assert.ok((await readFile(artifact.mainModule, "utf8")).length > 0);
+  }
 });
 
 test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge", async (t) => {
