@@ -7,6 +7,7 @@ import type {
   SessionOpenByIDConfig,
   SessionOpenBySlugConfig,
   SessionOpenConfig,
+  SessionRequestOptions,
   Workspace,
   WorkspaceCreateConfig,
   WorkspaceOpenConfig,
@@ -40,25 +41,25 @@ export class RemoteAppError extends Error {
   }
 }
 
-export function createRemoteApp<Input = unknown>(
+export function createRemoteApp<Input = unknown, Reply = unknown>(
   options: RemoteAppOptions = {},
-): CantelopApp<Input> {
+): CantelopApp<Input, Reply> {
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
   const sessionId = options.sessionId ?? createSessionID;
   const messageId = options.messageId ?? createMessageID;
 
   function openSession(
     config: SessionOpenByIDConfig,
-  ): Session<Input> & { readonly workspaceId: string };
+  ): Session<Input, Reply> & { readonly workspaceId: string };
   function openSession(
     config: SessionOpenBySlugConfig,
-  ): Session<Input> & { readonly workspaceSlug: string };
-  function openSession(config: SessionOpenConfig): Session<Input> {
+  ): Session<Input, Reply> & { readonly workspaceSlug: string };
+  function openSession(config: SessionOpenConfig): Session<Input, Reply> {
     assertSessionWorkspace(config);
     assertKeepAliveSeconds(config.keepAliveSeconds);
     const id = config.id ?? sessionId();
     assertSessionID(id);
-    return createRemoteSession(id, config, runtimeFetch, messageId);
+    return createRemoteSession<Input, Reply>(id, config, runtimeFetch, messageId);
   }
 
   const sessions = Object.freeze({ open: openSession });
@@ -86,12 +87,12 @@ export function createRemoteApp<Input = unknown>(
   return Object.freeze({ sessions, workspaces });
 }
 
-function createRemoteSession<Input>(
+function createRemoteSession<Input, Reply>(
   id: string,
   config: SessionOpenConfig,
   runtimeFetch: RuntimeFetch,
   messageId: IDFactory,
-): Session<Input> {
+): Session<Input, Reply> {
   let workspaceRequest: Promise<string> | undefined;
   const resolveWorkspaceId = (): Promise<string> => {
     if (config.workspaceId !== undefined) return Promise.resolve(config.workspaceId);
@@ -127,6 +128,29 @@ function createRemoteSession<Input>(
         },
       });
       return readMessageRef(envelope, message, this.id, runtimeFetch);
+    },
+
+    async request(input: Input, options: SessionRequestOptions = {}): Promise<Reply> {
+      const workspaceId = await resolveWorkspaceId();
+      const message = options.id ?? messageId();
+      assertMessageID(message);
+      const timeoutMs = options.timeoutMs ?? 30_000;
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+        throw new TypeError("timeoutMs must be an integer between 1 and 300000");
+      }
+      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/requests", {
+        method: "POST",
+        body: {
+          session: sessionEnvelope(this.id, workspaceId, config.keepAliveSeconds),
+          message: { id: message, payload: input },
+          timeout_ms: timeoutMs,
+        },
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+      if (!isRecord(envelope) || envelope.id !== message || !("reply" in envelope)) {
+        throw new RemoteAppError("invalid_request_response", 0);
+      }
+      return envelope.reply as Reply;
     },
 
     async events(request: Request): Promise<Response> {
@@ -270,6 +294,7 @@ function readMessageStatus(envelope: unknown, expectedMessage: string): MessageS
 interface RequestOptions {
   readonly method: "GET" | "POST";
   readonly body?: unknown;
+  readonly signal?: AbortSignal;
 }
 
 async function requestJSON(
@@ -285,6 +310,7 @@ async function requestJSON(
   const response = await runtimeFetch(new Request(`${RUNTIME_ORIGIN}${path}`, {
     method: options.method,
     redirect: "manual",
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(body === undefined ? {} : {
       headers: { "Content-Type": "application/json" },
       body,
