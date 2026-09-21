@@ -21,9 +21,17 @@ export interface Route {
   readonly handler: RouteHandler;
 }
 
+/** The identity of a registered route: its method and normalized path. */
+export interface RouteDescriptor {
+  readonly method: HttpMethod;
+  readonly path: string;
+}
+
 export interface Router {
   route(method: HttpMethod, path: string, handler: RouteHandler): Router;
   routes(routes: readonly Route[]): Router;
+  /** Registered routes sorted by path, then method. */
+  list(): readonly RouteDescriptor[];
   handle(request: Request): Promise<Response>;
 }
 
@@ -55,6 +63,23 @@ export function createRouter(): Router {
       }
 
       return router;
+    },
+
+    list() {
+      return Object.freeze(
+        [...registered.keys()]
+          .map((key) => {
+            const separator = key.indexOf(" ");
+            return Object.freeze({
+              method: key.slice(0, separator) as HttpMethod,
+              path: key.slice(separator + 1),
+            });
+          })
+          .sort((left, right) =>
+            left.path === right.path
+              ? left.method < right.method ? -1 : 1
+              : left.path < right.path ? -1 : 1),
+      );
     },
 
     async handle(request) {

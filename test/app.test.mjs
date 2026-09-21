@@ -57,6 +57,25 @@ test("a router handles Web requests and can close over the current App", async (
   });
 });
 
+test("a router lists its routes sorted by path then method", () => {
+  const handler = () => new Response(null);
+  const router = defineApi(({ router }) => {
+    router
+      .route("POST", "/chat/", handler)
+      .route("GET", "/health", handler)
+      .route("GET", "/chat", handler);
+  }).create({ app: {}, env: {} });
+
+  const routes = router.list();
+  assert.deepEqual(routes, [
+    { method: "GET", path: "/chat" },
+    { method: "POST", path: "/chat" },
+    { method: "GET", path: "/health" },
+  ]);
+  assert.equal(Object.isFrozen(routes), true);
+  assert.equal(Object.isFrozen(routes[0]), true);
+});
+
 test("a router returns Web-standard routing errors", async () => {
   const definition = defineApi(({ router }) => {
     router.route("POST", "/dispatch", () => new Response());

@@ -39,6 +39,7 @@ export type {
   HttpMethod,
   Route,
   RouteContext,
+  RouteDescriptor,
   RouteHandler,
   Router,
 } from "./router.js";
