@@ -155,6 +155,18 @@ Omit `sessionId` for a new Session; reuse the returned ID to continue it.
 `202` means the message was accepted, not that the agent has finished. Add  
 request validation and caller authorization for your application.
 
+### Route listing
+
+Each deployment publishes the API's route table, the method and path of every
+`router.route` call, so the Cantelop console can list an App's routes beside
+their traffic. To collect it, the build runs your `defineApi` factory once with
+an empty `env` and an `app` that throws when used. Handlers never run.
+
+Keep the factory to route registration. A factory that throws without
+environment values, or that uses `app` outside a handler, still deploys, but
+the build warns and the release lists no declared routes. Routes registered
+only when an environment value is set are not listed.
+
 ## Session runtime
 
 In `src/session.ts`, handle the same chat message and publish the result.
