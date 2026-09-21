@@ -74,7 +74,8 @@ type SessionRuntimeHandler = (
 interface RuntimeDelivery {
   readonly generation: number;
   readonly settled: Promise<void>;
-  readonly reply?: () => unknown;
+  /** A plain holder, never a closure: records outlive the receive scope. */
+  readonly reply?: { value: unknown };
 }
 
 interface RuntimeRecovery {
@@ -121,7 +122,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     replyRequested = false,
   ): RuntimeDelivery => {
     const generation = quiescence.observeMessage(message.id);
-    let replyValue: unknown;
+    const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
     let replied = false;
     const settled = mailbox.enqueue(message.id, async (sequence) => {
       signal.throwIfAborted();
@@ -164,7 +165,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         if (encoded === undefined || Buffer.byteLength(encoded) > 64 * 1024) {
           throw new Error("Session request reply must be JSON and at most 65536 bytes");
         }
-        replyValue = JSON.parse(encoded) as unknown;
+        if (replyHolder) replyHolder.value = JSON.parse(encoded) as unknown;
         replied = true;
       };
       try {
@@ -180,7 +181,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         outputOpen = false;
       }
     });
-    return Object.freeze({ generation, settled, ...(replyRequested ? { reply: () => replyValue } : {}) });
+    return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
   };
 
   const sendMessage = (payload: Input): void => {

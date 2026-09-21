@@ -432,8 +432,9 @@ const result = await session.request(
 
 A request handler must call `reply()` exactly once with JSON-compatible data of
 at most 64 KiB. A timeout or caller disconnect stops waiting but does not prove
-that execution stopped. Supply a stable `id` when retrying an ambiguous request;
-the platform retrieves the original result instead of executing a second copy.
+that execution stopped. A failed request throws a `RemoteAppError` carrying its
+`messageId`; pass that as `id` when retrying an ambiguous request and the
+platform retrieves the original result instead of executing a second copy.
 Use event streaming for incremental or long-running output.
 
 Your behaviour inspects `message.payload.type` and decides whether to queue

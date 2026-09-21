@@ -203,6 +203,16 @@ test("a Session request returns its direct reply with a bounded wait", async () 
   });
 });
 
+test("a failed Session request exposes its generated identity for retry", async () => {
+  const app = createRemoteApp({
+    messageId: () => messageId,
+    fetch: async () => Response.json({ error: { code: "request_wait_timeout" } }, { status: 504 }),
+  });
+  const session = app.sessions.open({ id: namedSessionId, workspaceId, keepAliveSeconds: 300 });
+  await assert.rejects(session.request({ type: "auth.check" }), (error) =>
+    error.code === "request_wait_timeout" && error.status === 504 && error.messageId === messageId);
+});
+
 test("a Message reference reads each observable lifecycle state", async () => {
   const states = [
     { id: messageId, state: "accepted", accepted_at: "2026-08-17T12:00:00Z" },

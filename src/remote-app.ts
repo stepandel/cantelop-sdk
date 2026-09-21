@@ -35,8 +35,11 @@ export class RemoteAppError extends Error {
   constructor(
     readonly code: string,
     readonly status: number,
+    /** Identity of the failed Session request; pass it as `id` to retry safely. */
+    readonly messageId?: string,
+    options?: ErrorOptions,
   ) {
-    super(`Cantelop request failed: ${code}`);
+    super(`Cantelop request failed: ${code}`, options);
     this.name = "RemoteAppError";
   }
 }
@@ -138,17 +141,25 @@ function createRemoteSession<Input, Reply>(
       if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
         throw new TypeError("timeoutMs must be an integer between 1 and 300000");
       }
-      const envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/requests", {
-        method: "POST",
-        body: {
-          session: sessionEnvelope(this.id, workspaceId, config.keepAliveSeconds),
-          message: { id: message, payload: input },
-          timeout_ms: timeoutMs,
-        },
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
+      let envelope: unknown;
+      try {
+        envelope = await requestJSON(runtimeFetch, "/__cantelop/v1/requests", {
+          method: "POST",
+          body: {
+            session: sessionEnvelope(this.id, workspaceId, config.keepAliveSeconds),
+            message: { id: message, payload: input },
+            timeout_ms: timeoutMs,
+          },
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+      } catch (error) {
+        // Expose the generated identity so an ambiguous failure can be retried.
+        if (options.signal?.aborted) throw error;
+        if (error instanceof RemoteAppError) throw new RemoteAppError(error.code, error.status, message, { cause: error });
+        throw new RemoteAppError("request_outcome_unknown", 0, message, { cause: error });
+      }
       if (!isRecord(envelope) || envelope.id !== message || !("reply" in envelope)) {
-        throw new RemoteAppError("invalid_request_response", 0);
+        throw new RemoteAppError("invalid_request_response", 0, message);
       }
       return envelope.reply as Reply;
     },
