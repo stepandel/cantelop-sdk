@@ -27,7 +27,7 @@ export interface SessionActivity<Message, Event> {
   cancel(reason?: unknown): boolean;
 }
 
-export interface SessionContext<Message, Event = never> {
+export interface SessionContext<Message, Event = never, Reply = never> {
   readonly signal: AbortSignal;
   readonly message: Readonly<{
     id: string;
@@ -38,6 +38,8 @@ export interface SessionContext<Message, Event = never> {
   readonly env: SessionEnvironment;
   readonly activity: SessionActivity<Message, Event>;
   readonly output: SessionOutput<Event>;
+  /** Supplies the single result returned by Session.request(). */
+  reply(value: Reply): void;
   send(message: Message): void;
 }
 
@@ -54,14 +56,14 @@ export interface SessionRecoveryContext<Message, Event = never> {
   send(message: Message): void;
 }
 
-export interface SessionBehaviour<Message, Event = never> {
-  receive(context: SessionContext<Message, Event>): Awaitable<void>;
+export interface SessionBehaviour<Message, Event = never, Reply = never> {
+  receive(context: SessionContext<Message, Event, Reply>): Awaitable<void>;
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }
 
-export function defineSessionBehaviour<Message, Event = never>(
-  behaviour: SessionBehaviour<Message, Event> | SessionBehaviour<Message, Event>["receive"],
-): SessionBehaviour<Message, Event> {
+export function defineSessionBehaviour<Message, Event = never, Reply = never>(
+  behaviour: SessionBehaviour<Message, Event, Reply> | SessionBehaviour<Message, Event, Reply>["receive"],
+): SessionBehaviour<Message, Event, Reply> {
   return Object.freeze(
     typeof behaviour === "function" ? { receive: behaviour } : { ...behaviour },
   );
