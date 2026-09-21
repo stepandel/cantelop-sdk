@@ -369,7 +369,7 @@ async function handleRequest<Input>(
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
     writeJSON(response, 200, {
       sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
-      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported },
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true },
       observations: observationBuffer.metadata(), events: outputBuffer.metadata()
     });
     return;
