@@ -19,6 +19,7 @@ interface Reservation {
   receipt: MessageReceipt;
   controller: AbortController;
   settled: Promise<void>;
+  reply?: () => unknown;
 }
 /** Reservations and outcomes live until this sandbox retires. Never evict IDs. */
 export class RuntimeMessages {
@@ -28,7 +29,7 @@ export class RuntimeMessages {
     if (!/^sbx-[0-9a-f]{32}$/.test(sandboxId)) throw new Error("CANTELOP_SANDBOX_ID must identify this sandbox");
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 604_800_000) throw new Error("invalid message execution timeout");
   }
-  admit(id: string, semanticEnvelope: unknown, enqueue: (signal: AbortSignal, started: () => void) => { generation: number; settled: Promise<void>; }, deadline?: string, attemptId?: string): { receipt: MessageReceipt; settled: Promise<void>; } {
+  admit(id: string, semanticEnvelope: unknown, enqueue: (signal: AbortSignal, started: () => void) => { generation: number; settled: Promise<void>; reply?: () => unknown; }, deadline?: string, attemptId?: string): { receipt: MessageReceipt; settled: Promise<void>; } {
     const encoded = canonical(semanticEnvelope);
     const bytes = Buffer.byteLength(encoded);
     const fingerprint = createHash("sha256").update(encoded).digest("hex");
@@ -54,7 +55,10 @@ export class RuntimeMessages {
     const settled = delivery.settled.then(() => { receipt.state = controller.signal.aborted ? "timed_out" : "succeeded"; }, () => {
       receipt.state = controller.signal.aborted ? "timed_out" : "failed";
     }).finally(() => { clearTimeout(timer); this.pendingBytes -= bytes; });
-    this.records.set(id, { fingerprint, receipt, controller, settled });
+    this.records.set(id, {
+      fingerprint, receipt, controller, settled,
+      ...(delivery.reply === undefined ? {} : { reply: delivery.reply }),
+    });
     return { receipt: { ...receipt }, settled };
   }
   work() {
@@ -68,6 +72,13 @@ export class RuntimeMessages {
     const record = this.records.get(id);
     if (!record) throw new RuntimeProtocolError(404, "message_not_found");
     return { ...record.receipt };
+  }
+  reply(id: string): unknown {
+    const record = this.records.get(id);
+    if (!record) throw new RuntimeProtocolError(404, "message_not_found");
+    if (record.receipt.state !== "succeeded") throw new RuntimeProtocolError(409, "reply_not_ready");
+    if (record.reply === undefined) throw new RuntimeProtocolError(409, "reply_unavailable");
+    return record.reply();
   }
   cancel(id: string): MessageReceipt {
     const record = this.records.get(id);

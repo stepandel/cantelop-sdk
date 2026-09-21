@@ -74,6 +74,7 @@ type SessionRuntimeHandler = (
 interface RuntimeDelivery {
   readonly generation: number;
   readonly settled: Promise<void>;
+  readonly reply?: () => unknown;
 }
 
 interface RuntimeRecovery {
@@ -90,15 +91,15 @@ interface RuntimeRecovery {
  * Creates the native HTTP protocol adapter. This lower-level entrypoint is
  * primarily useful to platform integration tests and custom native launchers.
  */
-export function createSessionRuntimeHandler<Input, Event = never>(
-  behaviour: SessionBehaviour<Input, Event>,
+export function createSessionRuntimeHandler<Input, Event = never, Reply = never>(
+  behaviour: SessionBehaviour<Input, Event, Reply>,
   options: SessionRuntimeHandlerOptions = {},
 ): SessionRuntimeHandler {
   return createSessionRuntimeAdapter(behaviour, options).handler;
 }
 
-function createSessionRuntimeAdapter<Input, Event = never>(
-  behaviour: SessionBehaviour<Input, Event>,
+function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
+  behaviour: SessionBehaviour<Input, Event, Reply>,
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
@@ -117,8 +118,11 @@ function createSessionRuntimeAdapter<Input, Event = never>(
     trace: RuntimeTraceContext | undefined,
     signal: AbortSignal,
     started: () => void,
+    replyRequested = false,
   ): RuntimeDelivery => {
     const generation = quiescence.observeMessage(message.id);
+    let replyValue: unknown;
+    let replied = false;
     const settled = mailbox.enqueue(message.id, async (sequence) => {
       signal.throwIfAborted();
       started();
@@ -152,19 +156,31 @@ function createSessionRuntimeAdapter<Input, Event = never>(
         },
       });
       const observer = new RuntimeObserver(message.id, trace, observationBuffer);
+      const reply = (value: Reply): void => {
+        if (!invocationOpen) throw new Error("Session runtime message invocation has already settled");
+        if (replied) throw new Error("Session request already has a reply");
+        let encoded: string | undefined;
+        try { encoded = JSON.stringify(value); } catch { /* normalized below */ }
+        if (encoded === undefined || Buffer.byteLength(encoded) > 64 * 1024) {
+          throw new Error("Session request reply must be JSON and at most 65536 bytes");
+        }
+        replyValue = JSON.parse(encoded) as unknown;
+        replied = true;
+      };
       try {
         await runWithRuntimeLogContext(observer, () =>
           observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
             signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
-            activity: activityCapability, output, send,
+            activity: activityCapability, output, reply, send,
           }))),
         );
+        if (replyRequested && !replied) throw new Error("Session request completed without a reply");
       } finally {
         invocationOpen = false;
         outputOpen = false;
       }
     });
-    return Object.freeze({ generation, settled });
+    return Object.freeze({ generation, settled, ...(replyRequested ? { reply: () => replyValue } : {}) });
   };
 
   const sendMessage = (payload: Input): void => {
@@ -331,6 +347,7 @@ async function handleRequest<Input>(
     session: SessionIdentity,
     trace: RuntimeTraceContext | undefined,
     signal: AbortSignal, started: () => void,
+    replyRequested?: boolean,
   ) => RuntimeDelivery,
   quiescence: RuntimeQuiescence,
   outputBuffer: SessionOutputBuffer,
@@ -388,8 +405,11 @@ async function handleRequest<Input>(
   if (url.pathname === OUTPUT_PATH) { await handleOutputRequest(request, response, url, outputBuffer); return; }
   if (url.pathname === OBSERVATIONS_PATH) { await handleObservationRequest(request, response, url, observationBuffer); return; }
   if (url.pathname === QUIESCENCE_PATH) { await handleQuiescenceRequest(request, response, url, quiescence, boundSession()); return; }
-  const status = /^\/__cantelop\/v2\/messages\/(msg_[0-9a-f]{32})(\/cancel)?$/.exec(url.pathname);
-  if (status && ((request.method === "GET" && !status[2]) || (request.method === "POST" && status[2]))) {
+  const status = /^\/__cantelop\/v2\/messages\/(msg_[0-9a-f]{32})(\/(cancel|reply))?$/.exec(url.pathname);
+  if (status && request.method === "GET" && status[3] === "reply") {
+    writeJSON(response, 200, { reply: messages.reply(status[1]!) }); return;
+  }
+  if (status && ((request.method === "GET" && !status[2]) || (request.method === "POST" && status[3] === "cancel"))) {
     writeJSON(response, 200, status[2] ? messages.cancel(status[1]!) : messages.get(status[1]!)); return;
   }
   if (url.pathname !== MESSAGE_PATH || url.search !== "") { writeError(response, 404, "not_found"); return; }
@@ -401,7 +421,8 @@ async function handleRequest<Input>(
   const session = readSession(envelope.session);
   const trace = readObservabilityContext(envelope.observability);
   bindSession(session);
-  const result = messages.admit(message.id, { message, session }, (signal, started) => receiveMessage(message, session, trace, signal, started), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
+  const replyRequested = envelope.reply === true;
+  const result = messages.admit(message.id, { message, session, reply: replyRequested }, (signal, started) => receiveMessage(message, session, trace, signal, started, replyRequested), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
   writeJSON(response, 202, result.receipt);
 }
 
@@ -625,8 +646,9 @@ function isJSONContentType(value: string | undefined): boolean {
 
 function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return keys.every(key => ["session", "message", "observability", "deadline"].includes(key)) &&
+  return keys.every(key => ["session", "message", "observability", "deadline", "reply"].includes(key)) &&
     (value.deadline === undefined || typeof value.deadline === "string") &&
+    (value.reply === undefined || typeof value.reply === "boolean") &&
     keys.includes("session") && keys.includes("message") &&
     isRecord(value.session) && isRecord(value.message);
 }
