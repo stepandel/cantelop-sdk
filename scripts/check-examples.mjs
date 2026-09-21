@@ -100,6 +100,11 @@ try {
       entrypoint: path.join(exampleRoot, "src/api.ts"),
       outdir: path.join(temporaryRoot, example, "api"),
     });
+    assert.equal(apiArtifact.routeDiscoveryError, undefined);
+    assert.deepEqual(
+      apiArtifact.manifest.routes.map(({ method, path: route }) => `${method} ${route}`),
+      ["POST /cancel", "POST /chat", "GET /events", "GET /health", "POST /steer"],
+    );
     const worker = (await import(
       `${pathToFileURL(apiArtifact.mainModule).href}?example=${example}`
     )).default;

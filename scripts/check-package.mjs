@@ -66,7 +66,7 @@ try {
       "assert.equal(typeof buildSessionRuntime, \"function\");",
       "assert.equal(typeof buildLocalApi, \"function\");",
       "assert.equal(typeof watchLocalProject, \"function\");",
-      "assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 4);",
+      "assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 5);",
       "assert.equal(typeof defineApi, \"function\");",
       "assert.equal(typeof createApiWorker, \"function\");",
       "assert.equal(typeof defineSessionBehaviour, \"function\");",
@@ -77,6 +77,8 @@ try {
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   const artifactManifest = JSON.parse(await readFile(path.join(consumer, "artifact", "cantelop-api.json"), "utf8"));
   assert.equal(artifactManifest.kind, "cantelop-edge-api");
+  assert.equal(artifactManifest.schema_version, 3);
+  assert.ok(Array.isArray(artifactManifest.routes));
   process.stdout.write(`Qualified ${pack.filename} (${paths.length} files)\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
