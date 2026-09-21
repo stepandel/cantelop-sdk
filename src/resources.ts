@@ -91,6 +91,13 @@ export interface MessageRef {
   status(): Promise<MessageStatus>;
 }
 
+export interface SessionRequestOptions {
+  /** Stable identity used to recover the same request after an ambiguous client failure. */
+  readonly id?: string;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+}
+
 /** Canonical, read-only identity and configuration for a Session actor. */
 export interface SessionIdentity {
   readonly id: string;
@@ -102,8 +109,9 @@ export interface SessionIdentity {
 }
 
 /** A reference to a Session actor. */
-export interface Session<Message> extends SessionIdentity {
+export interface Session<Message, Reply = unknown> extends SessionIdentity {
   dispatch(message: Message): Promise<MessageRef>;
+  request(message: Message, options?: SessionRequestOptions): Promise<Reply>;
   /** Adapts an authenticated App GET route to SSE or an output-only WebSocket. */
   events(request: Request): Promise<Response>;
 }
@@ -113,13 +121,13 @@ export interface WorkspaceService {
   open(config: WorkspaceOpenConfig): Promise<Workspace>;
 }
 
-export interface SessionService<Input> {
-  open(config: SessionOpenByIDConfig): Session<Input> & { readonly workspaceId: string };
-  open(config: SessionOpenBySlugConfig): Session<Input> & { readonly workspaceSlug: string };
+export interface SessionService<Input, Reply = unknown> {
+  open(config: SessionOpenByIDConfig): Session<Input, Reply> & { readonly workspaceId: string };
+  open(config: SessionOpenBySlugConfig): Session<Input, Reply> & { readonly workspaceSlug: string };
 }
 
 /** Capabilities of the current App, injected by Cantelop. */
-export interface CantelopApp<Input> {
+export interface CantelopApp<Input, Reply = unknown> {
   readonly workspaces: WorkspaceService;
-  readonly sessions: SessionService<Input>;
+  readonly sessions: SessionService<Input, Reply>;
 }

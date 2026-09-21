@@ -182,6 +182,27 @@ test("a Session dispatches asynchronously with the same identity and configurati
   );
 });
 
+test("a Session request returns its direct reply with a bounded wait", async () => {
+  let forwarded;
+  const app = createRemoteApp({
+    messageId: () => messageId,
+    fetch: async (request) => {
+      forwarded = request;
+      return Response.json({ id: messageId, reply: { authenticated: true } });
+    },
+  });
+  const session = app.sessions.open({ id: namedSessionId, workspaceId, keepAliveSeconds: 300 });
+  assert.deepEqual(await session.request({ type: "auth.check" }, { timeoutMs: 12_000 }), {
+    authenticated: true,
+  });
+  assert.equal(forwarded.url, "https://runtime.cantelop.internal/__cantelop/v1/requests");
+  assert.deepEqual(await forwarded.json(), {
+    session: { id: namedSessionId, workspace_id: workspaceId, keep_alive_seconds: 300 },
+    message: { id: messageId, payload: { type: "auth.check" } },
+    timeout_ms: 12_000,
+  });
+});
+
 test("a Message reference reads each observable lifecycle state", async () => {
   const states = [
     { id: messageId, state: "accepted", accepted_at: "2026-08-17T12:00:00Z" },
