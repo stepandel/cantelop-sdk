@@ -408,6 +408,34 @@ await session.dispatch({ type: "steer", prompt: "Focus on the tests first." });
 await session.dispatch({ type: "cancel" });
 ```
 
+For short commands that need one result, give the behaviour a reply type and
+call `request()`. Requests enter the same FIFO mailbox as dispatched messages;
+the HTTP wait ends when the handler replies and returns, without waiting for a
+managed activity or Session quiescence.
+
+```ts
+type SessionReply = { authenticated: boolean };
+
+export default defineSessionBehaviour<SessionMessage, SessionEvent, SessionReply>(
+  async ({ message, reply }) => {
+    if (message.payload.type === "auth.check") {
+      reply({ authenticated: await authenticated() });
+    }
+  },
+);
+
+const result = await session.request(
+  { type: "auth.check" },
+  { timeoutMs: 15_000, signal: request.signal },
+);
+```
+
+A request handler must call `reply()` exactly once with JSON-compatible data of
+at most 64 KiB. A timeout or caller disconnect stops waiting but does not prove
+that execution stopped. Supply a stable `id` when retrying an ambiguous request;
+the platform retrieves the original result instead of executing a second copy.
+Use event streaming for incremental or long-running output.
+
 Your behaviour inspects `message.payload.type` and decides whether to queue
 work, call a provider's steering API, cancel an activity, or do something else.
 Use a managed activity for long-running work so later messages can be handled
