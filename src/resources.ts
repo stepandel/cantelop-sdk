@@ -110,6 +110,11 @@ export interface SessionIdentity {
 
 /** A reference to a Session actor. */
 export interface Session<Message, Reply = unknown> extends SessionIdentity {
+  /**
+   * Releases the current Sandbox and closes event streams, potentially interrupting work.
+   * The Session remains reusable. Rejects if the Session has never been materialized.
+   */
+  stop(): Promise<void>;
   dispatch(message: Message): Promise<MessageRef>;
   request(message: Message, options?: SessionRequestOptions): Promise<Reply>;
   /** Adapts an authenticated App GET route to SSE or an output-only WebSocket. */

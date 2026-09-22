@@ -7,6 +7,82 @@ const sessionId = "ses_0123456789abcdef0123456789abcdef";
 const namedSessionId = "github:repository";
 const messageId = "msg_0123456789abcdef0123456789abcdef";
 
+test("stopping releases the Sandbox without resolving a Workspace and leaves the reference reusable", async () => {
+  const forwarded = [];
+  const app = createRemoteApp({
+    messageId: () => messageId,
+    fetch: async (request) => {
+      forwarded.push(request);
+      if (request.method === "DELETE") {
+        return Response.json({ id: sessionId, workspace_id: workspaceId, state: "idle" });
+      }
+      if (request.url.endsWith("/workspaces/open")) {
+        return Response.json({
+          id: workspaceId,
+          app_id: "app_0123456789abcdef0123456789abcdef",
+          slug: "preview",
+          hostname: "preview--agent.app.cantelop.dev",
+          created_at: "2026-08-14T12:00:00Z",
+          updated_at: "2026-08-14T12:00:00Z",
+        });
+      }
+      return Response.json({ id: messageId, status: "accepted", accepted_at: "2026-08-17T12:00:00Z" }, { status: 202 });
+    },
+  });
+  const session = app.sessions.open({ id: namedSessionId, workspaceSlug: "preview", keepAliveSeconds: 300 });
+
+  assert.equal(await session.stop(), undefined);
+  assert.equal(await session.stop(), undefined);
+  assert.equal(forwarded.length, 2);
+  for (const request of forwarded) {
+    assert.equal(request.method, "DELETE");
+    assert.equal(request.url, "https://runtime.cantelop.internal/__cantelop/v1/sessions/github%3Arepository");
+    assert.equal(request.body, null);
+    assert.equal(request.redirect, "manual");
+  }
+
+  await session.dispatch({ event: "resume" });
+  assert.equal(forwarded.length, 4);
+  assert.ok(forwarded[2].url.endsWith("/workspaces/open"));
+  assert.deepEqual((await forwarded[3].json()).session, {
+    id: namedSessionId, workspace_id: workspaceId, keep_alive_seconds: 300,
+  });
+});
+
+test("stopping surfaces platform errors, including a Session that has never materialized", async () => {
+  for (const [status, code] of [[404, "not_found"], [409, "invalid_state"], [503, "runtime_unavailable"]]) {
+    const app = createRemoteApp({
+      fetch: async (request) => {
+        assert.equal(request.method, "DELETE");
+        assert.equal(request.url, `https://runtime.cantelop.internal/__cantelop/v1/sessions/${sessionId}`);
+        return Response.json({ error: { code } }, { status });
+      },
+    });
+    const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
+    await assert.rejects(session.stop(), (error) => {
+      assert.ok(error instanceof RemoteAppError);
+      assert.equal(error.code, code);
+      assert.equal(error.status, status);
+      return true;
+    });
+  }
+});
+
+test("stopping propagates transport failures and can be retried", async () => {
+  const failure = new Error("connection lost");
+  let attempts = 0;
+  const app = createRemoteApp({
+    fetch: async () => {
+      if (++attempts === 1) throw failure;
+      return Response.json({ id: sessionId, workspace_id: workspaceId, state: "idle" });
+    },
+  });
+  const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
+  await assert.rejects(session.stop(), (error) => error === failure);
+  await session.stop();
+  assert.equal(attempts, 2);
+});
+
 test("the current App creates Workspaces without a caller-supplied App ID", async () => {
   let forwarded;
   const app = createRemoteApp({
