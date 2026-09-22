@@ -116,6 +116,14 @@ function createRemoteSession<Input, Reply>(
       : { workspaceId: config.workspaceId }),
     keepAliveSeconds: config.keepAliveSeconds,
 
+    async terminate(): Promise<void> {
+      await requestJSON(
+        runtimeFetch,
+        `/__cantelop/v1/sessions/${encodeURIComponent(this.id)}`,
+        { method: "DELETE" },
+      );
+    },
+
     async dispatch(input: Input): Promise<MessageRef> {
       const workspaceId = await resolveWorkspaceId();
       const message = messageId();
@@ -303,7 +311,7 @@ function readMessageStatus(envelope: unknown, expectedMessage: string): MessageS
 }
 
 interface RequestOptions {
-  readonly method: "GET" | "POST";
+  readonly method: "GET" | "POST" | "DELETE";
   readonly body?: unknown;
   readonly signal?: AbortSignal;
 }

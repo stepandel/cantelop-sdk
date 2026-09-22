@@ -381,6 +381,19 @@ soon as the mailbox and managed activity are idle.
 Releasing a Sandbox clears its temporary storage. Files in the persistent
 `/workspace` mount survive and are available to the next Sandbox.
 
+To explicitly release a Session's current Sandbox and close its event streams:
+
+```ts
+await session.terminate();
+```
+
+The Session remains reusable: a later `dispatch()` or `request()` can activate
+it on a new Sandbox. Termination does not wait for work to become idle, so it
+can interrupt running work. Calling it again on an idle Session succeeds.
+It does not create a Session or resolve/create its Workspace; terminating a
+Session that has never been materialized returns a `RemoteAppError` from the
+platform. Other platform errors are also surfaced as `RemoteAppError`.
+
 Opening a Session requires a `workspaceSlug` and an explicit `keepAliveSeconds`.
 The SDK resolves and, when absent, creates the App-scoped Workspace on the first
 `dispatch()` or `events()` call. Supplying a canonical `workspaceId` remains
