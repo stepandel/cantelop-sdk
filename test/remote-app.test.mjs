@@ -7,7 +7,7 @@ const sessionId = "ses_0123456789abcdef0123456789abcdef";
 const namedSessionId = "github:repository";
 const messageId = "msg_0123456789abcdef0123456789abcdef";
 
-test("termination releases the Sandbox without resolving a Workspace and leaves the reference reusable", async () => {
+test("stopping releases the Sandbox without resolving a Workspace and leaves the reference reusable", async () => {
   const forwarded = [];
   const app = createRemoteApp({
     messageId: () => messageId,
@@ -31,8 +31,8 @@ test("termination releases the Sandbox without resolving a Workspace and leaves 
   });
   const session = app.sessions.open({ id: namedSessionId, workspaceSlug: "preview", keepAliveSeconds: 300 });
 
-  assert.equal(await session.terminate(), undefined);
-  assert.equal(await session.terminate(), undefined);
+  assert.equal(await session.stop(), undefined);
+  assert.equal(await session.stop(), undefined);
   assert.equal(forwarded.length, 2);
   for (const request of forwarded) {
     assert.equal(request.method, "DELETE");
@@ -49,7 +49,7 @@ test("termination releases the Sandbox without resolving a Workspace and leaves 
   });
 });
 
-test("termination surfaces platform errors, including a Session that has never materialized", async () => {
+test("stopping surfaces platform errors, including a Session that has never materialized", async () => {
   for (const [status, code] of [[404, "not_found"], [409, "invalid_state"], [503, "runtime_unavailable"]]) {
     const app = createRemoteApp({
       fetch: async (request) => {
@@ -59,7 +59,7 @@ test("termination surfaces platform errors, including a Session that has never m
       },
     });
     const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
-    await assert.rejects(session.terminate(), (error) => {
+    await assert.rejects(session.stop(), (error) => {
       assert.ok(error instanceof RemoteAppError);
       assert.equal(error.code, code);
       assert.equal(error.status, status);
@@ -68,7 +68,7 @@ test("termination surfaces platform errors, including a Session that has never m
   }
 });
 
-test("termination propagates transport failures and can be retried", async () => {
+test("stopping propagates transport failures and can be retried", async () => {
   const failure = new Error("connection lost");
   let attempts = 0;
   const app = createRemoteApp({
@@ -78,8 +78,8 @@ test("termination propagates transport failures and can be retried", async () =>
     },
   });
   const session = app.sessions.open({ id: sessionId, workspaceId, keepAliveSeconds: 0 });
-  await assert.rejects(session.terminate(), (error) => error === failure);
-  await session.terminate();
+  await assert.rejects(session.stop(), (error) => error === failure);
+  await session.stop();
   assert.equal(attempts, 2);
 });
 

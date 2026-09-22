@@ -116,7 +116,7 @@ function createRemoteSession<Input, Reply>(
       : { workspaceId: config.workspaceId }),
     keepAliveSeconds: config.keepAliveSeconds,
 
-    async terminate(): Promise<void> {
+    async stop(): Promise<void> {
       await requestJSON(
         runtimeFetch,
         `/__cantelop/v1/sessions/${encodeURIComponent(this.id)}`,
