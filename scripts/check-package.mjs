@@ -74,6 +74,10 @@ try {
       'await buildApi({ entrypoint: "./api.mjs", outdir: "./artifact" });',
     ].join("\n"),
   );
+  const databaseTypes = (await readFile(path.join(root, "test/database-types.ts"), "utf8"))
+    .replaceAll("../dist/api.js", "@cantelop/sdk/api").replaceAll("../dist/session.js", "@cantelop/sdk/session");
+  await writeFile(path.join(consumer, "database-types.ts"), databaseTypes);
+  await runCommand(process.execPath, [path.join(root, "node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--types", "node", "--typeRoots", path.join(root, "node_modules/@types"), "--module", "nodenext", "--moduleResolution", "nodenext", "--target", "es2022", "database-types.ts"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   const artifactManifest = JSON.parse(await readFile(path.join(consumer, "artifact", "cantelop-api.json"), "utf8"));
   assert.equal(artifactManifest.kind, "cantelop-edge-api");

@@ -1,3 +1,6 @@
+import type { D1Database } from "@cloudflare/workers-types";
+export type { D1Database, D1PreparedStatement, D1Result, D1Meta, D1ExecResult, D1DatabaseSession, D1SessionBookmark, D1SessionConstraint } from "@cloudflare/workers-types";
+
 import type { CantelopApp } from "./resources.js";
 import { createRouter, type Router } from "./router.js";
 
@@ -7,6 +10,8 @@ export type ApiEnvironment = Readonly<Record<string, string | undefined>>;
 export interface ApiContext<Input, Reply = unknown> {
   readonly app: CantelopApp<Input, Reply>;
   readonly env: ApiEnvironment;
+  /** Native App database, when enabled. Create statements and sessions inside handlers. */
+  readonly db?: D1Database;
   readonly router: Router;
 }
 
@@ -29,7 +34,7 @@ export function defineApi<Input, Reply = unknown>(
   return Object.freeze({
     create(context: ApiRuntimeContext<Input, Reply>): Router {
       const router = createRouter();
-      factory(Object.freeze({ app: context.app, env: context.env, router }));
+      factory(Object.freeze({ app: context.app, env: context.env, ...(context.db === undefined ? {} : { db: context.db }), router }));
       return router;
     },
   });

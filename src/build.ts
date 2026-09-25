@@ -480,3 +480,14 @@ async function watchedContext(
   }
   return buildContext;
 }
+
+// Lazy-load the local runtime so ordinary build/deploy never starts workerd.
+export async function serveLocalDatabaseApi(options: Parameters<typeof import("./local-database.js").serveLocalDatabaseApi>[0]) {
+  return (await import("./local-database.js")).serveLocalDatabaseApi(options);
+}
+export async function migrateLocalDatabase(options: Parameters<typeof import("./local-database.js").migrateLocalDatabase>[0]) {
+  return (await import("./local-database.js")).migrateLocalDatabase(options);
+}
+
+/** Capability gate for database-enabled projects; artifact protocol stays at 4. */
+export const CANTELOP_DATABASE_API_VERSION = 1;
