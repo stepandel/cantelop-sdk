@@ -19,6 +19,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -33,6 +35,11 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
+          expected_ref="refs/tags/sdk-v${REQUESTED_VERSION}"
+          test "${GITHUB_REF}" = "${expected_ref}"
+          test "${GITHUB_REF_TYPE}" = "tag"
+          test "$(git cat-file -t "${GITHUB_REF_NAME}")" = "tag"
+          git merge-base --is-ancestor HEAD origin/main
           package_version="$(node -p 'require("./package.json").version')"
           test "${REQUESTED_VERSION}" = "${package_version}"
 

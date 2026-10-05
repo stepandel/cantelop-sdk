@@ -15,6 +15,7 @@ import type {
   SessionEnvironment,
   SessionBehaviour,
   SessionOutput,
+  SessionRecoveryContext,
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
 import {
@@ -38,6 +39,7 @@ const MESSAGE_PATH = "/__cantelop/v2/messages";
 const QUIESCENCE_PATH = "/__cantelop/v2/runtime/quiescence";
 const OUTPUT_PATH = "/__cantelop/v2/runtime/events";
 const OBSERVATIONS_PATH = "/__cantelop/v2/runtime/observations";
+const RECOVERY_PATH = "/__cantelop/v2/runtime/recoveries";
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{32}$/;
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
 const INTERNAL_PORT_VARIABLE = "CANTELOP_INTERNAL_PORT";
@@ -48,6 +50,7 @@ const MAX_KEEP_ALIVE_SECONDS = 604_800;
 const ATTEMPT_ID_PATTERN = /^att_[0-9a-f]{32}$/;
 const REQUEST_ID_PATTERN = /^req_[0-9a-f]{32}$/;
 const TRACE_PARENT_PATTERN = /^00-((?!0{32})[0-9a-f]{32})-((?!0{16})[0-9a-f]{16})-01$/;
+const RECOVERY_ID_PATTERN = /^rcv_[0-9a-f]{32}$/;
 
 export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
@@ -71,21 +74,33 @@ type SessionRuntimeHandler = (
 interface RuntimeDelivery {
   readonly generation: number;
   readonly settled: Promise<void>;
+  /** A plain holder, never a closure: records outlive the receive scope. */
+  readonly reply?: { value: unknown };
+}
+
+interface RuntimeRecovery {
+  readonly fingerprint: string;
+  readonly generation: number;
+  readonly result: Promise<Readonly<{
+    recovery_id: string;
+    generation: number;
+    state: "completed" | "failed";
+  }>>;
 }
 
 /**
  * Creates the native HTTP protocol adapter. This lower-level entrypoint is
  * primarily useful to platform integration tests and custom native launchers.
  */
-export function createSessionRuntimeHandler<Input, Event = never>(
-  behaviour: SessionBehaviour<Input, Event>,
+export function createSessionRuntimeHandler<Input, Event = never, Reply = never>(
+  behaviour: SessionBehaviour<Input, Event, Reply>,
   options: SessionRuntimeHandlerOptions = {},
 ): SessionRuntimeHandler {
   return createSessionRuntimeAdapter(behaviour, options).handler;
 }
 
-function createSessionRuntimeAdapter<Input, Event = never>(
-  behaviour: SessionBehaviour<Input, Event>,
+function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
+  behaviour: SessionBehaviour<Input, Event, Reply>,
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
@@ -96,6 +111,7 @@ function createSessionRuntimeAdapter<Input, Event = never>(
   const observationBuffer = new RuntimeObservationBuffer();
   const mailbox = new InMemoryMailbox<void>(markMessageLifecycle, () => quiescence.changed());
   let activity: InMemoryActivity<Input, Event>;
+  const recoveries = new Map<string, RuntimeRecovery>();
 
   const receiveMessage = (
     message: Readonly<{ id: string; payload: Input; }>,
@@ -103,8 +119,11 @@ function createSessionRuntimeAdapter<Input, Event = never>(
     trace: RuntimeTraceContext | undefined,
     signal: AbortSignal,
     started: () => void,
+    replyRequested = false,
   ): RuntimeDelivery => {
     const generation = quiescence.observeMessage(message.id);
+    const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
+    let replied = false;
     const settled = mailbox.enqueue(message.id, async (sequence) => {
       signal.throwIfAborted();
       started();
@@ -138,19 +157,31 @@ function createSessionRuntimeAdapter<Input, Event = never>(
         },
       });
       const observer = new RuntimeObserver(message.id, trace, observationBuffer);
+      const reply = (value: Reply): void => {
+        if (!invocationOpen) throw new Error("Session runtime message invocation has already settled");
+        if (replied) throw new Error("Session request already has a reply");
+        let encoded: string | undefined;
+        try { encoded = JSON.stringify(value); } catch { /* normalized below */ }
+        if (encoded === undefined || Buffer.byteLength(encoded) > 64 * 1024) {
+          throw new Error("Session request reply must be JSON and at most 65536 bytes");
+        }
+        if (replyHolder) replyHolder.value = JSON.parse(encoded) as unknown;
+        replied = true;
+      };
       try {
         await runWithRuntimeLogContext(observer, () =>
           observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
             signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
-            activity: activityCapability, output, send,
+            activity: activityCapability, output, reply, send,
           }))),
         );
+        if (replyRequested && !replied) throw new Error("Session request completed without a reply");
       } finally {
         invocationOpen = false;
         outputOpen = false;
       }
     });
-    return Object.freeze({ generation, settled });
+    return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
   };
 
   const sendMessage = (payload: Input): void => {
@@ -159,6 +190,71 @@ function createSessionRuntimeAdapter<Input, Event = never>(
     }
     const message = Object.freeze({ id: createMessageID(), payload });
     messages.admit(message.id, { message, session: boundSession }, (signal, started) => receiveMessage(message, boundSession!, undefined, signal, started));
+  };
+
+  const recover = (
+    recoveryId: string,
+    interruptedMessageId: string,
+    session: SessionIdentity,
+  ): RuntimeRecovery => {
+    const fingerprint = JSON.stringify({ interruptedMessageId, session });
+    const existing = recoveries.get(recoveryId);
+    if (existing !== undefined) {
+      if (existing.fingerprint !== fingerprint) throw new ProtocolError(409, "recovery_conflict");
+      return existing;
+    }
+    if (behaviour.onRecover === undefined) throw new ProtocolError(409, "recovery_unsupported");
+    const generation = quiescence.observeMessage(interruptedMessageId);
+    const signal = AbortSignal.timeout(options.executionTimeoutMs ?? 5 * 60_000);
+    const settled = mailbox.enqueue(recoveryId, async () => {
+      signal.throwIfAborted();
+      let invocationOpen = true;
+      const send = (payload: Input): void => {
+        if (!invocationOpen) throw new Error("Session recovery invocation has already settled");
+        sendMessage(payload);
+      };
+      let outputOpen = true;
+      const output: SessionOutput<Event> = Object.freeze({
+        async send(event: Event): Promise<void> {
+          if (!outputOpen) throw new Error("Session recovery invocation has already settled");
+          await outputBuffer.publish(
+            interruptedMessageId,
+            event,
+            AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+          );
+        },
+      });
+      const activityCapability: SessionActivity<Input, Event> = Object.freeze({
+        get active() { return activity.active; },
+        start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number; }) {
+          activity.start(interruptedMessageId, work, policy);
+        },
+        extend(timeoutMs: number) { return activity.extend(timeoutMs); },
+        cancel(reason?: unknown) { return activity.cancel(reason); },
+      });
+      const context: SessionRecoveryContext<Input, Event> = Object.freeze({
+        signal,
+        recovery: Object.freeze({ id: recoveryId, interruptedMessageId }),
+        session,
+        env: options.env ?? process.env,
+        activity: activityCapability,
+        output,
+        send,
+      });
+      try {
+        await behaviour.onRecover!(context);
+      } finally {
+        invocationOpen = false;
+        outputOpen = false;
+      }
+    });
+    const result = settled.then(
+      () => Object.freeze({ recovery_id: recoveryId, generation, state: "completed" as const }),
+      () => Object.freeze({ recovery_id: recoveryId, generation, state: "failed" as const }),
+    );
+    const recovery = Object.freeze({ fingerprint, generation, result });
+    recoveries.set(recoveryId, recovery);
+    return recovery;
   };
 
   activity = new InMemoryActivity(
@@ -177,6 +273,8 @@ function createSessionRuntimeAdapter<Input, Event = never>(
       observationBuffer,
       messages,
       activity,
+      behaviour.onRecover !== undefined,
+      recover,
       () => boundSession,
       (session) => {
         if (boundSession !== undefined &&
@@ -250,12 +348,15 @@ async function handleRequest<Input>(
     session: SessionIdentity,
     trace: RuntimeTraceContext | undefined,
     signal: AbortSignal, started: () => void,
+    replyRequested?: boolean,
   ) => RuntimeDelivery,
   quiescence: RuntimeQuiescence,
   outputBuffer: SessionOutputBuffer,
   observationBuffer: RuntimeObservationBuffer,
   messages: RuntimeMessages,
   activity: { active: boolean; cancel(reason?: unknown): boolean; snapshot(): unknown; },
+  recoverySupported: boolean,
+  recover: (recoveryId: string, interruptedMessageId: string, session: SessionIdentity) => RuntimeRecovery,
   boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
@@ -269,8 +370,22 @@ async function handleRequest<Input>(
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
     writeJSON(response, 200, {
       sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
-      quiescent: quiescence.quiescent, activity: activity.snapshot(), observations: observationBuffer.metadata(), events: outputBuffer.metadata()
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true },
+      observations: observationBuffer.metadata(), events: outputBuffer.metadata()
     });
+    return;
+  }
+  if (url.pathname === RECOVERY_PATH && request.method === "POST") {
+    if (!isJSONContentType(request.headers["content-type"])) throw new ProtocolError(415, "unsupported_media_type");
+    const body = await readRequestEnvelope(request);
+    if (!isRecord(body) || Object.keys(body).length !== 3 ||
+      typeof body.recovery_id !== "string" || !RECOVERY_ID_PATTERN.test(body.recovery_id) ||
+      typeof body.message_id !== "string" || !MESSAGE_ID_PATTERN.test(body.message_id)) {
+      throw new ProtocolError(400, "invalid_recovery_request");
+    }
+    const session = readSession(body.session);
+    bindSession(session);
+    writeJSON(response, 200, await recover(body.recovery_id, body.message_id, session).result);
     return;
   }
   if (url.pathname === "/__cantelop/v2/runtime/activity/cancel" && request.method === "POST") {
@@ -291,8 +406,11 @@ async function handleRequest<Input>(
   if (url.pathname === OUTPUT_PATH) { await handleOutputRequest(request, response, url, outputBuffer); return; }
   if (url.pathname === OBSERVATIONS_PATH) { await handleObservationRequest(request, response, url, observationBuffer); return; }
   if (url.pathname === QUIESCENCE_PATH) { await handleQuiescenceRequest(request, response, url, quiescence, boundSession()); return; }
-  const status = /^\/__cantelop\/v2\/messages\/(msg_[0-9a-f]{32})(\/cancel)?$/.exec(url.pathname);
-  if (status && ((request.method === "GET" && !status[2]) || (request.method === "POST" && status[2]))) {
+  const status = /^\/__cantelop\/v2\/messages\/(msg_[0-9a-f]{32})(\/(cancel|reply))?$/.exec(url.pathname);
+  if (status && request.method === "GET" && status[3] === "reply") {
+    writeJSON(response, 200, { reply: messages.reply(status[1]!) }); return;
+  }
+  if (status && ((request.method === "GET" && !status[2]) || (request.method === "POST" && status[3] === "cancel"))) {
     writeJSON(response, 200, status[2] ? messages.cancel(status[1]!) : messages.get(status[1]!)); return;
   }
   if (url.pathname !== MESSAGE_PATH || url.search !== "") { writeError(response, 404, "not_found"); return; }
@@ -304,7 +422,8 @@ async function handleRequest<Input>(
   const session = readSession(envelope.session);
   const trace = readObservabilityContext(envelope.observability);
   bindSession(session);
-  const result = messages.admit(message.id, { message, session }, (signal, started) => receiveMessage(message, session, trace, signal, started), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
+  const replyRequested = envelope.reply === true;
+  const result = messages.admit(message.id, { message, session, reply: replyRequested }, (signal, started) => receiveMessage(message, session, trace, signal, started, replyRequested), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
   writeJSON(response, 202, result.receipt);
 }
 
@@ -528,8 +647,9 @@ function isJSONContentType(value: string | undefined): boolean {
 
 function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return keys.every(key => ["session", "message", "observability", "deadline"].includes(key)) &&
+  return keys.every(key => ["session", "message", "observability", "deadline", "reply"].includes(key)) &&
     (value.deadline === undefined || typeof value.deadline === "string") &&
+    (value.reply === undefined || typeof value.reply === "boolean") &&
     keys.includes("session") && keys.includes("message") &&
     isRecord(value.session) && isRecord(value.message);
 }

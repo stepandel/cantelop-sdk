@@ -69,6 +69,44 @@ test("the native adapter receives the versioned message protocol", async (t) => 
   assert.deepEqual(await snapshot.json(), { events: [] });
 });
 
+test("a request reply is retained separately from streamed output", async (t) => {
+  const server = createServer(createSessionRuntimeHandler(
+    behaviour(async ({ message, reply }) => reply({ authenticated: message.payload.check === "auth" })),
+  ));
+  await listen(server);
+  t.after(() => close(server));
+
+  const accepted = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...messageEnvelope({ check: "auth" }), reply: true }),
+  });
+  assert.equal(accepted.status, 202);
+  await waitFor(async () => {
+    const status = await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`);
+    return (await status.json()).state === "succeeded";
+  });
+  const result = await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}/reply`);
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { reply: { authenticated: true } });
+});
+
+test("a request without exactly one reply fails", async (t) => {
+  const server = createServer(createSessionRuntimeHandler(behaviour(async () => undefined)));
+  await listen(server);
+  t.after(() => close(server));
+  await fetch(`${origin(server)}/__cantelop/v2/messages`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...messageEnvelope({}), reply: true }),
+  });
+  await waitFor(async () => {
+    const status = await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`);
+    return (await status.json()).state === "failed";
+  });
+  const result = await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}/reply`);
+  assert.equal(result.status, 409);
+});
+
 test("the runtime emits the automatic receive span", async (t) => {
   let observedMessage;
   const server = createServer(
@@ -759,7 +797,7 @@ function traceContext() {
 
 async function waitFor(predicate) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error("condition was not reached");

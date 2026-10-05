@@ -155,6 +155,18 @@ Omit `sessionId` for a new Session; reuse the returned ID to continue it.
 `202` means the message was accepted, not that the agent has finished. Add  
 request validation and caller authorization for your application.
 
+### Route listing
+
+Each deployment publishes the API's route table, the method and path of every
+`router.route` call, so the Cantelop console can list an App's routes beside
+their traffic. To collect it, the build runs your `defineApi` factory once with
+an empty `env` and an `app` that throws when used. Handlers never run.
+
+Keep the factory to route registration. A factory that throws without
+environment values, or that uses `app` outside a handler, still deploys, but
+the build warns and the release lists no declared routes. Routes registered
+only when an environment value is set are not listed.
+
 ## Session runtime
 
 In `src/session.ts`, handle the same chat message and publish the result.
@@ -181,6 +193,30 @@ export default defineSessionBehaviour<SessionMessage, SessionEvent>(
 ```
 
 This handler is an example of a queue behavior. It waits for the agent before handling the next message.
+
+Applications that can resume from durable Workspace state may opt into Sandbox
+recovery with an `onRecover` hook:
+
+```ts
+export default defineSessionBehaviour<SessionMessage, SessionEvent>({
+  async receive(context) {
+    // Handle ordinary messages.
+  },
+  async onRecover({ recovery, activity }) {
+    activity.start(async ({ signal }) => {
+      await resumeSavedWork(recovery.interruptedMessageId, { signal });
+    });
+  },
+});
+```
+
+After an unexpected Sandbox loss during outstanding work, Cantelop activates a
+replacement with the same Workspace and invokes this hook before admitting new
+messages. Recovery is at least once across replacement Sandboxes, so persist
+enough application state to make repeated calls safe. Returning from the hook
+finishes recovery initialization; managed activity remains supervised until it
+settles. Normal release, cancellation, idle expiry, and work timeout do not invoke
+the hook.
 
 ## Environments
 
@@ -345,6 +381,19 @@ soon as the mailbox and managed activity are idle.
 Releasing a Sandbox clears its temporary storage. Files in the persistent
 `/workspace` mount survive and are available to the next Sandbox.
 
+To stop a Session's current Sandbox and close its event streams:
+
+```ts
+await session.stop();
+```
+
+The Session remains reusable: a later `dispatch()` or `request()` can activate
+it on a new Sandbox. Stopping does not wait for work to become idle, so it
+can interrupt running work. Calling it again on an idle Session succeeds.
+It does not create a Session or resolve/create its Workspace; stopping a
+Session that has never been materialized returns a `RemoteAppError` from the
+platform. Other platform errors are also surfaced as `RemoteAppError`.
+
 Opening a Session requires a `workspaceSlug` and an explicit `keepAliveSeconds`.
 The SDK resolves and, when absent, creates the App-scoped Workspace on the first
 `dispatch()` or `events()` call. Supplying a canonical `workspaceId` remains
@@ -371,6 +420,35 @@ type SessionMessage =
 await session.dispatch({ type: "steer", prompt: "Focus on the tests first." });
 await session.dispatch({ type: "cancel" });
 ```
+
+For short commands that need one result, give the behaviour a reply type and
+call `request()`. Requests enter the same FIFO mailbox as dispatched messages;
+the HTTP wait ends when the handler replies and returns, without waiting for a
+managed activity or Session quiescence.
+
+```ts
+type SessionReply = { authenticated: boolean };
+
+export default defineSessionBehaviour<SessionMessage, SessionEvent, SessionReply>(
+  async ({ message, reply }) => {
+    if (message.payload.type === "auth.check") {
+      reply({ authenticated: await authenticated() });
+    }
+  },
+);
+
+const result = await session.request(
+  { type: "auth.check" },
+  { timeoutMs: 15_000, signal: request.signal },
+);
+```
+
+A request handler must call `reply()` exactly once with JSON-compatible data of
+at most 64 KiB. A timeout or caller disconnect stops waiting but does not prove
+that execution stopped. A failed request throws a `RemoteAppError` carrying its
+`messageId`; pass that as `id` when retrying an ambiguous request and the
+platform retrieves the original result instead of executing a second copy.
+Use event streaming for incremental or long-running output.
 
 Your behaviour inspects `message.payload.type` and decides whether to queue
 work, call a provider's steering API, cancel an activity, or do something else.

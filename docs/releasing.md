@@ -37,7 +37,11 @@ provenance linking them to this workflow and source repository. If the repositor
 is transferred, update `package.json`, the local Git remote, and npm's trusted
 publisher owner before the next release.
 
-The workflow never runs automatically. An operator must select it manually,
-provide the exact version, and npm must already trust the repository and
-`publish.yml` workflow. Immediately after publication, verify the registry
-tarball from a clean consumer before creating the matching release tag.
+The workflow never runs automatically. Merge the reviewed release commit to
+`main`, create the signed `sdk-v<version>` tag on that commit, and push the tag.
+An operator must then select the workflow manually, choose that tag as the
+workflow ref, and provide the exact version. The workflow rejects branch refs,
+lightweight tags, tags that are not reachable from `main`, and version/tag
+mismatches. npm must already trust the repository and `publish.yml` workflow.
+Immediately after publication, verify the registry tarball from a clean
+consumer.

@@ -7,6 +7,7 @@
  * @packageDocumentation
  */
 
+import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +20,13 @@ import {
   type Plugin,
 } from "esbuild";
 
-const MANIFEST_SCHEMA_VERSION = 2;
+import type { HttpMethod } from "./router.js";
+
+const MANIFEST_SCHEMA_VERSION = 3;
+const MAX_MANIFEST_ROUTES = 100;
+const MANIFEST_ROUTE_PATH = /^\/[\x21-\x7e]{0,127}$/;
+const ROUTE_DISCOVERY_TIMEOUT_MS = 10_000;
+const ROUTE_DISCOVERY_MARKER = "cantelop-routes:";
 const MAIN_MODULE = "worker.mjs";
 const MANIFEST_FILE = "cantelop-api.json";
 const SESSION_RUNTIME_MAIN_MODULE = "session-runtime.mjs";
@@ -29,7 +36,7 @@ const SESSION_RUNTIME_STARTUP_STATE_KEY = "dev.cantelop.sdk.session-runtime-star
 
 // The CLI checks this exact protocol before using the build module. Increment
 // it when an incompatible build/watch contract is introduced.
-export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 4;
+export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 5;
 
 export interface BuildApiOptions {
   readonly entrypoint: string;
@@ -41,10 +48,20 @@ export interface BuildLocalApiOptions extends BuildApiOptions {
   readonly runtimeOrigin: string;
 }
 
+export interface ApiArtifactRoute {
+  readonly method: HttpMethod;
+  readonly path: string;
+}
+
 export interface ApiArtifactManifest {
-  readonly schema_version: 2;
+  readonly schema_version: 3;
   readonly kind: "cantelop-edge-api";
   readonly main_module: "worker.mjs";
+  /**
+   * Routes the API registers without any environment, sorted by path then
+   * method. Null when discovery failed; the artifact remains deployable.
+   */
+  readonly routes: readonly ApiArtifactRoute[] | null;
 }
 
 export interface ApiArtifact {
@@ -52,6 +69,8 @@ export interface ApiArtifact {
   readonly mainModule: string;
   readonly manifestFile: string;
   readonly manifest: ApiArtifactManifest;
+  /** Why `manifest.routes` is null. */
+  readonly routeDiscoveryError?: string;
 }
 
 export interface BuildSessionRuntimeOptions {
@@ -119,7 +138,8 @@ async function buildApiArtifact(
   const mainModule = path.join(outdir, MAIN_MODULE);
   await build(apiBuildOptions(entrypoint, mainModule, runtimeOrigin));
 
-  const manifest = await writeApiManifest(outdir);
+  const discovery = await discoverRoutes(entrypoint);
+  const manifest = await writeApiManifest(outdir, discovery.routes);
   const manifestFile = path.join(outdir, MANIFEST_FILE);
 
   return Object.freeze({
@@ -127,6 +147,7 @@ async function buildApiArtifact(
     mainModule,
     manifestFile,
     manifest: Object.freeze(manifest),
+    ...(discovery.error === undefined ? {} : { routeDiscoveryError: discovery.error }),
   });
 }
 
@@ -166,11 +187,109 @@ function apiBuildOptions(
   };
 }
 
-async function writeApiManifest(outdir: string): Promise<ApiArtifactManifest> {
+interface RouteDiscovery {
+  readonly routes: readonly ApiArtifactRoute[] | null;
+  readonly error?: string;
+}
+
+/**
+ * Lists the routes an API definition registers. The definition is evaluated
+ * with no environment, exactly as the Worker does without bindings, so the
+ * result depends only on the bundled source. It runs in a child process: API
+ * modules are customer code and may hold the event loop open or never settle.
+ */
+async function discoverRoutes(entrypoint: string): Promise<RouteDiscovery> {
+  try {
+    const bundle = await build({
+      stdin: {
+        contents: [
+          `import definition from ${JSON.stringify(entrypoint)};`,
+          "const unavailable = () => { throw new Error(\"The App is not available during route discovery\"); };",
+          "const app = Object.freeze({",
+          "  workspaces: Object.freeze({ create: unavailable, open: unavailable }),",
+          "  sessions: Object.freeze({ open: unavailable }),",
+          "});",
+          "const routes = definition.create({ app, env: Object.freeze({}) }).list();",
+          `process.stdout.write("\\n${ROUTE_DISCOVERY_MARKER}" + JSON.stringify(routes) + "\\n", () => process.exit(0));`,
+        ].join("\n"),
+        loader: "ts",
+        resolveDir: path.dirname(entrypoint),
+        sourcefile: "cantelop-api-routes.ts",
+      },
+      bundle: true,
+      format: "esm",
+      platform: "browser",
+      target: "es2022",
+      write: false,
+      legalComments: "none",
+      logLevel: "silent",
+    });
+    const source = bundle.outputFiles?.[0]?.text;
+    if (source === undefined) throw new Error("route discovery produced no module");
+    return { routes: manifestRoutes(await evaluateRouteModule(source)) };
+  } catch (error) {
+    return {
+      routes: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function evaluateRouteModule(source: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "-"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: ROUTE_DISCOVERY_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-2048); });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      const marker = stdout.lastIndexOf(`\n${ROUTE_DISCOVERY_MARKER}`);
+      if (code !== 0 || marker < 0) {
+        const reason = signal === "SIGKILL"
+          ? "the API module did not finish loading"
+          : stderr.trim().split("\n").find((line) => /\bError\b/.test(line))?.trim() ?? "the API module could not be evaluated";
+        reject(new Error(reason));
+        return;
+      }
+      const start = marker + 1 + ROUTE_DISCOVERY_MARKER.length;
+      try {
+        resolve(JSON.parse(stdout.slice(start, stdout.indexOf("\n", start))));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    child.stdin.on("error", () => {});
+    child.stdin.end(source);
+  });
+}
+
+function manifestRoutes(value: unknown): readonly ApiArtifactRoute[] {
+  if (!Array.isArray(value)) throw new Error("the API definition did not list its routes");
+  if (value.length > MAX_MANIFEST_ROUTES) {
+    throw new Error(`an API manifest lists at most ${MAX_MANIFEST_ROUTES} routes`);
+  }
+  return Object.freeze(value.map((route: { method: HttpMethod; path: string }) => {
+    if (!MANIFEST_ROUTE_PATH.test(route.path)) {
+      throw new Error(`route path cannot be listed in the API manifest: ${route.path}`);
+    }
+    return Object.freeze({ method: route.method, path: route.path });
+  }));
+}
+
+async function writeApiManifest(
+  outdir: string,
+  routes: readonly ApiArtifactRoute[] | null,
+): Promise<ApiArtifactManifest> {
   const manifest: ApiArtifactManifest = {
     schema_version: MANIFEST_SCHEMA_VERSION,
     kind: "cantelop-edge-api",
     main_module: MAIN_MODULE,
+    routes,
   };
   const manifestFile = path.join(outdir, MANIFEST_FILE);
   await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, {
@@ -289,7 +408,7 @@ export async function watchLocalProject(
           runtimeOrigin,
         ),
         options.onBuild,
-        () => writeApiManifest(apiOutdir),
+        async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes),
       ),
     );
     contexts.push(
