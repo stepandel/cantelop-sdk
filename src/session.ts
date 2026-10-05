@@ -1,3 +1,4 @@
+import type { WorkspaceDatabase } from "./database.js";
 import type { SessionIdentity } from "./resources.js";
 
 export type Awaitable<T> = T | Promise<T>;
@@ -34,6 +35,7 @@ export interface SessionContext<Message, Event = never, Reply = never> {
     sequence: number;
     payload: Message;
   }>;
+  database(): Promise<WorkspaceDatabase>;
   readonly session: SessionIdentity;
   readonly env: SessionEnvironment;
   readonly activity: SessionActivity<Message, Event>;
@@ -49,6 +51,7 @@ export interface SessionRecoveryContext<Message, Event = never> {
     id: string;
     interruptedMessageId: string;
   }>;
+  database(): Promise<WorkspaceDatabase>;
   readonly session: SessionIdentity;
   readonly env: SessionEnvironment;
   readonly activity: SessionActivity<Message, Event>;
@@ -70,3 +73,6 @@ export function defineSessionBehaviour<Message, Event = never, Reply = never>(
 }
 
 export type { SessionIdentity } from "./resources.js";
+
+export { createSessionDatabase } from "./session-database.js";
+export type { WorkspaceDatabase, DatabaseCredentials } from "./database.js";

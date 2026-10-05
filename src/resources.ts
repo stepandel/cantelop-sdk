@@ -1,3 +1,4 @@
+import type { WorkspaceDatabase } from "./database.js";
 export interface WorkspaceCreateConfig {
   readonly slug: string;
 }
@@ -7,6 +8,7 @@ export interface WorkspaceOpenConfig {
 }
 
 export interface Workspace {
+  database(): Promise<WorkspaceDatabase>;
   readonly id: string;
   readonly appId: string;
   readonly slug: string;

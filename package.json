@@ -43,6 +43,10 @@
     "./session": {
       "types": "./dist/session.d.ts",
       "import": "./dist/session.js"
+    },
+    "./database": {
+      "types": "./dist/database.d.ts",
+      "import": "./dist/database.js"
     }
   },
   "files": [
@@ -59,6 +63,7 @@
     "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.0",
     "esbuild": "^0.25.0"
   },
   "devDependencies": {
