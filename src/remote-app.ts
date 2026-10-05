@@ -1,3 +1,4 @@
+import { createWorkspaceDatabase, validateDatabaseCredentials, type WorkspaceDatabase } from "./database.js";
 import type {
   CantelopApp,
   MessageRef,
@@ -74,7 +75,7 @@ export function createRemoteApp<Input = unknown, Reply = unknown>(
         method: "POST",
         body: { slug: config.slug },
       });
-      return readWorkspace(envelope);
+      return readWorkspace(envelope, runtimeFetch);
     },
 
     async open(config: WorkspaceOpenConfig): Promise<Workspace> {
@@ -83,7 +84,7 @@ export function createRemoteApp<Input = unknown, Reply = unknown>(
         method: "POST",
         body: { slug: config.slug },
       });
-      return readWorkspace(envelope);
+      return readWorkspace(envelope, runtimeFetch);
     },
   });
 
@@ -102,7 +103,7 @@ function createRemoteSession<Input, Reply>(
     workspaceRequest ??= requestJSON(runtimeFetch, "/__cantelop/v1/workspaces/open", {
       method: "POST",
       body: { slug: config.workspaceSlug },
-    }).then(readWorkspace).then((workspace) => workspace.id).catch((error: unknown) => {
+    }).then(value => readWorkspace(value, runtimeFetch)).then((workspace) => workspace.id).catch((error: unknown) => {
       workspaceRequest = undefined;
       throw error;
     });
@@ -359,7 +360,7 @@ async function readEnvelope(response: Response): Promise<unknown> {
   }
 }
 
-function readWorkspace(value: unknown): Workspace {
+function readWorkspace(value: unknown, runtimeFetch: RuntimeFetch): Workspace {
   if (!isRecord(value) ||
       typeof value.id !== "string" || !WORKSPACE_ID_PATTERN.test(value.id) ||
       typeof value.app_id !== "string" ||
@@ -375,7 +376,14 @@ function readWorkspace(value: unknown): Workspace {
   const archivedAt = value.archived_at === undefined || value.archived_at === null
     ? undefined
     : readDate(value.archived_at);
+  const workspaceId = value.id;
+  let database: WorkspaceDatabase | undefined;
   return Object.freeze({
+    async database() {
+      if (!database || database.closed) database = createWorkspaceDatabase(async () => validateDatabaseCredentials(await requestJSON(runtimeFetch, "/__cantelop/v1/workspaces/database/credentials", { method: "POST", body: { workspace_id: workspaceId } })));
+      await database.credentials();
+      return database;
+    },
     id: value.id,
     appId: value.app_id,
     slug: value.slug,

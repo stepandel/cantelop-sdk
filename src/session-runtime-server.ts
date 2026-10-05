@@ -1,3 +1,4 @@
+import { createSessionDatabase } from "./session-database.js";
 /// <reference types="node" />
 
 import {
@@ -102,9 +103,15 @@ export function createSessionRuntimeHandler<Input, Event = never, Reply = never>
 function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
   behaviour: SessionBehaviour<Input, Event, Reply>,
   options: SessionRuntimeHandlerOptions = {},
-): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; } {
+): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; closeDatabase(): void; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);
+  let sessionDatabase = createSessionDatabase(options.env ?? process.env);
+  const database = async () => {
+    if (sessionDatabase.closed) sessionDatabase = createSessionDatabase(options.env ?? process.env);
+    await sessionDatabase.credentials();
+    return sessionDatabase;
+  };
   let boundSession: SessionIdentity | undefined;
   let quiescence: RuntimeQuiescence;
   const outputBuffer = new SessionOutputBuffer();
@@ -172,7 +179,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         await runWithRuntimeLogContext(observer, () =>
           observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
             signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
-            activity: activityCapability, output, reply, send,
+            activity: activityCapability, output, reply, send, database,
           }))),
         );
         if (replyRequested && !replied) throw new Error("Session request completed without a reply");
@@ -234,6 +241,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
       });
       const context: SessionRecoveryContext<Input, Event> = Object.freeze({
         signal,
+        database,
         recovery: Object.freeze({ id: recoveryId, interruptedMessageId }),
         session,
         env: options.env ?? process.env,
@@ -291,7 +299,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
       else writeError(response, 500, "runtime_error");
     });
   };
-  return { handler, observationBuffer };
+  return { handler, observationBuffer, closeDatabase: () => sessionDatabase.close() };
 }
 
 /**
@@ -316,6 +324,7 @@ export function serveSessionRuntime<Input, Event = never>(
       try {
         await closeServer(server);
       } finally {
+        adapter.closeDatabase();
         unregisterLogBuffer();
       }
     },
