@@ -254,7 +254,7 @@ test("a Session dispatches asynchronously with the same identity and configurati
   assert.equal(forwarded[1].method, "GET");
   assert.equal(
     forwarded[1].url,
-    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}/messages/${messageId}`,
+    `https://runtime.cantelop.internal/__cantelop/v1/sessions/${encodeURIComponent(namedSessionId)}/messages/${messageId}?workspace_id=${workspaceId}`,
   );
 });
 

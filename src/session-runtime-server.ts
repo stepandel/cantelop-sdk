@@ -1,3 +1,4 @@
+import { createDurableSessionRuntime } from "./durable-session-runtime.js";
 import { createSessionDatabase } from "./session-database.js";
 /// <reference types="node" />
 
@@ -57,6 +58,8 @@ export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
   sandboxId?: string;
   executionTimeoutMs?: number;
+  /** Explicit database injection for native launchers and integration tests. */
+  mailboxDatabase?: import("./database.js").WorkspaceDatabase;
 }
 
 export interface SessionRuntimeServer {
@@ -105,6 +108,10 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; closeDatabase(): void; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
+  const environment = options.env ?? process.env;
+  if (options.mailboxDatabase || environment.CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN) {
+    return createDurableSessionRuntime(behaviour, {sandboxId, env: environment, ...(options.mailboxDatabase ? {database: options.mailboxDatabase} : {})});
+  }
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);
   let sessionDatabase = createSessionDatabase(options.env ?? process.env);
   const database = async () => {
@@ -135,11 +142,12 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
       signal.throwIfAborted();
       started();
       let invocationOpen = true;
-      const send = (payload: Input): void => {
+      const send = (payload: Input): Promise<void> => {
         if (!invocationOpen) {
           throw new Error("Session runtime message invocation has already settled");
         }
         sendMessage(payload);
+        return Promise.resolve();
       };
       let outputOpen = true;
       const output: SessionOutput<Event> = Object.freeze({
@@ -216,9 +224,10 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     const settled = mailbox.enqueue(recoveryId, async () => {
       signal.throwIfAborted();
       let invocationOpen = true;
-      const send = (payload: Input): void => {
+      const send = (payload: Input): Promise<void> => {
         if (!invocationOpen) throw new Error("Session recovery invocation has already settled");
         sendMessage(payload);
+        return Promise.resolve();
       };
       let outputOpen = true;
       const output: SessionOutput<Event> = Object.freeze({
@@ -324,7 +333,7 @@ export function serveSessionRuntime<Input, Event = never>(
       try {
         await closeServer(server);
       } finally {
-        adapter.closeDatabase();
+        await adapter.closeDatabase();
         unregisterLogBuffer();
       }
     },
@@ -436,7 +445,7 @@ async function handleRequest<Input>(
   writeJSON(response, 202, result.receipt);
 }
 
-async function handleObservationRequest(
+export async function handleObservationRequest(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
@@ -485,7 +494,7 @@ async function handleObservationRequest(
   }
 }
 
-async function handleOutputRequest(
+export async function handleOutputRequest(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
@@ -588,7 +597,7 @@ async function handleQuiescenceRequest(
   }
 }
 
-async function readRequestEnvelope(request: IncomingMessage): Promise<unknown> {
+export async function readRequestEnvelope(request: IncomingMessage): Promise<unknown> {
   const declaredLength = request.headers["content-length"];
   if (
     declaredLength !== undefined &&
@@ -699,7 +708,7 @@ function readMessage<Input>(value: unknown): Readonly<{ id: string; payload: Inp
   return Object.freeze({ id: value.id, payload: value.payload as Input });
 }
 
-function readSession(value: unknown): SessionIdentity {
+export function readSession(value: unknown): SessionIdentity {
   if (!isRecord(value) || Object.keys(value).length !== 3 ||
     typeof value.id !== "string" || !SESSION_ID_PATTERN.test(value.id) ||
     typeof value.workspace_id !== "string" || !WORKSPACE_ID_PATTERN.test(value.workspace_id) ||
@@ -724,11 +733,11 @@ function setBaseHeaders(response: ServerResponse): void {
   response.setHeader("Content-Type", "application/json");
 }
 
-function writeError(response: ServerResponse, status: number, code: string): void {
+export function writeError(response: ServerResponse, status: number, code: string): void {
   writeJSON(response, status, { error: { code } });
 }
 
-function writeJSON(response: ServerResponse, status: number, value: unknown): void {
+export function writeJSON(response: ServerResponse, status: number, value: unknown): void {
   const body = JSON.stringify(value);
   response.statusCode = status;
   response.setHeader("Content-Length", Buffer.byteLength(body));

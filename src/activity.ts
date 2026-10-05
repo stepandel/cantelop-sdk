@@ -26,9 +26,10 @@ interface ActiveActivity<Message> {
 
 export class InMemoryActivity<Message, Event> {
   private current: ActiveActivity<Message> | undefined;
+  private readonly flushing = new Set<ActiveActivity<Message>>();
 
   constructor(
-    private readonly sendMessage: (payload: Message) => void,
+    private readonly sendMessage: (payload: Message) => void | Promise<void>,
     private readonly sendOutput: (messageId: string, event: Event, signal: AbortSignal) => Promise<void>,
     private readonly stateChanged: () => void = () => undefined,
   ) { }
@@ -81,17 +82,18 @@ export class InMemoryActivity<Message, Event> {
     void result.then(
       () => this.settle(activity, false),
       () => this.settle(activity, true),
-    );
+    ).catch(() => { /* Failed admission retains activity ownership for bounded supervision. */ });
   }
 
   cancel(reason?: unknown): boolean {
-    if (this.current === undefined) return false;
-    if (this.current.cancelledAt === undefined) {
-      this.current.cancelledAt = new Date().toISOString();
-      this.report(this.current, "cancellation_requested");
+    const target = this.current ?? [...this.flushing][0];
+    if (target === undefined) return false;
+    if (target.cancelledAt === undefined) {
+      target.cancelledAt = new Date().toISOString();
+      this.report(target, "cancellation_requested");
       this.stateChanged();
     }
-    this.current.controller.abort(
+    target.controller.abort(
       reason ?? new DOMException("Session runtime activity cancelled", "AbortError"),
     );
     return true;
@@ -105,10 +107,10 @@ export class InMemoryActivity<Message, Event> {
     clearTimeout(activity.timer); activity.timer = setTimeout(() => this.cancel(), activity.deadline - Date.now()); activity.timer.unref(); this.stateChanged();
   }
 
-  snapshot() { return this.current ? { id: this.current.id, deadline: new Date(this.current.deadline).toISOString(), cancellation_requested_at: this.current.cancelledAt } : null; }
+  snapshot() { const target = [this.current, ...this.flushing].filter((value): value is ActiveActivity<Message> => value !== undefined).sort((a,b)=>a.deadline-b.deadline)[0]; return target ? {id:target.id,deadline:new Date(target.deadline).toISOString(),cancellation_requested_at:target.cancelledAt}:null; }
 
   get isIdle(): boolean {
-    return !this.active;
+    return !this.active && this.flushing.size === 0;
   }
 
   private report(activity: ActiveActivity<Message>, outcome: ActivityLifecycle["outcome"]): void {
@@ -116,13 +118,21 @@ export class InMemoryActivity<Message, Event> {
     try { activity.observe({ activityId: activity.id, messageId: activity.messageId, outcome }); } catch { }
   }
 
-  private settle(activity: ActiveActivity<Message>, failed: boolean): void {
+  private async settle(activity: ActiveActivity<Message>, failed: boolean): Promise<void> {
     if (this.current !== activity) return;
     activity.settled = true;
-    this.report(activity, activity.controller.signal.aborted ? "cancelled" : failed ? "failed" : "completed");
     clearTimeout(activity.timer);
+    // The activity itself has ended. A separate flush keeps quiescence busy
+    // while allowing admitted completion messages to start a new activity.
+    this.flushing.add(activity);
     this.current = undefined;
-    for (const payload of activity.messages) { try { this.sendMessage(payload); } catch (error) { console.error("Activity completion message rejected", error); } }
+    this.stateChanged();
+    for (const payload of activity.messages) {
+      const admitted = this.sendMessage(payload);
+      if (admitted !== undefined) await admitted;
+    }
+    this.flushing.delete(activity);
+    this.report(activity, activity.controller.signal.aborted ? "cancelled" : failed ? "failed" : "completed");
     this.stateChanged();
   }
 }

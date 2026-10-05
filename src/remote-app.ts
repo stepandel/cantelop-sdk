@@ -139,7 +139,7 @@ function createRemoteSession<Input, Reply>(
           },
         },
       });
-      return readMessageRef(envelope, message, this.id, runtimeFetch);
+      return readMessageRef(envelope, message, this.id, runtimeFetch, workspaceId);
     },
 
     async request(input: Input, options: SessionRequestOptions = {}): Promise<Reply> {
@@ -234,6 +234,7 @@ function readMessageRef(
   expectedMessage: string,
   sessionId: string,
   runtimeFetch: RuntimeFetch,
+  workspaceId: string,
 ): MessageRef {
   if (!isRecord(envelope) || typeof envelope.id !== "string" ||
       !MESSAGE_ID_PATTERN.test(envelope.id) ||
@@ -250,7 +251,7 @@ function readMessageRef(
     async status(): Promise<MessageStatus> {
       const statusEnvelope = await requestJSON(
         runtimeFetch,
-        `/__cantelop/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(id)}`,
+        `/__cantelop/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(id)}?workspace_id=${encodeURIComponent(workspaceId)}`,
         { method: "GET" },
       );
       return readMessageStatus(statusEnvelope, id);
