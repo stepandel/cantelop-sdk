@@ -61,6 +61,7 @@ class MemoryMailboxStore implements MailboxStore {
       input.keepAliveSeconds > 604800
     )
       throw new MailboxError("invalid_message");
+    input = { ...input, payload: JSON.parse(payload) };
     const bytes = Buffer.byteLength(payload);
     if (bytes > 1048576) throw new MailboxError("message_capacity");
     const fingerprint = createHash("sha256")

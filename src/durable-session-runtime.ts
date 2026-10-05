@@ -326,12 +326,14 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
               },
             },
             output: {
-              send: (event) =>
-                outputBuffer.publish(
+              send: async (event) => {
+                if (!open) throw new MailboxError("invocation_settled");
+                await outputBuffer.publish(
                   body.message_id,
                   event,
                   AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-                ),
+                );
+              },
             },
             send: async (payload) => {
               if (!open) throw new MailboxError("invocation_settled");

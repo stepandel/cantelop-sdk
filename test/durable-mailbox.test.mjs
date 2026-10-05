@@ -352,3 +352,17 @@ test("unresolved claim and settlement acknowledgements retry identity without re
   assert.equal((await mailbox.status(message(1).id)).state, "succeeded");
   await mailbox.prepareIdle();
 });
+
+test("identity fingerprints describe the serialized JSON payload", async (t) => {
+  const { store } = await fixture(t);
+  const date = new Date("2026-10-05T00:00:00Z");
+  await store.enqueue(message(1, { at: date, omitted: undefined }));
+  assert.equal(
+    (await store.enqueue(message(1, { at: date.toISOString() }))).sequence,
+    1,
+  );
+  await assert.rejects(
+    store.enqueue(message(1, { at: new Date("2026-10-06T00:00:00Z") })),
+    /message_conflict/,
+  );
+});

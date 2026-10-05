@@ -115,6 +115,7 @@ export class TursoMailboxStore implements MailboxStore {
     validateMessage(message);
     const payload = JSON.stringify(message.payload);
     if (payload === undefined) throw new MailboxError("invalid_message");
+    message = { ...message, payload: JSON.parse(payload) };
     const bytes = new TextEncoder().encode(payload).byteLength;
     if (bytes > 1024 * 1024) throw new MailboxError("message_capacity");
     const fingerprint = await digest(

@@ -60,7 +60,7 @@ try {
       'import { CANTELOP_CLI_BUILD_PROTOCOL_VERSION, buildApi, buildSessionRuntime, buildLocalApi, watchLocalProject } from "@cantelop/sdk/build";',
       'import { defineApi } from "@cantelop/sdk/api";',
       'import { createApiWorker } from "@cantelop/sdk/edge";',
-      'import { serveSessionRuntime } from "@cantelop/sdk/runtime";',
+      'import { serveSessionRuntime, DurableMailbox, InMemoryMailboxAdapter, TursoMailboxStore } from "@cantelop/sdk/runtime";',
       'import { defineSessionBehaviour } from "@cantelop/sdk/session";',
       "assert.equal(typeof buildApi, \"function\");",
       "assert.equal(typeof buildSessionRuntime, \"function\");",
@@ -71,6 +71,9 @@ try {
       "assert.equal(typeof createApiWorker, \"function\");",
       "assert.equal(typeof defineSessionBehaviour, \"function\");",
       "assert.equal(typeof serveSessionRuntime, \"function\");",
+      "assert.equal(typeof DurableMailbox, \"function\");",
+      "assert.equal(typeof InMemoryMailboxAdapter, \"function\");",
+      "assert.equal(typeof TursoMailboxStore, \"function\");",
       'await buildApi({ entrypoint: "./api.mjs", outdir: "./artifact" });',
     ].join("\n"),
   );
