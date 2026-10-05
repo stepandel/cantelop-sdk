@@ -44,6 +44,11 @@ export function createWorkspaceDatabase(
         current = value; connections.add(value); return value;
       })().finally(() => { pending = undefined; });
     }
+    if (current && Date.parse(current.credentials.expiresAt) > now()) {
+      // Renewal failures fall back to credentials that have not yet expired.
+      const fallback = current;
+      return pending.catch(error => { if (closed) throw error; return fallback; });
+    }
     return pending;
   }
   function release(value: Connection): void { value.users--; if (value.retired && value.users === 0) { value.client.close(); connections.delete(value); } }
@@ -87,7 +92,8 @@ export function validateDatabaseCredentials(value: unknown, now = Date.now()): D
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new DatabaseAccessError("invalid_credentials");
   const credentials = value as Record<string, unknown>;
   if (typeof credentials.url !== "string" || typeof credentials.authToken !== "string" || !credentials.authToken || credentials.authToken.length > 16384 || typeof credentials.expiresAt !== "string" || !Number.isFinite(Date.parse(credentials.expiresAt)) || Date.parse(credentials.expiresAt) <= now + 60_000) throw new DatabaseAccessError("invalid_credentials");
-  const url = new URL(credentials.url);
+  let url: URL;
+  try { url = new URL(credentials.url); } catch { throw new DatabaseAccessError("invalid_credentials"); }
   if (!["libsql:", "https:"].includes(url.protocol) || !/^[a-z0-9.-]+\.turso\.io$/.test(url.hostname) || url.username || url.password || url.port || url.pathname !== "" && url.pathname !== "/" || url.search || url.hash) throw new DatabaseAccessError("invalid_credentials");
   return Object.freeze({ url: credentials.url, authToken: credentials.authToken, expiresAt: credentials.expiresAt });
 }
