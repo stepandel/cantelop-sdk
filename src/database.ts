@@ -47,7 +47,7 @@ export function createWorkspaceDatabase(
     if (current && Date.parse(current.credentials.expiresAt) > now()) {
       // Renewal failures fall back to credentials that have not yet expired.
       const fallback = current;
-      return pending.catch(error => { if (closed) throw error; return fallback; });
+      return pending.catch(error => { if (closed || Date.parse(fallback.credentials.expiresAt) <= now()) throw error; return fallback; });
     }
     return pending;
   }

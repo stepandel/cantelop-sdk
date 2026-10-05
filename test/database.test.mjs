@@ -63,3 +63,32 @@ test("Session credentials use platform capability without accepting a Workspace 
   });
   assert.equal((await db.credentials()).authToken,"database-token");db.close();
 });
+
+test("renewal failure reuses credentials only while they remain unexpired", async () => {
+  for (const expireDuringRenewal of [false, true]) {
+    let now = Date.now();
+    const expiresAt = now + 900000;
+    let resolutions = 0;
+    let writes = 0;
+    const db = createWorkspaceDatabase(async () => {
+      if (++resolutions > 1) {
+        if (expireDuringRenewal) now = expiresAt;
+        throw new Error("credential service unavailable");
+      }
+      return { url, authToken: "token", expiresAt: new Date(expiresAt).toISOString() };
+    }, { now: () => now, client: () => ({
+      async execute() { writes++; return { rows: [], rowsAffected: 1 }; },
+      close() {},
+    }) });
+    await db.execute("SELECT 1");
+    now += 850000;
+    if (expireDuringRenewal) {
+      await assert.rejects(db.execute("INSERT INTO state VALUES (1)"), /credential service unavailable/);
+      assert.equal(writes, 1);
+    } else {
+      await db.execute("INSERT INTO state VALUES (1)");
+      assert.equal(writes, 2);
+    }
+    db.close();
+  }
+});
