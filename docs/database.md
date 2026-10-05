@@ -51,7 +51,9 @@ prepared statements and D1 sessions in request handlers rather than sharing
 mutable sessions between requests. D1 sessions concern database consistency and
 are separate from Cantelop Sessions.
 
-The existing artifact schema and build protocol are unchanged. Local database
+Artifact schema 3 and CLI build protocol 5 are unchanged. Local database
 support adds CLI-only `serveLocalDatabaseApi` and `migrateLocalDatabase` exports
 from `@cantelop/sdk/build`; these use the Miniflare version pinned by the platform
-Wrangler toolchain. They do not execute as part of deployed API Workers.
+Wrangler toolchain. The CLI passes its local Session bridge credential to the
+D1 host over stdin, and the host forwards it only to the exact loopback bridge
+origin. These helpers do not execute as part of deployed API Workers.

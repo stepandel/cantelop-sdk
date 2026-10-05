@@ -32,7 +32,11 @@ test("built Edge API reads persistent D1 and reloads without losing data", async
   const port = probe.address().port;
   await new Promise((resolve) => probe.close(resolve));
   const { createServer: createHTTPServer } = await import("node:http");
-  const bridge = createHTTPServer((request, response) => { response.end("bridge-ok"); });
+  const bridgeToken = "a".repeat(64);
+  const bridge = createHTTPServer((request, response) => {
+    response.statusCode = request.headers["x-cantelop-dev-bridge-token"] === bridgeToken ? 200 : 403;
+    response.end(response.statusCode === 200 ? "bridge-ok" : "unauthorized");
+  });
   await new Promise((resolve) => bridge.listen(0, "127.0.0.1", resolve));
   const bridgeOrigin = `http://127.0.0.1:${bridge.address().port}`;
   let host;
@@ -47,13 +51,16 @@ test("built Edge API reads persistent D1 and reloads without losing data", async
     };
     await migrateLocalDatabase({ persist: join(root, "db"), name: "0001_items.sql", sql: "CREATE TABLE items(id INTEGER PRIMARY KEY, title TEXT); INSERT INTO items VALUES(1, 'persisted');" });
     await writeAPI(1);
-    host = await serveLocalDatabaseApi({ workerPath: join(root, "built/worker.mjs"), persist: join(root, "db"), port });
+    host = await serveLocalDatabaseApi({ workerPath: join(root, "built/worker.mjs"), persist: join(root, "db"), port, bridgeOrigin, bridgeToken });
     await assert.rejects(migrateLocalDatabase({ persist: join(root, "db"), name: "0002_blocked.sql", sql: "SELECT 1" }), /in use/);
+    assert.equal((await fetch(bridgeOrigin)).status, 403);
+    assert.equal((await fetch(`http://127.0.0.1:${port}`, { headers: { Origin: "https://example.com" } })).status, 403);
     assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}`)).json(), { version: 1, row: { title: "persisted" }, bridge: "bridge-ok" });
     await writeAPI(2);
     let response;
     for (let i = 0; i < 40; i++) {
-      response = await (await fetch(`http://127.0.0.1:${port}`)).json();
+      try { response = await (await fetch(`http://127.0.0.1:${port}`)).json(); }
+      catch { await new Promise((resolve) => setTimeout(resolve, 100)); continue; }
       if (response.version === 2) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }

@@ -1,10 +1,11 @@
 /// <reference types="node" />
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import lockfile from "proper-lockfile";
 import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import type { D1Database } from "@cloudflare/workers-types";
+import { build } from "esbuild";
 
 // Keep Miniflare's internal declarations out of the public SDK types: its
 // bundled .d.ts imports unpublished internal modules. This small boundary is
@@ -34,13 +35,45 @@ const databaseOptions = (persist: string) => ({
 /** CLI tooling: run the built API against persistent local D1. */
 export async function serveLocalDatabaseApi(options: {
   workerPath: string; persist: string; port: number; bindings?: Record<string, string>;
+  bridgeOrigin?: string; bridgeToken?: string;
 }): Promise<{ close(): Promise<void> }> {
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535 || options.bindings?.DB !== undefined) throw new TypeError("invalid local database API options (DB is reserved)");
+  if ((options.bridgeOrigin === undefined) !== (options.bridgeToken === undefined)) throw new TypeError("local Session bridge origin and credential must be provided together");
+  let bridgeOrigin: string | undefined;
+  if (options.bridgeOrigin !== undefined) {
+    const url = new URL(options.bridgeOrigin);
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== "/" || url.search || url.hash ||
+        !/^[0-9a-f]{64}$/.test(options.bridgeToken ?? "")) throw new TypeError("invalid local Session bridge configuration");
+    bridgeOrigin = url.origin;
+  }
   const workerPath = resolve(options.workerPath);
+  const wrapper = `import worker from ${JSON.stringify(workerPath)};
+const port = ${options.port};
+const suffix = port === 80 ? "" : ":" + port;
+const hosts = new Set(["127.0.0.1" + suffix, "localhost" + suffix]);
+const origins = new Set([...hosts].map((host) => "http://" + host));
+export default { fetch(request, env, context) {
+  const host = request.headers.get("host")?.toLowerCase();
+  const origin = request.headers.get("origin");
+  const site = request.headers.get("sec-fetch-site");
+  if (!host || !hosts.has(host) || (origin !== null && !origins.has(origin)) ||
+      (site !== null && site !== "same-origin" && site !== "none")) {
+    return Response.json({ error: { code: "invalid_origin" } }, { status: 403, headers: { "Cache-Control": "no-store" } });
+  }
+  return worker.fetch(request, env, context);
+} };`;
   const config = async (): Promise<Record<string, unknown>> => ({
     ...databaseOptions(options.persist),
-    script: await readFile(workerPath, "utf8"),
+    script: (await build({ stdin: { contents: wrapper, loader: "js", resolveDir: resolve(workerPath, "..") },
+      bundle: true, format: "esm", platform: "browser", target: "es2022", write: false, logLevel: "silent" })).outputFiles![0]!.text,
     host: "127.0.0.1", port: options.port, bindings: options.bindings ?? {},
+    ...(bridgeOrigin === undefined ? {} : { outboundService: async (request: Request) => {
+      const headers = new Headers(request.headers);
+      if (new URL(request.url).origin === bridgeOrigin) headers.set("X-Cantelop-Dev-Bridge-Token", options.bridgeToken!);
+      return fetch(request.url, { method: request.method, headers,
+        ...(request.method === "GET" || request.method === "HEAD" ? {} : { body: await request.arrayBuffer() }),
+        redirect: "manual" });
+    } }),
   });
   let version = (await stat(workerPath)).mtimeMs;
   const release = await acquireLocalDatabase(options.persist);
