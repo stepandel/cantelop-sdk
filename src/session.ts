@@ -42,7 +42,7 @@ export interface SessionContext<Message, Event = never, Reply = never> {
   readonly output: SessionOutput<Event>;
   /** Supplies the single result returned by Session.request(). */
   reply(value: Reply): void;
-  send(message: Message): void;
+  send(message: Message): Promise<void>;
 }
 
 export interface SessionRecoveryContext<Message, Event = never> {
@@ -56,7 +56,7 @@ export interface SessionRecoveryContext<Message, Event = never> {
   readonly env: SessionEnvironment;
   readonly activity: SessionActivity<Message, Event>;
   readonly output: SessionOutput<Event>;
-  send(message: Message): void;
+  send(message: Message): Promise<void>;
 }
 
 export interface SessionBehaviour<Message, Event = never, Reply = never> {

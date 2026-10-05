@@ -28,3 +28,18 @@ test('example persists outcomes, sends output, and queues follow-up prompts duri
  receive('three',{type:'prompt',prompt:'failure'});await until(()=>!activity.active);
  assert.equal(JSON.parse(await readFile(join(directory,'three.json'))).outcome,'failed');
 });
+
+test('quiescence waits for durable activity follow-up admission', async () => {
+ let commit;
+ const pending = new Promise(resolve => { commit = resolve; });
+ let admissionStarted = false;
+ const activity = new InMemoryActivity(async () => { admissionStarted = true; await pending; }, async () => {});
+ activity.start('message', context => context.send({ type: 'completed' }));
+ await until(() => admissionStarted);
+ assert.equal(activity.active, false);
+ assert.equal(activity.isIdle, false);
+ assert.ok(activity.snapshot());
+ commit();
+ await until(() => activity.isIdle);
+ assert.equal(activity.snapshot(), null);
+});
