@@ -111,8 +111,9 @@ running exactly one SDK-managed Session runtime process. The process is never
 shared by multiple Sessions, so module-level agent and conversation state is
 per-Session.
 
-The runtime processes the actor's in-memory mailbox one message at a time in
-acceptance order. Long-running agent work can move into the Session's single
+The deployed runtime processes the actor's Workspace Turso mailbox one message
+at a time in acceptance order. Admission, replies, and execution state survive
+runtime replacement. Long-running agent work can move into the Session's single
 managed activity, allowing the mailbox to keep receiving commands such as
 steer and cancel. The application defines what every message means; Cantelop
 only provides identity, routing, serialization, activity management, and event
@@ -404,8 +405,9 @@ logical Session.
 ### Implementing different message types
 
 You define the message protocol and control how each message is handled.
-Cantelop routes messages to the Session's Sandbox and enqueues them in its
-mailbox, where they are handled one at a time in FIFO (acceptance) order. It
+Cantelop persists messages in the Workspace mailbox before activating the
+Session's Sandbox. The runtime handles them one at a time in FIFO (acceptance)
+order. It
 does not assign business logic to names such as `chat`, `steer`, or `cancel`.
 
 Extend the message type used by your API and Session behaviour, then dispatch
@@ -544,3 +546,27 @@ boundary. Publishing is a separate production operation.
 API and Session runtimes share an automatically provisioned Workspace database.
 See [Workspace database access](docs/workspace-databases.md) for SQL clients,
 renewable native credentials, and transaction behavior.
+
+## Durable mailbox adapters
+
+`@cantelop/sdk/runtime` exports `Mailbox`, `DurableMailbox`,
+`InMemoryMailboxAdapter`, `MailboxStore`, and `TursoMailboxStore`. Both adapters
+keep synchronous `isIdle` and async `enqueue`, `status`, `cancel`, `prepareIdle`,
+`resume`, and `close` methods. `isIdle` includes tracked admissions and settlement
+writes. Releasing compute requires the durable receipt from `prepareIdle()` and
+coordinator acknowledgement of output; local idle alone cannot authorize release.
+
+The platform acquires a pinned lease and grants a sandbox/epoch/lease tuple before
+`resume()`. Work admitted after parking stays queued until a fresh grant. The
+runtime selects Turso when Workspace database credentials are supplied; local
+legacy handlers without credentials retain their existing in-memory behavior.
+Mailbox schema migration belongs to the platform, before activation. Deploy the
+matching platform coordinator before using the durable runtime in production.
+
+Within `receive` and `onRecover`, use `await context.send(message)` to observe
+durable admission errors. The runtime also tracks unawaited admissions. Activity
+`send()` remains buffered and its admissions complete before activity becomes
+idle. Message handlers never hold a database transaction while application code
+runs. An interrupted handler has an unknown outcome and is not automatically
+replayed; recovery hooks must reconcile application side effects. Terminal IDs
+and deduplication reservations are retained for 30 days.

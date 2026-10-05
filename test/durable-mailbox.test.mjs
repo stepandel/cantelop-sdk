@@ -305,3 +305,50 @@ test("memory adapter implements the same envelope, FIFO, deduplication and parki
   await until(() => mailbox.isIdle);
   assert.deepEqual(received, [1, 2, 3]);
 });
+
+test("unresolved claim and settlement acknowledgements retry identity without repeating the handler", async (t) => {
+  const { store } = await fixture(t);
+  await store.enqueue(message(1));
+  let claimLost = true,
+    settlementLost = true,
+    calls = 0;
+  const uncertain = new Proxy(store, {
+    get(target, key) {
+      if (key === "claim")
+        return async (...args) => {
+          const result = await target.claim(...args);
+          if (claimLost) {
+            claimLost = false;
+            throw Error("claim outcome unavailable");
+          }
+          return result;
+        };
+      if (key === "settle")
+        return async (...args) => {
+          await target.settle(...args);
+          if (settlementLost) {
+            settlementLost = false;
+            throw Error("settlement outcome unavailable");
+          }
+        };
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const mailbox = new DurableMailbox(
+    uncertain,
+    owner.sessionId,
+    async () => {
+      calls++;
+      return {};
+    },
+    () => {},
+    5,
+  );
+  t.after(() => mailbox.close());
+  await mailbox.resume(owner);
+  await until(() => mailbox.isIdle);
+  assert.equal(calls, 1);
+  assert.equal((await mailbox.status(message(1).id)).state, "succeeded");
+  await mailbox.prepareIdle();
+});

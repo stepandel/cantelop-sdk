@@ -31,6 +31,17 @@ export class DurableMailbox implements Mailbox {
   private closed = false;
   private pumping: Promise<void> | undefined;
   private fault: unknown;
+  private claimToken: string | undefined;
+  private settlement:
+    | {
+        message: StoredMessage;
+        outcome: {
+          state: "succeeded" | "failed" | "timed_out";
+          reply?: unknown;
+          errorCode?: string;
+        };
+      }
+    | undefined;
   private current:
     | { message: StoredMessage; controller: AbortController }
     | undefined;
@@ -197,7 +208,21 @@ export class DurableMailbox implements Mailbox {
     while (!this.closed && !this.parked) {
       this.busy = true;
       this.notify();
-      const message = await this.store.claim(owner, randomUUID());
+      // Preserve operation identity across an unresolved transport/commit failure.
+      // A retry may resolve a claimed row, but must never invoke its handler twice.
+      if (this.settlement) {
+        await this.store.settle(
+          owner,
+          this.settlement.message,
+          this.settlement.outcome,
+        );
+        this.settlement = undefined;
+        this.current = undefined;
+        this.notify();
+      }
+      const token = (this.claimToken ??= randomUUID());
+      const message = await this.store.claim(owner, token);
+      this.claimToken = undefined;
       this.fault = undefined;
       if (!message) {
         this.busy = false;
@@ -258,7 +283,9 @@ export class DurableMailbox implements Mailbox {
         clearInterval(cancellation);
       }
       // A terminal handler is still busy until its outcome is durably committed.
+      this.settlement = { message, outcome };
       await this.store.settle(owner, message, outcome);
+      this.settlement = undefined;
       this.current = undefined;
       this.notify();
     }
@@ -272,7 +299,16 @@ export class DurableMailbox implements Mailbox {
       new DOMException("Mailbox closed", "AbortError"),
     );
     this.notify();
-    if (this.pumping) await this.pumping;
+    if (this.pumping) await this.pumping.catch(() => undefined);
+    if (this.preparing) await this.preparing.catch(() => undefined);
+    while (this.operations)
+      await new Promise<void>((resolve) => {
+        const wake = () => {
+          this.waiters.delete(wake);
+          resolve();
+        };
+        this.waiters.add(wake);
+      });
   }
   private notify(): void {
     this.changed();

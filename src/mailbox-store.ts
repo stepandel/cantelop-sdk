@@ -145,6 +145,20 @@ export class TursoMailboxStore implements MailboxStore {
           sql: `INSERT INTO cantelop_mailbox_sessions(session_id,updated_at) VALUES(?,?) ON CONFLICT(session_id) DO NOTHING`,
           args: [message.sessionId, now],
         });
+        const lifecycle = (
+          await tx.execute({
+            sql: "SELECT lease_id,recovery_error FROM cantelop_mailbox_sessions WHERE session_id=?",
+            args: [message.sessionId],
+          })
+        ).rows[0]!;
+        if (lifecycle.recovery_error === "session_released") {
+          if (lifecycle.lease_id !== null)
+            throw new MailboxError("session_stopping");
+          await tx.execute({
+            sql: "UPDATE cantelop_mailbox_sessions SET recovery_error=NULL,recovery_id=NULL,recovery_message_id=NULL,recovery_attempts=0 WHERE session_id=? AND lease_id IS NULL",
+            args: [message.sessionId],
+          });
+        }
         const capacity = await tx.execute({
           sql: `SELECT COUNT(*) AS count, COALESCE(SUM(CASE WHEN state IN ('queued','running','cancelling') THEN payload_bytes ELSE 0 END),0) AS bytes FROM cantelop_mailbox_messages WHERE session_id=?`,
           args: [message.sessionId],
@@ -404,7 +418,8 @@ function checkOwner(
     row.sandbox_id !== owner.sandboxId ||
     Number(row.epoch) !== owner.epoch ||
     row.lease_id !== owner.leaseId ||
-    row.owner_state !== state
+    row.owner_state !== state ||
+    row.recovery_error === "session_released"
   )
     throw new MailboxError("mailbox_ownership_lost");
 }
