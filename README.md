@@ -538,3 +538,9 @@ pnpm check:package
 installs it into an empty project, imports every public entrypoint, and builds a
 customer API. See [docs/releasing.md](./docs/releasing.md) for the release
 boundary. Publishing is a separate production operation.
+
+## Workspace databases
+
+API and Session runtimes share an automatically provisioned Workspace database.
+See [Workspace database access](docs/workspace-databases.md) for SQL clients,
+renewable native credentials, and transaction behavior.
