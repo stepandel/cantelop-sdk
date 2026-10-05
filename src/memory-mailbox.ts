@@ -41,8 +41,9 @@ class MemoryMailboxStore implements MailboxStore {
     if (
       !this.owner ||
       (this.parked &&
-        owner.epoch > this.owner.epoch &&
-        owner.leaseId !== this.owner.leaseId)
+        (sameOwner(this.owner, owner) ||
+          (owner.epoch > this.owner.epoch &&
+            owner.leaseId !== this.owner.leaseId)))
     ) {
       this.owner = { ...owner };
       this.parked = false;

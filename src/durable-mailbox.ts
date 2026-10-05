@@ -151,9 +151,18 @@ export class DurableMailbox implements Mailbox {
   }
   prepareIdle(signal?: AbortSignal): Promise<MailboxIdleReceipt> {
     if (this.preparing) return this.preparing;
-    this.preparing = this.prepare(signal).finally(() => {
-      this.preparing = undefined;
-    });
+    this.preparing = this.prepare(signal)
+      .catch((error) => {
+        // A failed park must not leave claims disabled without a durable park.
+        if (!this.closed) {
+          this.parked = false;
+          void this.refresh().catch(() => undefined);
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.preparing = undefined;
+      });
     return this.preparing;
   }
   private async prepare(signal?: AbortSignal): Promise<MailboxIdleReceipt> {

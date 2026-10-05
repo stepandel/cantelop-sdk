@@ -128,8 +128,10 @@ export class InMemoryActivity<Message, Event> {
     this.current = undefined;
     this.stateChanged();
     for (const payload of activity.messages) {
-      const admitted = this.sendMessage(payload);
-      if (admitted !== undefined) await admitted;
+      try {
+        const admitted = this.sendMessage(payload);
+        if (admitted !== undefined) await admitted;
+      } catch (error) { console.error("Activity completion message rejected", error); }
     }
     this.flushing.delete(activity);
     this.report(activity, activity.controller.signal.aborted ? "cancelled" : failed ? "failed" : "completed");
