@@ -11,6 +11,7 @@ import {
 import { randomUUID } from "node:crypto";
 
 import type {
+  SessionActivationContext,
   SessionActivity,
   SessionActivityFunction,
   SessionContext,
@@ -58,7 +59,7 @@ export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
   sandboxId?: string;
   executionTimeoutMs?: number;
-  /** Explicit database injection for native launchers and integration tests. */
+  /** @deprecated Explicit legacy mailbox injection for migration qualification only. */
   mailboxDatabase?: import("./database.js").WorkspaceDatabase;
 }
 
@@ -108,11 +109,10 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; closeDatabase(): void; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
-  const environment = options.env ?? process.env;
-  // The CLI owns local Message admission and replies. Its SQL credentials
-  // must not select the hosted durable-mailbox protocol implicitly.
-  if (options.mailboxDatabase || (environment.CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN && !environment.CANTELOP_LOCAL_DATABASE_ORIGIN)) {
-    return createDurableSessionRuntime(behaviour, {sandboxId, env: environment, ...(options.mailboxDatabase ? {database: options.mailboxDatabase} : {})});
+  // Explicit injection retains the old protocol for migration qualification.
+  // Workspace DB access never selects a mailbox implementation.
+  if (options.mailboxDatabase) {
+    return createDurableSessionRuntime(behaviour, {sandboxId, env: options.env ?? process.env, ...(options.mailboxDatabase ? {database: options.mailboxDatabase} : {})});
   }
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);
   let sessionDatabase = createSessionDatabase(options.env ?? process.env);
@@ -122,6 +122,11 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     return sessionDatabase;
   };
   let boundSession: SessionIdentity | undefined;
+  let activation: Promise<void> | undefined;
+  const activate = (context: SessionActivationContext<Input, Event>) => {
+    activation ??= Promise.resolve().then(() => behaviour.onActivate?.(context));
+    return activation;
+  };
   let quiescence: RuntimeQuiescence;
   const outputBuffer = new SessionOutputBuffer();
   const observationBuffer = new RuntimeObservationBuffer();
@@ -186,12 +191,15 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         replied = true;
       };
       try {
-        await runWithRuntimeLogContext(observer, () =>
-          observer.span("session.receive", () => invokeBehaviour(behaviour, Object.freeze({
-            signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
-            activity: activityCapability, output, reply, send, database,
-          }))),
-        );
+        const context = Object.freeze({
+          signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
+          activity: activityCapability, output, reply, send, database,
+        });
+        await runWithRuntimeLogContext(observer, async () => {
+          await activate(context);
+          signal.throwIfAborted();
+          await observer.span("session.receive", () => invokeBehaviour(behaviour, context));
+        });
         if (replyRequested && !replied) throw new Error("Session request completed without a reply");
       } finally {
         invocationOpen = false;
@@ -261,6 +269,8 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         send,
       });
       try {
+        await activate(context);
+        signal.throwIfAborted();
         await behaviour.onRecover!(context);
       } finally {
         invocationOpen = false;
@@ -293,6 +303,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
       messages,
       activity,
       behaviour.onRecover !== undefined,
+      behaviour.redelivery === true,
       recover,
       () => boundSession,
       (session) => {
@@ -376,6 +387,7 @@ async function handleRequest<Input>(
   messages: RuntimeMessages,
   activity: { active: boolean; cancel(reason?: unknown): boolean; snapshot(): unknown; },
   recoverySupported: boolean,
+  redeliverySupported: boolean,
   recover: (recoveryId: string, interruptedMessageId: string, session: SessionIdentity) => RuntimeRecovery,
   boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
@@ -390,7 +402,7 @@ async function handleRequest<Input>(
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
     writeJSON(response, 200, {
       sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
-      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true },
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true, redelivery: redeliverySupported },
       observations: observationBuffer.metadata(), events: outputBuffer.metadata()
     });
     return;

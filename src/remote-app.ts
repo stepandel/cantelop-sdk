@@ -277,7 +277,7 @@ function readMessageStatus(envelope: unknown, expectedMessage: string): MessageS
   let details: { execution?: MessageExecution } = {};
   if (envelope.execution !== undefined) {
     const e = envelope.execution;
-    if (!isRecord(e) || !["sending","accepted","running","cancelling","settled","quiescent","unavailable"].includes(String(e.phase)) || !["pending","succeeded","failed","timed_out","unknown"].includes(String(e.outcome)) || typeof e.sandbox_id !== "string" || typeof e.deadline !== "string" || typeof e.phase_at !== "string" || typeof e.work_state !== "string") throw new RemoteAppError("invalid_message_status_response",0);
+    if (!isRecord(e) || !["sending","accepted","running","cancelling","settled","retrying","recovering","quiescent","unavailable"].includes(String(e.phase)) || !["pending","succeeded","failed","timed_out","unknown"].includes(String(e.outcome)) || typeof e.sandbox_id !== "string" || typeof e.deadline !== "string" || typeof e.phase_at !== "string" || typeof e.work_state !== "string") throw new RemoteAppError("invalid_message_status_response",0);
     details = {execution: Object.freeze({ phase:e.phase as MessageExecution["phase"], outcome:e.outcome as MessageExecution["outcome"], sandboxId:e.sandbox_id, deadline:readMessageStatusDate(e.deadline), phaseAt:readMessageStatusDate(e.phase_at),workState:e.work_state })};
   }
   const acceptedAt = readMessageStatusDate(envelope.accepted_at);
