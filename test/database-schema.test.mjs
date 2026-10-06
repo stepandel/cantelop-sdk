@@ -102,3 +102,17 @@ test("local schema initialization installs no mailbox and preserves unmanaged ap
     assert.equal((await db.execute("SELECT name FROM sqlite_schema WHERE name LIKE 'cantelop_mailbox_%' OR name='cantelop_system_migrations'")).rows.length, 0);
   } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test("later managed schemas reject newly declared tables created outside migration history", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cantelop-schema-later-adoption-"));
+  const db = createClient({ url: `file:${join(directory, "test.sqlite")}` });
+  try {
+    const tasks = sqliteTable("tasks", { id: text().primaryKey() });
+    await synchronizeApplicationSchema(db, await createApplicationSchema({ tasks }));
+    await db.execute("CREATE TABLE jobs (id TEXT PRIMARY KEY)");
+    await db.execute("INSERT INTO jobs VALUES ('pending')");
+    await assert.rejects(synchronizeApplicationSchema(db, await createApplicationSchema({ tasks, jobs: sqliteTable("jobs", { id: text().primaryKey() }) })), /unmanaged_table_conflict/);
+    assert.equal((await db.execute("SELECT id FROM jobs")).rows[0].id, "pending");
+    assert.equal((await db.execute("SELECT COUNT(*) AS count FROM cantelop_application_migrations")).rows[0].count, 1);
+  } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
+});

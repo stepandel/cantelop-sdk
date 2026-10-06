@@ -96,6 +96,18 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
     },
   };
   let currentMessage = "";
+  const lifetime = new AbortController();
+  let activation: Promise<void> | undefined;
+  const activate = (messageId: string): Promise<void> => {
+    if (!behaviour.onActivate) return Promise.resolve();
+    activation ??= Promise.resolve().then(() => behaviour.onActivate!({
+      signal: lifetime.signal, session: session!, env: options.env, database,
+      activity: activityCapability,
+      output: { send: (event) => outputBuffer.publish(messageId, event, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)])) },
+      send,
+    })).catch((error: unknown) => { activation = undefined; throw error; });
+    return activation;
+  };
   const bind = (identity: SessionIdentity) => {
     if (
       session &&
@@ -164,7 +176,10 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
         };
         try {
           await runWithRuntimeLogContext(observer, () =>
-            observer.span("session.receive", () => behaviour.receive(context)),
+            activate(message.id).then(() => {
+              signal.throwIfAborted();
+              return observer.span("session.receive", () => behaviour.receive(context));
+            }),
           );
         } finally {
           open = false;
@@ -205,6 +220,7 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
           recovery: !!behaviour.onRecover,
           replies: true,
           durable_mailbox: true,
+          redelivery: behaviour.redelivery === true,
         },
         observations: observationBuffer.metadata(),
         events: outputBuffer.metadata(),
@@ -349,6 +365,8 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
             },
           };
           try {
+            await activate(body.message_id);
+            signal.throwIfAborted();
             await behaviour.onRecover!(context);
             return {
               recovery_id: body.recovery_id,
@@ -433,6 +451,7 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
     observationBuffer,
     closeDatabase: async () => {
       try {
+        lifetime.abort();
         await mailbox?.close();
       } finally {
         db.close();

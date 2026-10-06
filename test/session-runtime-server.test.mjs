@@ -876,3 +876,33 @@ test("failed activation blocks intake rather than acknowledging uninitialized wo
   await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`)).json()).state === "failed");
   assert.equal(received, false);
 });
+
+test("failed activation is retried by later intake", async (t) => {
+  let activations = 0;
+  const received = [];
+  const server = createServer(createSessionRuntimeHandler(behaviour({
+    onActivate({ signal }) {
+      activations++;
+      assert.equal(signal.aborted, false);
+      if (activations === 1) throw new Error("transient restore failure");
+    },
+    receive({ message }) { received.push(message.id); },
+  })));
+  await listen(server);
+  t.after(() => close(server));
+  const states = [];
+  for (const index of [1, 2]) {
+    const envelope = messageEnvelope({});
+    envelope.message.id = `msg_${String(index).padStart(32, "0")}`;
+    const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(envelope),
+    });
+    assert.equal(response.status, 202);
+    let state;
+    await waitFor(async () => ["succeeded", "failed"].includes(state = (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${envelope.message.id}`)).json()).state));
+    states.push(state);
+  }
+  assert.deepEqual(states, ["failed", "succeeded"]);
+  assert.equal(activations, 2);
+  assert.deepEqual(received, [`msg_${"2".padStart(32, "0")}`]);
+});

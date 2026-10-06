@@ -125,11 +125,11 @@ export async function synchronizeApplicationSchema(db: Pick<WorkspaceDatabase, "
         (await tx.execute({ sql: "SELECT digest FROM cantelop_application_migrations WHERE digest=? LIMIT 1", args: [next.digest] })).rows.length) {
       await tx.commit(); return undefined;
     }
-    if (!latest) {
-      const existing = (await tx.execute("SELECT name FROM sqlite_schema WHERE type='table'")).rows;
-      if (existing.some(row => Object.hasOwn(next.snapshot.tables, String(row.name)))) throw new DatabaseSchemaError("unmanaged_table_conflict");
-    }
     const previous = latest ? JSON.parse(String(latest.snapshot)) as ApplicationDatabaseSchema : undefined;
+    // Newly declared tables must not already exist outside managed history.
+    const managed: Record<string, unknown> = previous?.snapshot?.tables ?? {};
+    const existing = (await tx.execute("SELECT name FROM sqlite_schema WHERE type='table'")).rows;
+    if (existing.some(row => Object.hasOwn(next.snapshot.tables, String(row.name)) && !Object.hasOwn(managed, String(row.name)))) throw new DatabaseSchemaError("unmanaged_table_conflict");
     const statements = await applicationMigrationSQL(previous, next);
     for (const statement of statements) {
       try { await tx.execute(statement); }
