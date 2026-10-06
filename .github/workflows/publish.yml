@@ -56,3 +56,22 @@ jobs:
       - name: Publish stable release
         if: ${{ !contains(inputs.version, '-') }}
         run: npm publish --access public
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          args=(--verify-tag --generate-notes --title "SDK ${RELEASE_VERSION}")
+          if [[ "${RELEASE_VERSION}" == *-* ]]; then
+            args+=(--prerelease --latest=false)
+          fi
+          gh release create "${RELEASE_TAG}" "${args[@]}"
