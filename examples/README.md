@@ -95,3 +95,5 @@ pnpm check:examples
 For a credential-free lifecycle example with persisted outcomes, queued follow-up
 messages, cancellation, and a Bun subprocess adapter, see
 [Supervised long-running agents](./supervised-activity/README.md).
+
+[Database schema example](database/README.md) shows typed Drizzle queries and automatic Workspace migrations.
