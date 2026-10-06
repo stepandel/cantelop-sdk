@@ -8,7 +8,7 @@ import type {
   SessionRecoveryContext,
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
-import { createSessionDatabase } from "./session-database.js";
+import { createSessionDatabase, createSessionSystemDatabase } from "./session-database.js";
 import type { WorkspaceDatabase } from "./database.js";
 import { DurableMailbox } from "./durable-mailbox.js";
 import {
@@ -38,7 +38,13 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
     database?: WorkspaceDatabase;
   },
 ) {
-  const db = options.database ?? createSessionDatabase(options.env);
+  const db = options.database ?? createSessionSystemDatabase(options.env);
+  let applicationDatabase = options.database ?? createSessionDatabase(options.env);
+  const database = async () => {
+    if (applicationDatabase.closed) applicationDatabase = createSessionDatabase(options.env);
+    await applicationDatabase.credentials();
+    return applicationDatabase;
+  };
   const store = new TursoMailboxStore(db);
   const outputBuffer = new SessionOutputBuffer();
   const observationBuffer = new RuntimeObservationBuffer();
@@ -120,7 +126,7 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
           },
           session: session!,
           env: options.env,
-          database: async () => db,
+          database,
           activity: {
             ...activityCapability,
             get active() {
@@ -312,7 +318,7 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
               id: body.recovery_id,
               interruptedMessageId: body.message_id,
             },
-            database: async () => db,
+            database,
             session: session!,
             env: options.env,
             activity: {
@@ -428,6 +434,7 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
         await mailbox?.close();
       } finally {
         db.close();
+        if (applicationDatabase !== db) applicationDatabase.close();
       }
     },
   };

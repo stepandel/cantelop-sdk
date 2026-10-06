@@ -78,7 +78,7 @@ export function createWorkspaceDatabase(
       let released = false;
       const finish = () => { if (!released) { released = true; transaction.close(); release(value); } };
       return Object.freeze({
-        async execute(statement: InStatement) { try { return await transaction.execute(statement); } finally { if (transaction.closed) finish(); } },
+        async execute(statement: InStatement, args?: InArgs) { try { return await (typeof statement === "string" && args !== undefined ? transaction.execute({ sql: statement, args }) : transaction.execute(statement)); } finally { if (transaction.closed) finish(); } },
         async batch(statements: InStatement[]) { try { return await transaction.batch(statements); } finally { if (transaction.closed) finish(); } },
         async executeMultiple(sql: string) { try { await transaction.executeMultiple(sql); } finally { if (transaction.closed) finish(); } },
         async commit() { try { await transaction.commit(); } finally { finish(); } },
@@ -88,7 +88,7 @@ export function createWorkspaceDatabase(
       });
     },
     async credentials() { return (await connection()).credentials; },
-    close() { if (!closed) { closed = true; for (const value of connections) value.client.close(); connections.clear(); } },
+    close() { if (!closed) { closed = true; for (const value of connections) value.client.close(); connections.clear(); current = undefined; } },
     get closed() { return closed; },
   });
 }
