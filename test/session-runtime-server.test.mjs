@@ -804,7 +804,7 @@ async function waitFor(predicate) {
 }
 
 
-test("local SQL credentials preserve CLI Message admission; hosted credentials select durable admission", async (t) => {
+test("local and hosted DB credentials preserve in-memory Message admission", async (t) => {
   for (const local of [false, true]) {
     let received = false;
     const server = createServer(createSessionRuntimeHandler(behaviour(async () => { received = true; }), {
@@ -817,12 +817,62 @@ test("local SQL credentials preserve CLI Message admission; hosted credentials s
     await listen(server);
     try {
       const snapshot = await (await fetch(`${origin(server)}/__cantelop/v2/runtime`)).json();
-      assert.equal(snapshot.capabilities?.durable_mailbox === true, !local);
-      if (local) {
+      assert.equal(snapshot.capabilities?.durable_mailbox === true, false);
+      {
         const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(messageEnvelope({ prompt: "local" })) });
         assert.equal(response.status, 202);
         assert.equal(received, true);
       }
     } finally { await close(server); }
   }
+});
+
+test("activation restores tracked work once while subsequent intake remains responsive", async (t) => {
+  let activations = 0;
+  let release;
+  const running = new Promise(resolve => { release = resolve; });
+  const received = [];
+  const server = createServer(createSessionRuntimeHandler(behaviour({
+    redelivery: true,
+    onActivate({ activity }) {
+      activations++;
+      activity.start(async () => running);
+    },
+    receive({ message, activity }) {
+      assert.equal(activity.active, true);
+      received.push(message.payload.type);
+      if (message.payload.type === "cancel") release();
+    },
+  })));
+  await listen(server);
+  t.after(() => close(server));
+  for (const [index, type] of ["steer", "cancel"].entries()) {
+    const envelope = messageEnvelope({ type });
+    envelope.message.id = `msg_${String(index + 1).padStart(32, "0")}`;
+    const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(envelope),
+    });
+    assert.equal(response.status, 202);
+    await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${envelope.message.id}`)).json()).state === "succeeded");
+  }
+  assert.equal(activations, 1);
+  assert.deepEqual(received, ["steer", "cancel"]);
+  const snapshot = await (await fetch(`${origin(server)}/__cantelop/v2/runtime`)).json();
+  assert.equal(snapshot.capabilities.redelivery, true);
+});
+
+test("failed activation blocks intake rather than acknowledging uninitialized work", async (t) => {
+  let received = false;
+  const server = createServer(createSessionRuntimeHandler(behaviour({
+    onActivate() { throw new Error("restore failed"); },
+    receive() { received = true; },
+  })));
+  await listen(server);
+  t.after(() => close(server));
+  const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(messageEnvelope({})),
+  });
+  assert.equal(response.status, 202);
+  await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`)).json()).state === "failed");
+  assert.equal(received, false);
 });
