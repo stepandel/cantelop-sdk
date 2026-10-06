@@ -132,11 +132,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         send: (event: Event) => outputBuffer.publish(messageId, event, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)])),
       }),
       send: (payload: Input) => { sendMessage(payload); return Promise.resolve(); },
-    } satisfies SessionActivationContext<Input, Event>))).catch((error: unknown) => {
-      // A failed restore is retried by the next intake or recovery.
-      activation = undefined;
-      throw error;
-    });
+    } satisfies SessionActivationContext<Input, Event>)));
     return activation;
   };
   let quiescence: RuntimeQuiescence;

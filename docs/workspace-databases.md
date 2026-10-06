@@ -166,10 +166,9 @@ persistent queues, checkpoints, and other data through this same database.
 There are no separate system/application credential scopes or table grants.
 
 Migration generation uses the declared schema and its recorded history, never
-unrelated tables. Reserved names protect the migration ledger and retained
-legacy mailbox history from managed schema changes; they are not an SQL access
-boundary. Existing legacy mailbox tables and unrelated application tables are
-left untouched.
+unrelated tables. Reserved names protect platform-owned names from managed
+schema changes; they are not an SQL access boundary. Unrelated application tables
+are left untouched. Retired mailbox tables are neither installed nor required.
 
 First-time adoption fails with `unmanaged_table_conflict` if a declared table
 already exists without managed migration history, even if its columns look
@@ -179,7 +178,7 @@ migration mechanism until an explicit baseline workflow is available. Do not
 remove populated tables or fabricate ledger rows to bypass this check.
 
 Deploy the updated platform/CLI support before applications emit version 4
-schema manifests. The application-owned mailbox runtime from SDK 0.16.0 remains
-the normal runtime. SDK and platform schema validation and migration generation
+schema manifests. The application-owned in-memory mailbox remains the sole runtime;
+the retired DB mailbox adapters are absent. SDK and platform schema validation and migration generation
 must stay aligned. Projects without `db/schema.ts` keep runtime-controlled SQL
 and their existing credential behavior.

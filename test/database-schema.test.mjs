@@ -17,12 +17,12 @@ test("application artifacts are deterministic and reject reserved objects and sy
   assert.throws(() => validateApplicationSchema({ ...artifact, digest: "sha256:" + "0".repeat(64) }), /artifact_digest_mismatch/);
 });
 
-test("automatic migrations preserve application records and system schema, and retain SQL history", async () => {
+test("automatic migrations preserve application records and unmanaged tables, and retain SQL history", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cantelop-schema-"));
   const db = createClient({ url: `file:${join(directory, "test.sqlite")}` });
   try {
-    await db.execute("CREATE TABLE cantelop_mailbox_sessions (id TEXT PRIMARY KEY)");
-    await db.execute("INSERT INTO cantelop_mailbox_sessions VALUES ('system')");
+    await db.execute("CREATE TABLE application_checkpoints (id TEXT PRIMARY KEY)");
+    await db.execute("INSERT INTO application_checkpoints VALUES ('checkpoint')");
     const initial = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey() }) });
     assert.equal((await synchronizeApplicationSchema(db, initial)).statements.length, 1);
     assert.equal(await synchronizeApplicationSchema(db, initial), undefined);
@@ -30,7 +30,8 @@ test("automatic migrations preserve application records and system schema, and r
     const next = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey(), done: integer().notNull().default(0) }) });
     await synchronizeApplicationSchema(db, next);
     assert.equal((await db.execute("SELECT done FROM tasks WHERE id='app'")).rows[0].done, 0);
-    assert.equal((await db.execute("SELECT id FROM cantelop_mailbox_sessions")).rows[0].id, "system");
+    assert.equal((await db.execute("SELECT id FROM application_checkpoints")).rows[0].id, "checkpoint");
+    assert.equal((await db.execute("SELECT name FROM sqlite_schema WHERE name LIKE 'cantelop_mailbox_%'")).rows.length, 0);
     assert.equal((await db.execute("SELECT COUNT(*) AS count FROM cantelop_application_migrations")).rows[0].count, 2);
     await assert.rejects(applicationMigrationSQL(next, initial), /explicit_migration_required/);
     const invalid = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey(), done: integer().notNull().default(0), required: text().notNull() }) });

@@ -877,7 +877,7 @@ test("failed activation blocks intake rather than acknowledging uninitialized wo
   assert.equal(received, false);
 });
 
-test("failed activation is retried by later intake", async (t) => {
+test("failed activation fences later intake in the same incarnation", async (t) => {
   let activations = 0;
   const received = [];
   const server = createServer(createSessionRuntimeHandler(behaviour({
@@ -902,7 +902,7 @@ test("failed activation is retried by later intake", async (t) => {
     await waitFor(async () => ["succeeded", "failed"].includes(state = (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${envelope.message.id}`)).json()).state));
     states.push(state);
   }
-  assert.deepEqual(states, ["failed", "succeeded"]);
-  assert.equal(activations, 2);
-  assert.deepEqual(received, [`msg_${"2".padStart(32, "0")}`]);
+  assert.deepEqual(states, ["failed", "failed"]);
+  assert.equal(activations, 1);
+  assert.deepEqual(received, []);
 });
