@@ -117,3 +117,15 @@ test("Session local origin is opt-in and must match its credential broker", asyn
     await assert.rejects(createSessionDatabase({...environment,CANTELOP_WORKSPACE_DATABASE_CREDENTIALS_URL:"http://127.0.0.1:1/internal/v1/runtime/database/credentials"},request).credentials(),/invalid_runtime_configuration/);
   }
 });
+
+test("reconnecting a closed renewable client creates a fresh underlying connection", async () => {
+  const f = fixture();
+  await f.db.execute("SELECT 1");
+  f.db.close();
+  f.db.reconnect();
+  await f.db.execute("SELECT 1");
+  assert.equal(f.clients.length, 2);
+  assert.equal(f.clients[0].closed, true);
+  assert.equal(f.clients[1].closed, false);
+  f.db.close();
+});

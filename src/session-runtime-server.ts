@@ -114,9 +114,25 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     return sessionDatabase;
   };
   let boundSession: SessionIdentity | undefined;
+  // Activation belongs to the runtime incarnation, not to the Message that triggered it.
+  const lifetime = new AbortController();
   let activation: Promise<void> | undefined;
-  const activate = (context: SessionActivationContext<Input, Event>) => {
-    activation ??= Promise.resolve().then(() => behaviour.onActivate?.(context));
+  const activate = (session: SessionIdentity, messageId: string): Promise<void> => {
+    if (!behaviour.onActivate) return Promise.resolve();
+    activation ??= Promise.resolve().then(() => behaviour.onActivate!(Object.freeze({
+      signal: lifetime.signal, session, env: options.env ?? process.env, database,
+      activity: Object.freeze({
+        get active() { return activity.active; },
+        start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number; }) { activity.start(messageId, work, policy); },
+        extend(timeoutMs: number) { return activity.extend(timeoutMs); },
+        cancel(reason?: unknown) { return activity.cancel(reason); },
+      }),
+      // Platform output is Message-addressed; restored work reports under the activating Message.
+      output: Object.freeze({
+        send: (event: Event) => outputBuffer.publish(messageId, event, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)])),
+      }),
+      send: (payload: Input) => { sendMessage(payload); return Promise.resolve(); },
+    } satisfies SessionActivationContext<Input, Event>)));
     return activation;
   };
   let quiescence: RuntimeQuiescence;
@@ -188,7 +204,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
           activity: activityCapability, output, reply, send, database,
         });
         await runWithRuntimeLogContext(observer, async () => {
-          await activate(context);
+          await activate(session, message.id);
           signal.throwIfAborted();
           await observer.span("session.receive", () => invokeBehaviour(behaviour, context));
         });
@@ -261,7 +277,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         send,
       });
       try {
-        await activate(context);
+        await activate(session, interruptedMessageId);
         signal.throwIfAborted();
         await behaviour.onRecover!(context);
       } finally {
@@ -313,7 +329,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
       else writeError(response, 500, "runtime_error");
     });
   };
-  return { handler, observationBuffer, closeDatabase: () => sessionDatabase.close() };
+  return { handler, observationBuffer, closeDatabase: () => { lifetime.abort(); sessionDatabase.close(); } };
 }
 
 /**

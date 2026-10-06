@@ -1,7 +1,7 @@
 import { createClient, type Client, type InStatement, type InArgs, type ResultSet, type Transaction, type TransactionMode } from "@libsql/client/web";
 export type { InStatement, InArgs, ResultSet, Transaction, TransactionMode } from "@libsql/client/web";
 export interface DatabaseCredentials { readonly url: string; readonly authToken: string; readonly expiresAt: string }
-export interface WorkspaceDatabase {
+export interface WorkspaceDatabase extends Client {
   execute(statement: InStatement): Promise<ResultSet>;
   execute(sql: string, args?: InArgs): Promise<ResultSet>;
   batch(statements: InStatement[], mode?: TransactionMode): Promise<ResultSet[]>;
@@ -15,6 +15,25 @@ export interface WorkspaceDatabase {
 interface Connection { client: Client; credentials: DatabaseCredentials; users: number; retired: boolean }
 export class DatabaseAccessError extends Error {
   constructor(readonly code: string) { super(`Cantelop database access failed: ${code}`); this.name = "DatabaseAccessError"; }
+}
+
+/** A non-owning view: closing it detaches the caller without closing the shared client. */
+export function borrowWorkspaceDatabase(owner: WorkspaceDatabase): WorkspaceDatabase {
+  let closed = false;
+  const use = <T>(action: () => Promise<T>): Promise<T> => closed ? Promise.reject(new DatabaseAccessError("client_closed")) : action();
+  return Object.freeze({
+    execute(statement: InStatement, args?: InArgs) { return use(() => typeof statement === "string" ? owner.execute(statement, args) : owner.execute(statement)); },
+    batch(statements: InStatement[], mode?: TransactionMode) { return use(() => owner.batch(statements, mode)); },
+    migrate(statements: InStatement[]) { return use(() => owner.migrate(statements)); },
+    sync() { return use(() => owner.sync()); },
+    reconnect() { closed = false; },
+    get protocol() { return owner.protocol; },
+    executeMultiple(sql: string) { return use(() => owner.executeMultiple(sql)); },
+    transaction(mode?: TransactionMode) { return use(() => owner.transaction(mode)); },
+    credentials() { return use(() => owner.credentials()); },
+    close() { closed = true; },
+    get closed() { return closed || owner.closed; },
+  });
 }
 
 /** Renewable client; operations are never automatically replayed. */
@@ -66,6 +85,10 @@ export function createWorkspaceDatabase(
   return Object.freeze({
     execute(statement: InStatement, args?: InArgs) { return use(client => typeof statement === "string" ? client.execute(statement, args) : client.execute(statement)); },
     batch(statements: InStatement[], mode?: TransactionMode) { return use(client => client.batch(statements, mode)); },
+    migrate(statements: InStatement[]) { return use(client => client.migrate(statements)); },
+    sync() { return use(client => client.sync()); },
+    reconnect() { closed = false; },
+    get protocol() { return "http"; },
     executeMultiple(sql: string) { return use(client => client.executeMultiple(sql)); },
     async transaction(mode: TransactionMode = "write"): Promise<Transaction> {
       const value = await acquire();
@@ -74,7 +97,7 @@ export function createWorkspaceDatabase(
       let released = false;
       const finish = () => { if (!released) { released = true; transaction.close(); release(value); } };
       return Object.freeze({
-        async execute(statement: InStatement) { try { return await transaction.execute(statement); } finally { if (transaction.closed) finish(); } },
+        async execute(statement: InStatement, args?: InArgs) { try { return await (typeof statement === "string" && args !== undefined ? transaction.execute({ sql: statement, args }) : transaction.execute(statement)); } finally { if (transaction.closed) finish(); } },
         async batch(statements: InStatement[]) { try { return await transaction.batch(statements); } finally { if (transaction.closed) finish(); } },
         async executeMultiple(sql: string) { try { await transaction.executeMultiple(sql); } finally { if (transaction.closed) finish(); } },
         async commit() { try { await transaction.commit(); } finally { finish(); } },
@@ -84,7 +107,7 @@ export function createWorkspaceDatabase(
       });
     },
     async credentials() { return (await connection()).credentials; },
-    close() { if (!closed) { closed = true; for (const value of connections) value.client.close(); connections.clear(); } },
+    close() { if (!closed) { closed = true; for (const value of connections) value.client.close(); connections.clear(); current = undefined; } },
     get closed() { return closed; },
   });
 }

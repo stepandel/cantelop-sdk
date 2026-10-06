@@ -1,0 +1,5 @@
+{
+  "app": "database-example",
+  "api": "src/api.ts",
+  "session": "src/session.ts"
+}
