@@ -40,19 +40,6 @@ test("automatic migrations preserve application records and system schema, and r
   } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("system migration history adopts existing mailbox tables and rejects incompatible history", async () => {
-  const { migrateSystemDatabase } = await import("../dist/build.js");
-  const directory = await mkdtemp(join(tmpdir(), "cantelop-system-schema-"));
-  const db = createClient({ url: `file:${join(directory, "test.sqlite")}` });
-  try {
-    await migrateSystemDatabase(db);
-    await migrateSystemDatabase(db);
-    assert.equal((await db.execute("SELECT COUNT(*) AS count FROM cantelop_system_migrations")).rows[0].count, 1);
-    await db.execute("UPDATE cantelop_system_migrations SET definition='tampered'");
-    await assert.rejects(migrateSystemDatabase(db), /system_schema_incompatible/);
-  } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
-});
-
 test("schema build evaluates a developer-only TypeScript module and preserves deterministic artifacts", async () => {
   const { writeFile } = await import("node:fs/promises");
   const { buildDatabaseSchema } = await import("../dist/build.js");
@@ -83,5 +70,35 @@ test("historical release rollback retains the newer physical schema", async () =
     await synchronizeApplicationSchema(db, next);
     assert.equal(await synchronizeApplicationSchema(db, initial), undefined);
     assert.equal((await db.execute("PRAGMA table_info(tasks)")).rows.some(row => row.name === "title"), true);
+  } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("initial managed schema rejects existing declared tables without changing their data", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cantelop-schema-adoption-"));
+  const db = createClient({ url: `file:${join(directory, "test.sqlite")}` });
+  try {
+    await db.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY)");
+    await db.execute("INSERT INTO tasks VALUES ('existing')");
+    const schema = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey() }) });
+    await assert.rejects(synchronizeApplicationSchema(db, schema), /unmanaged_table_conflict/);
+    assert.equal((await db.execute("SELECT id FROM tasks")).rows[0].id, "existing");
+    assert.equal((await db.execute("SELECT COUNT(*) AS count FROM cantelop_application_migrations")).rows[0].count, 0);
+  } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("local schema initialization installs no mailbox and preserves unmanaged application tables", async () => {
+  const { synchronizeLocalDatabase } = await import("../dist/build.js");
+  const directory = await mkdtemp(join(tmpdir(), "cantelop-local-schema-"));
+  const filename = join(directory, "test.sqlite");
+  const db = createClient({ url: `file:${filename}` });
+  try {
+    await db.execute("CREATE TABLE application_queue (id TEXT PRIMARY KEY)");
+    await db.execute("INSERT INTO application_queue VALUES ('pending')");
+    await synchronizeLocalDatabase(filename);
+    assert.equal((await db.execute("SELECT name FROM sqlite_schema WHERE name LIKE 'cantelop_%'")).rows.length, 0);
+    const schema = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey() }) });
+    await synchronizeLocalDatabase(filename, schema);
+    assert.equal((await db.execute("SELECT id FROM application_queue")).rows[0].id, "pending");
+    assert.equal((await db.execute("SELECT name FROM sqlite_schema WHERE name LIKE 'cantelop_mailbox_%' OR name='cantelop_system_migrations'")).rows.length, 0);
   } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
 });

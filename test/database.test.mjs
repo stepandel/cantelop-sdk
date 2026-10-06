@@ -129,18 +129,3 @@ test("reconnecting a closed renewable client creates a fresh underlying connecti
   assert.equal(f.clients[1].closed, false);
   f.db.close();
 });
-
-test("only the internal mailbox client requests system credentials", async () => {
-  const { createSessionSystemDatabase } = await import("../dist/session-database.js");
-  const env = { CANTELOP_WORKSPACE_DATABASE_CREDENTIALS_URL: "https://console.cantelop.dev/internal/v1/runtime/database/credentials", CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN: "capability" };
-  const scopes = [];
-  const request = async (_url, init) => {
-    scopes.push(init.headers["X-Cantelop-Database-Scope"]);
-    return Response.json({ url, authToken: "token", expiresAt: new Date(Date.now()+900000).toISOString() });
-  };
-  const app = createSessionDatabase(env, request);
-  const system = createSessionSystemDatabase(env, request);
-  await app.credentials(); await system.credentials();
-  assert.deepEqual(scopes, [undefined, "system"]);
-  app.close(); system.close();
-});

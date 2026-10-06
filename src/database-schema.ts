@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { generateSQLiteDrizzleJson, generateSQLiteMigration, type DrizzleSQLiteSnapshotJSON } from "drizzle-kit/api";
 import type { WorkspaceDatabase } from "./database.js";
 
-/** A build artifact, never a live database introspection including system tables. */
+/** Deterministic developer schema build artifact. */
 export interface ApplicationDatabaseSchema {
   readonly version: 1;
   readonly digest: string;
@@ -108,8 +108,9 @@ export async function applicationMigrationSQL(previous: ApplicationDatabaseSchem
   return generateSQLiteMigration(before, next.snapshot);
 }
 export interface AppliedApplicationMigration { readonly digest: string; readonly appliedAt: number; readonly statements: readonly string[]; }
-/** Platform/CLI-only: the supplied connection must be scoped to application objects and its migration ledger. */
-export async function synchronizeApplicationSchema(db: Pick<WorkspaceDatabase, "execute" | "transaction">, input: ApplicationDatabaseSchema): Promise<AppliedApplicationMigration | undefined> {
+/** Platform/CLI migration runner; only declared objects and the migration ledger are changed. */
+/** newerDigests: schemas of releases newer than input's; a ledger already at one of them is never down-migrated. */
+export async function synchronizeApplicationSchema(db: Pick<WorkspaceDatabase, "execute" | "transaction">, input: ApplicationDatabaseSchema, newerDigests: ReadonlySet<string> = new Set()): Promise<AppliedApplicationMigration | undefined> {
   const next = validateApplicationSchema(input);
   await db.execute(`CREATE TABLE IF NOT EXISTS cantelop_application_migrations (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT, digest TEXT NOT NULL, snapshot TEXT NOT NULL,
@@ -120,12 +121,25 @@ export async function synchronizeApplicationSchema(db: Pick<WorkspaceDatabase, "
     const latest = rows[0];
     if (latest?.digest === next.digest) { await tx.commit(); return undefined; }
     // Re-activating a historical release keeps the newer physical schema; it never down-migrates.
-    if ((await tx.execute({ sql: "SELECT digest FROM cantelop_application_migrations WHERE digest=? LIMIT 1", args: [next.digest] })).rows.length) {
+    if ((latest && newerDigests.has(String(latest.digest))) ||
+        (await tx.execute({ sql: "SELECT digest FROM cantelop_application_migrations WHERE digest=? LIMIT 1", args: [next.digest] })).rows.length) {
       await tx.commit(); return undefined;
+    }
+    if (!latest) {
+      const existing = (await tx.execute("SELECT name FROM sqlite_schema WHERE type='table'")).rows;
+      if (existing.some(row => Object.hasOwn(next.snapshot.tables, String(row.name)))) throw new DatabaseSchemaError("unmanaged_table_conflict");
     }
     const previous = latest ? JSON.parse(String(latest.snapshot)) as ApplicationDatabaseSchema : undefined;
     const statements = await applicationMigrationSQL(previous, next);
-    for (const statement of statements) await tx.execute(statement);
+    for (const statement of statements) {
+      try { await tx.execute(statement); }
+      catch (error) {
+        // SQL rejected by the data itself fails identically on every retry.
+        const code = String((error as { code?: unknown })?.code ?? "");
+        if (/^SQLITE_(?!BUSY|LOCKED|IOERR|FULL|NOMEM|INTERRUPT|ABORT)|^SQL_/.test(code)) throw new DatabaseSchemaError("migration_failed");
+        throw error;
+      }
+    }
     const appliedAt = Date.now();
     await tx.execute({ sql: "INSERT INTO cantelop_application_migrations(digest,snapshot,statements,applied_at) VALUES(?,?,?,?)", args: [next.digest, JSON.stringify(next), JSON.stringify(statements), appliedAt] });
     await tx.commit();
@@ -136,10 +150,8 @@ export async function synchronizeApplicationSchema(db: Pick<WorkspaceDatabase, "
 /** CLI-only local file access. Workloads receive a separately authorized HTTP connection. */
 export async function synchronizeLocalDatabase(filename: string, schema?: ApplicationDatabaseSchema): Promise<AppliedApplicationMigration | undefined> {
   const { createClient } = await import("@libsql/client");
-  const { migrateSystemDatabase } = await import("./system-database-migrations.js");
   const db = createClient({ url: `file:${filename}` });
   try {
-    await migrateSystemDatabase(db);
     return schema ? await synchronizeApplicationSchema(db, schema) : undefined;
   } finally { db.close(); }
 }

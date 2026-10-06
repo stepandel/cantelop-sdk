@@ -24,7 +24,6 @@ import type { ApplicationDatabaseSchema } from "./database-schema.js";
 export { createApplicationSchema, validateApplicationSchema, applicationMigrationSQL, synchronizeApplicationSchema, synchronizeLocalDatabase, DatabaseSchemaError } from "./database-schema.js";
 export type { ApplicationDatabaseSchema, AppliedApplicationMigration } from "./database-schema.js";
 export const CANTELOP_DATABASE_SCHEMA_PROTOCOL_VERSION = 1;
-export { SYSTEM_DATABASE_MIGRATIONS, migrateSystemDatabase } from "./system-database-migrations.js";
 
 import type { HttpMethod } from "./router.js";
 

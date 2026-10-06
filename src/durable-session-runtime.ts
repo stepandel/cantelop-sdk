@@ -8,7 +8,7 @@ import type {
   SessionRecoveryContext,
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
-import { createSessionDatabase, createSessionSystemDatabase } from "./session-database.js";
+import { createSessionDatabase } from "./session-database.js";
 import { borrowWorkspaceDatabase, type WorkspaceDatabase } from "./database.js";
 import { DurableMailbox } from "./durable-mailbox.js";
 import {
@@ -38,9 +38,9 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
     database?: WorkspaceDatabase;
   },
 ) {
-  const db = options.database ?? createSessionSystemDatabase(options.env);
+  const db = options.database ?? createSessionDatabase(options.env);
   // An injected client is shared with the mailbox store, so application code only borrows it.
-  const applicationClient = () => options.database ? borrowWorkspaceDatabase(options.database) : createSessionDatabase(options.env);
+  const applicationClient = () => borrowWorkspaceDatabase(db);
   let applicationDatabase = applicationClient();
   const database = async () => {
     if (applicationDatabase.closed) applicationDatabase = applicationClient();
