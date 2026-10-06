@@ -17,10 +17,10 @@ export class DatabaseAccessError extends Error {
   constructor(readonly code: string) { super(`Cantelop database access failed: ${code}`); this.name = "DatabaseAccessError"; }
 }
 
-/** Remote-only client; operations are never automatically replayed. */
+/** Renewable client; operations are never automatically replayed. */
 export function createWorkspaceDatabase(
   resolveCredentials: () => Promise<DatabaseCredentials>,
-  options: { now?: () => number; client?: typeof createClient } = {},
+  options: { now?: () => number; client?: typeof createClient; localDatabaseOrigin?: string | undefined } = {},
 ): WorkspaceDatabase {
   const now = options.now ?? Date.now;
   const factory = options.client ?? createClient;
@@ -37,7 +37,7 @@ export function createWorkspaceDatabase(
     if (current && Date.parse(current.credentials.expiresAt) > now() + 60_000) return current;
     if (!pending) {
       pending = (async () => {
-        const credentials = validateDatabaseCredentials(await resolveCredentials(), now());
+        const credentials = validateDatabaseCredentials(await resolveCredentials(), now(), options.localDatabaseOrigin);
         if (closed) throw new DatabaseAccessError("client_closed");
         const value: Connection = { client: factory({ url: credentials.url.replace(/^libsql:/, "https:"), authToken: credentials.authToken }), credentials, users: 0, retired: false };
         if (current) retire(current);
@@ -88,12 +88,19 @@ export function createWorkspaceDatabase(
     get closed() { return closed; },
   });
 }
-export function validateDatabaseCredentials(value: unknown, now = Date.now()): DatabaseCredentials {
+/** Validate the explicit CLI development origin before accepting local credentials. */
+export function validateLocalDatabaseOrigin(value: string): URL {
+  const url = new URL(value);
+  if (url.protocol !== "http:" || !["127.0.0.1", "host.docker.internal"].includes(url.hostname) || !url.port || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new DatabaseAccessError("invalid_runtime_configuration");
+  return url;
+}
+export function validateDatabaseCredentials(value: unknown, now = Date.now(), localDatabaseOrigin?: string): DatabaseCredentials {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new DatabaseAccessError("invalid_credentials");
   const credentials = value as Record<string, unknown>;
   if (typeof credentials.url !== "string" || typeof credentials.authToken !== "string" || !credentials.authToken || credentials.authToken.length > 16384 || typeof credentials.expiresAt !== "string" || !Number.isFinite(Date.parse(credentials.expiresAt)) || Date.parse(credentials.expiresAt) <= now + 60_000) throw new DatabaseAccessError("invalid_credentials");
   let url: URL;
   try { url = new URL(credentials.url); } catch { throw new DatabaseAccessError("invalid_credentials"); }
-  if (!["libsql:", "https:"].includes(url.protocol) || !/^[a-z0-9.-]+\.turso\.io$/.test(url.hostname) || url.username || url.password || url.port || url.pathname !== "" && url.pathname !== "/" || url.search || url.hash) throw new DatabaseAccessError("invalid_credentials");
+  const local = localDatabaseOrigin !== undefined && url.origin === validateLocalDatabaseOrigin(localDatabaseOrigin).origin && /^\/databases\/wsp_[0-9a-f]{32}\/$/.test(url.pathname) && !url.username && !url.password && !url.search && !url.hash;
+  if (!local && (!["libsql:", "https:"].includes(url.protocol) || !/^[a-z0-9.-]+\.turso\.io$/.test(url.hostname) || url.username || url.password || url.port || url.pathname !== "" && url.pathname !== "/" || url.search || url.hash)) throw new DatabaseAccessError("invalid_credentials");
   return Object.freeze({ url: credentials.url, authToken: credentials.authToken, expiresAt: credentials.expiresAt });
 }
