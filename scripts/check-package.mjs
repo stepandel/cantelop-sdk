@@ -77,6 +77,24 @@ try {
     ].join("\n"),
   );
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
+  // Existing entry points qualify before optional Pi peers are installed.
+  await runCommand("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund",
+    "@earendil-works/pi-durable@1.0.4", "@earendil-works/pi-ai@1.0.4", "@earendil-works/chord@1.0.4"],
+    { cwd: consumer, maxBuffer: 1024 * 1024 });
+  await writeFile(path.join(consumer, "pi.mjs"), [
+    'import assert from "node:assert/strict";',
+    'import { definePiDurableSession, openPiDurableHarness, openPiDurableStorage } from "@cantelop/sdk/pi-durable";',
+    'import { createPiDurableEventDecoder } from "@cantelop/sdk/pi-durable/events";',
+    'import { createModels } from "@earendil-works/pi-ai/models";',
+    'import { createRegistry } from "@earendil-works/pi-durable";',
+    'assert.equal(typeof openPiDurableHarness, "function");',
+    'assert.equal(typeof openPiDurableStorage, "function");',
+    'assert.equal(typeof createPiDurableEventDecoder().push, "function");',
+    'const behaviour = definePiDurableSession({ harness: { models: createModels(), registry: createRegistry() } });',
+    'assert.equal(behaviour.redelivery, true);',
+    'assert.equal(typeof behaviour.onActivate, "function");',
+  ].join("\n"));
+  await runCommand(process.execPath, ["pi.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   const artifactManifest = JSON.parse(await readFile(path.join(consumer, "artifact", "cantelop-api.json"), "utf8"));
   assert.equal(artifactManifest.kind, "cantelop-edge-api");
   assert.equal(artifactManifest.schema_version, 3);

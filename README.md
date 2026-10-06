@@ -575,3 +575,13 @@ while tracked intake, activity, or output handoff is outstanding.
 
 See the [application queue example](examples/application-queue/README.md) for
 application-owned receipt, queue, steering, cancellation, and checkpoint tables.
+
+## Pi Durable
+
+Import `definePiDurableSession`, `openPiDurableHarness`, or
+`openPiDurableStorage` from `@cantelop/sdk/pi-durable` for native Pi Durable
+execution backed by the existing Workspace database. Sessions have independent
+logical stores; the adapter resumes checkpoints, deduplicates intake and tracks
+background work through Cantelop activity. Pi dependencies are optional peers
+pinned to 1.0.4. See [the guide](docs/pi-durable.md) and
+[the runnable example](examples/pi-durable/README.md).
