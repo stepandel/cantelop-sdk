@@ -8,7 +8,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,12 @@ import {
   type BuildOptions,
   type Plugin,
 } from "esbuild";
+
+import type { ApplicationDatabaseSchema } from "./database-schema.js";
+export { createApplicationSchema, validateApplicationSchema, applicationMigrationSQL, synchronizeApplicationSchema, synchronizeLocalDatabase, DatabaseSchemaError } from "./database-schema.js";
+export type { ApplicationDatabaseSchema, AppliedApplicationMigration } from "./database-schema.js";
+export const CANTELOP_DATABASE_SCHEMA_PROTOCOL_VERSION = 1;
+export { SYSTEM_DATABASE_MIGRATIONS, migrateSystemDatabase } from "./system-database-migrations.js";
 
 import type { HttpMethod } from "./router.js";
 
@@ -57,7 +63,8 @@ export interface ApiArtifactRoute {
 }
 
 export interface ApiArtifactManifest {
-  readonly schema_version: 3;
+  readonly schema_version: 3 | 4;
+  readonly database_schema?: ApplicationDatabaseSchema;
   readonly kind: "cantelop-edge-api";
   readonly main_module: "worker.mjs";
   /**
@@ -142,7 +149,7 @@ async function buildApiArtifact(
   await build(apiBuildOptions(entrypoint, mainModule, runtimeOrigin));
 
   const discovery = await discoverRoutes(entrypoint);
-  const manifest = await writeApiManifest(outdir, discovery.routes);
+  const manifest = await writeApiManifest(outdir, discovery.routes, await buildDatabaseSchema());
   const manifestFile = path.join(outdir, MANIFEST_FILE);
 
   return Object.freeze({
@@ -247,7 +254,10 @@ function evaluateRouteModule(source: string): Promise<unknown> {
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+      if (stdout.length > 2 * 1024 * 1024) { child.kill("SIGKILL"); reject(new Error("build module output exceeds 2 MiB")); }
+    });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-2048); });
     child.on("error", reject);
     child.on("close", (code, signal) => {
@@ -255,7 +265,7 @@ function evaluateRouteModule(source: string): Promise<unknown> {
       if (code !== 0 || marker < 0) {
         const reason = signal === "SIGKILL"
           ? "the API module did not finish loading"
-          : stderr.trim().split("\n").find((line) => /\bError\b/.test(line))?.trim() ?? "the API module could not be evaluated";
+          : stderr.trim().split("\n").find((line) => /Error\b/.test(line))?.trim() ?? "the API module could not be evaluated";
         reject(new Error(reason));
         return;
       }
@@ -287,9 +297,11 @@ function manifestRoutes(value: unknown): readonly ApiArtifactRoute[] {
 async function writeApiManifest(
   outdir: string,
   routes: readonly ApiArtifactRoute[] | null,
+  databaseSchema?: ApplicationDatabaseSchema,
 ): Promise<ApiArtifactManifest> {
   const manifest: ApiArtifactManifest = {
-    schema_version: MANIFEST_SCHEMA_VERSION,
+    schema_version: databaseSchema ? 4 : MANIFEST_SCHEMA_VERSION,
+    ...(databaseSchema ? { database_schema: databaseSchema } : {}),
     kind: "cantelop-edge-api",
     main_module: MAIN_MODULE,
     routes,
@@ -411,9 +423,16 @@ export async function watchLocalProject(
           runtimeOrigin,
         ),
         options.onBuild,
-        async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes),
+        async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes, await buildDatabaseSchema()),
       ),
     );
+    const schemaPath = path.resolve("db/schema.ts");
+    if (await exists(schemaPath)) {
+      contexts.push(await watchedContext("api", {
+        entryPoints: [schemaPath], bundle: true, platform: "node", format: "esm", write: false,
+        logLevel: "silent",
+      }, options.onBuild, async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes, await buildDatabaseSchema())));
+    }
     contexts.push(
       await watchedContext(
         "session-runtime",
@@ -482,4 +501,26 @@ async function watchedContext(
     throw error;
   }
   return buildContext;
+}
+
+async function exists(filename: string): Promise<boolean> {
+  try { await access(filename); return true; } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+/** Discovered automatically from the project root; absence opts out of managed application schemas. */
+export async function buildDatabaseSchema(entrypoint = path.resolve("db/schema.ts")): Promise<ApplicationDatabaseSchema | undefined> {
+  if (!await exists(entrypoint)) return undefined;
+  const bundle = await build({
+    stdin: { contents: `import * as schema from ${JSON.stringify(path.resolve(entrypoint))};\nglobalThis.__cantelopBuildSchema = schema;`,
+      resolveDir: path.dirname(path.resolve(entrypoint)), loader: "ts" },
+    bundle: true, format: "esm", platform: "node", target: "es2022", write: false, logLevel: "silent",
+  });
+  const source = bundle.outputFiles?.[0]?.text;
+  if (!source) throw new Error("database schema produced no module");
+  const generator = fileURLToPath(new URL("./database-schema.js", import.meta.url));
+  const result = await evaluateRouteModule(`${source}\nimport { createApplicationSchema } from ${JSON.stringify(generator)};\nconst artifact = await createApplicationSchema(globalThis.__cantelopBuildSchema);\nprocess.stdout.write("\\n${ROUTE_DISCOVERY_MARKER}" + JSON.stringify(artifact) + "\\n", () => process.exit(0));`);
+  const { validateApplicationSchema } = await import("./database-schema.js");
+  return validateApplicationSchema(result);
 }

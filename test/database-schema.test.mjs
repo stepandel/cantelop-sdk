@@ -1,0 +1,87 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createClient } from "@libsql/client";
+import { sqliteTable, text, integer } from "../dist/schema.js";
+import { createApplicationSchema, synchronizeApplicationSchema, validateApplicationSchema, applicationMigrationSQL } from "../dist/build.js";
+
+test("application artifacts are deterministic and reject reserved objects and system foreign keys", async () => {
+  const tasks = sqliteTable("tasks", { id: text().primaryKey() });
+  assert.deepEqual(await createApplicationSchema({ tasks }), await createApplicationSchema({ tasks }));
+  await assert.rejects(createApplicationSchema({ mailbox: sqliteTable("CaNtElOp_mailbox", { id: text() }) }), /reserved_table_name/);
+  const system = sqliteTable("cantelop_mailbox_sessions", { id: text().primaryKey() });
+  await assert.rejects(createApplicationSchema({ tasks: sqliteTable("tasks", { session: text().references(() => system.id) }) }), /foreign_key_outside_application/);
+  const artifact = await createApplicationSchema({ tasks });
+  assert.throws(() => validateApplicationSchema({ ...artifact, digest: "sha256:" + "0".repeat(64) }), /artifact_digest_mismatch/);
+});
+
+test("automatic migrations preserve application records and system schema, and retain SQL history", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cantelop-schema-"));
+  const db = createClient({ url: `file:${join(directory, "test.sqlite")}` });
+  try {
+    await db.execute("CREATE TABLE cantelop_mailbox_sessions (id TEXT PRIMARY KEY)");
+    await db.execute("INSERT INTO cantelop_mailbox_sessions VALUES ('system')");
+    const initial = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey() }) });
+    assert.equal((await synchronizeApplicationSchema(db, initial)).statements.length, 1);
+    assert.equal(await synchronizeApplicationSchema(db, initial), undefined);
+    await db.execute("INSERT INTO tasks VALUES ('app')");
+    const next = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey(), done: integer().notNull().default(0) }) });
+    await synchronizeApplicationSchema(db, next);
+    assert.equal((await db.execute("SELECT done FROM tasks WHERE id='app'")).rows[0].done, 0);
+    assert.equal((await db.execute("SELECT id FROM cantelop_mailbox_sessions")).rows[0].id, "system");
+    assert.equal((await db.execute("SELECT COUNT(*) AS count FROM cantelop_application_migrations")).rows[0].count, 2);
+    await assert.rejects(applicationMigrationSQL(next, initial), /explicit_migration_required/);
+    const invalid = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey(), done: integer().notNull().default(0), required: text().notNull() }) });
+    await assert.rejects(synchronizeApplicationSchema(db, invalid));
+    assert.equal((await db.execute("SELECT COUNT(*) AS count FROM cantelop_application_migrations")).rows[0].count, 2);
+    assert.equal((await db.execute("PRAGMA table_info(tasks)")).rows.some(row => row.name === "required"), false);
+  } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("system migration history adopts existing mailbox tables and rejects incompatible history", async () => {
+  const { migrateSystemDatabase } = await import("../dist/build.js");
+  const directory = await mkdtemp(join(tmpdir(), "cantelop-system-schema-"));
+  const db = createClient({ url: `file:${join(directory, "test.sqlite")}` });
+  try {
+    await migrateSystemDatabase(db);
+    await migrateSystemDatabase(db);
+    assert.equal((await db.execute("SELECT COUNT(*) AS count FROM cantelop_system_migrations")).rows[0].count, 1);
+    await db.execute("UPDATE cantelop_system_migrations SET definition='tampered'");
+    await assert.rejects(migrateSystemDatabase(db), /system_schema_incompatible/);
+  } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("schema build evaluates a developer-only TypeScript module and preserves deterministic artifacts", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const { buildDatabaseSchema } = await import("../dist/build.js");
+  const directory = await mkdtemp(join(tmpdir(), "cantelop-schema-build-"));
+  const filename = join(directory, "schema.ts");
+  try {
+    await writeFile(filename, `import { sqliteTable, text } from ${JSON.stringify(new URL("../dist/schema.js", import.meta.url).pathname)}; export const tasks = sqliteTable("tasks", { id: text().primaryKey() });`);
+    assert.deepEqual(await buildDatabaseSchema(filename), await buildDatabaseSchema(filename));
+    assert.equal(await buildDatabaseSchema(join(directory, "missing.ts")), undefined);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("destructive changes require a schema declaration and ambiguous renames do not open a prompt", async () => {
+  const initial = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey(), title: text() }) });
+  const next = await createApplicationSchema({ allowDestructiveChanges: true, tasks: sqliteTable("tasks", { id: text().primaryKey() }) });
+  assert.ok((await applicationMigrationSQL(initial, next)).length > 0);
+  const rename = await createApplicationSchema({ allowDestructiveChanges: true, tasks: sqliteTable("tasks", { id: text().primaryKey(), name: text() }) });
+  await assert.rejects(applicationMigrationSQL(initial, rename), /ambiguous_column_rename/);
+});
+
+test("historical release rollback retains the newer physical schema", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cantelop-schema-rollback-"));
+  const db = createClient({ url: `file:${join(directory, "test.sqlite")}` });
+  try {
+    const initial = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey() }) });
+    const next = await createApplicationSchema({ tasks: sqliteTable("tasks", { id: text().primaryKey(), title: text() }) });
+    await synchronizeApplicationSchema(db, initial);
+    await synchronizeApplicationSchema(db, next);
+    assert.equal(await synchronizeApplicationSchema(db, initial), undefined);
+    assert.equal((await db.execute("PRAGMA table_info(tasks)")).rows.some(row => row.name === "title"), true);
+  } finally { db.close(); await rm(directory, { recursive: true, force: true }); }
+});
