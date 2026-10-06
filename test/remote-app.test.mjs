@@ -438,3 +438,24 @@ test("remote errors expose stable codes without leaking messages", async () => {
     return true;
   });
 });
+
+
+test("message status exposes retry and recovery phases directly", async () => {
+  for (const phase of ["retrying", "recovering"]) {
+    const at = "2026-10-06T12:00:00Z";
+    const app = createRemoteApp({
+      messageId: () => messageId,
+      fetch: async (request) => request.method === "POST"
+        ? Response.json({ id: messageId, status: "accepted", accepted_at: at }, { status: 202 })
+        : Response.json({
+            id: messageId, state: "accepted", accepted_at: at,
+            execution: { phase, outcome: phase === "retrying" ? "unknown" : "pending",
+              sandbox_id: "sbx-0123456789abcdef0123456789abcdef", deadline: at,
+              phase_at: at, work_state: "busy" },
+          }),
+    });
+    const session = app.sessions.open({ id: namedSessionId, workspaceId, keepAliveSeconds: 0 });
+    const message = await session.dispatch({ event: "work" });
+    assert.equal((await message.status()).execution.phase, phase);
+  }
+});
