@@ -92,3 +92,28 @@ test("renewal failure reuses credentials only while they remain unexpired", asyn
     db.close();
   }
 });
+
+test("local database credentials require an explicit, exact development origin", () => {
+  const local="http://127.0.0.1:32100";
+  const credentials={url:local+"/databases/wsp_0123456789abcdef0123456789abcdef/",authToken:"local-token",expiresAt:new Date(Date.now()+900000).toISOString()};
+  assert.throws(()=>validateDatabaseCredentials(credentials));
+  assert.equal(validateDatabaseCredentials(credentials,Date.now(),local).url,credentials.url);
+  for(const bad of ["http://127.0.0.1:32101","http://localhost:32100","http://evil.example:32100","http://127.0.0.1:32100/path","http://user@127.0.0.1:32100"]) {
+    assert.throws(()=>validateDatabaseCredentials(credentials,Date.now(),bad));
+  }
+  for(const suffix of ["../other/","wsp_invalid/","wsp_0123456789abcdef0123456789abcdef/?x=1"]) {
+    assert.throws(()=>validateDatabaseCredentials({...credentials,url:local+"/databases/"+suffix},Date.now(),local));
+  }
+});
+
+test("Session local origin is opt-in and must match its credential broker", async () => {
+  for(const origin of ["http://127.0.0.1:32100","http://host.docker.internal:32100"]) {
+    const environment={CANTELOP_LOCAL_DATABASE_ORIGIN:origin,CANTELOP_WORKSPACE_DATABASE_CREDENTIALS_URL:origin+"/internal/v1/runtime/database/credentials",CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN:"session-token"};
+    const request=async()=>Response.json({url:origin+"/databases/wsp_0123456789abcdef0123456789abcdef/",authToken:"local-token",expiresAt:new Date(Date.now()+900000).toISOString()});
+    const db=createSessionDatabase(environment,request);
+    assert.equal((await db.credentials()).authToken,"local-token"); db.close();
+    const {CANTELOP_LOCAL_DATABASE_ORIGIN,...hosted}=environment;
+    await assert.rejects(createSessionDatabase(hosted,request).credentials(),/invalid_runtime_configuration/);
+    await assert.rejects(createSessionDatabase({...environment,CANTELOP_WORKSPACE_DATABASE_CREDENTIALS_URL:"http://127.0.0.1:1/internal/v1/runtime/database/credentials"},request).credentials(),/invalid_runtime_configuration/);
+  }
+});

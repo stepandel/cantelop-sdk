@@ -38,6 +38,9 @@ const SESSION_RUNTIME_STARTUP_STATE_KEY = "dev.cantelop.sdk.session-runtime-star
 // it when an incompatible build/watch contract is introduced.
 export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 5;
 
+/** Local credentials and HTTP libSQL support required by database-enabled CLI dev. */
+export const CANTELOP_LOCAL_DATABASE_PROTOCOL_VERSION = 1;
+
 export interface BuildApiOptions {
   readonly entrypoint: string;
   readonly outdir: string;
@@ -169,7 +172,7 @@ function apiBuildOptions(
           "  const source = new URL(request.url);",
           "  return fetch(new Request(new URL(source.pathname + source.search, runtimeOrigin), request));",
           "};",
-          "export default createApiWorker(definition, { fetch: runtimeFetch });",
+          "export default createApiWorker(definition, { fetch: runtimeFetch, localDatabaseOrigin: runtimeOrigin });",
         ]),
       ].join("\n"),
       loader: "ts",

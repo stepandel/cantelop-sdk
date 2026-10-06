@@ -1,4 +1,4 @@
-import { createWorkspaceDatabase, validateDatabaseCredentials, type WorkspaceDatabase } from "./database.js";
+import { createWorkspaceDatabase, type DatabaseCredentials, type WorkspaceDatabase } from "./database.js";
 import type {
   CantelopApp,
   MessageRef,
@@ -28,6 +28,8 @@ type IDFactory = () => string;
 
 export interface RemoteAppOptions {
   readonly fetch?: RuntimeFetch;
+  /** Reserved for the CLI local runtime. Hosted clients leave this unset. */
+  readonly localDatabaseOrigin?: string;
   readonly sessionId?: IDFactory;
   readonly messageId?: IDFactory;
 }
@@ -75,7 +77,7 @@ export function createRemoteApp<Input = unknown, Reply = unknown>(
         method: "POST",
         body: { slug: config.slug },
       });
-      return readWorkspace(envelope, runtimeFetch);
+      return readWorkspace(envelope, runtimeFetch, options.localDatabaseOrigin);
     },
 
     async open(config: WorkspaceOpenConfig): Promise<Workspace> {
@@ -84,7 +86,7 @@ export function createRemoteApp<Input = unknown, Reply = unknown>(
         method: "POST",
         body: { slug: config.slug },
       });
-      return readWorkspace(envelope, runtimeFetch);
+      return readWorkspace(envelope, runtimeFetch, options.localDatabaseOrigin);
     },
   });
 
@@ -361,7 +363,7 @@ async function readEnvelope(response: Response): Promise<unknown> {
   }
 }
 
-function readWorkspace(value: unknown, runtimeFetch: RuntimeFetch): Workspace {
+function readWorkspace(value: unknown, runtimeFetch: RuntimeFetch, localDatabaseOrigin?: string): Workspace {
   if (!isRecord(value) ||
       typeof value.id !== "string" || !WORKSPACE_ID_PATTERN.test(value.id) ||
       typeof value.app_id !== "string" ||
@@ -381,7 +383,7 @@ function readWorkspace(value: unknown, runtimeFetch: RuntimeFetch): Workspace {
   let database: WorkspaceDatabase | undefined;
   return Object.freeze({
     async database() {
-      if (!database || database.closed) database = createWorkspaceDatabase(async () => validateDatabaseCredentials(await requestJSON(runtimeFetch, "/__cantelop/v1/workspaces/database/credentials", { method: "POST", body: { workspace_id: workspaceId } })));
+      if (!database || database.closed) database = createWorkspaceDatabase(async () => await requestJSON(runtimeFetch, "/__cantelop/v1/workspaces/database/credentials", { method: "POST", body: { workspace_id: workspaceId } }) as DatabaseCredentials, { localDatabaseOrigin });
       await database.credentials();
       return database;
     },
