@@ -8,4 +8,3 @@ export type {
 } from "./session-runtime-server.js";
 
 export { createSessionDatabase } from "./session-database.js";
-

@@ -575,4 +575,3 @@ while tracked intake, activity, or output handoff is outstanding.
 
 See the [application queue example](examples/application-queue/README.md) for
 application-owned receipt, queue, steering, cancellation, and checkpoint tables.
-
