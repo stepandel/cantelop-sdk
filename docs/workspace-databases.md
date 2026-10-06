@@ -44,7 +44,7 @@ Renew before `expiresAt`, and do not log either token.
 
 Clients support parameterized `execute`, atomic `batch`, `executeMultiple`, and
 interactive `transaction`. Application code owns table creation and schema
-migrations. Both surfaces connect directly to the remote database.
+migrations. Both surfaces connect directly to the Workspace database.
 
 ```ts
 const tx = await db.transaction("write");
@@ -68,3 +68,27 @@ server closes its context client at shutdown. Calling `context.database()` or
 Access covers the whole Workspace database. Table naming is not a security
 boundary between Sessions. Archived Workspaces cannot issue new credentials;
 already issued credentials remain valid until expiry.
+
+## Local development
+
+With a compatible CLI and SDK, `cantelop dev` implements these same database
+interfaces using disposable SQLite files under `.cantelop/dev/databases/`.
+The API and all Sessions in a Workspace share one database, in native and
+container mode. Data survives rebuilds and runner restarts. Stop the runner and
+remove that directory to reset local databases; Workspace files are retained.
+Local data is never synchronized with hosted databases, and no login or Turso
+credentials are needed.
+
+The CLI supplies an explicit local database origin and Session credential broker.
+Application code does not set these options or environment values. Ordinary
+hosted clients continue accepting only hosted Turso credentials. The SDK build
+module advertises `CANTELOP_LOCAL_DATABASE_PROTOCOL_VERSION = 1`; older SDKs
+must be upgraded before running a database-enabled CLI's development command.
+Local native libSQL clients can use the returned HTTP URL and bearer token.
+
+Local SQL tokens last 15 minutes and become invalid when the runner stops.
+Stopping a Session blocks credential renewal. Abandoned HTTP streams, including
+open transactions, are rolled back after one minute of inactivity; keep
+transactions short. Local development covers SQL behavior and sharing, while
+hosted provisioning, distributed infrastructure, and archive/purge lifecycle
+still require deployed testing.
