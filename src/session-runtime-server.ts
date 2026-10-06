@@ -109,7 +109,9 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; closeDatabase(): void; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
   const environment = options.env ?? process.env;
-  if (options.mailboxDatabase || environment.CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN) {
+  // The CLI owns local Message admission and replies. Its SQL credentials
+  // must not select the hosted durable-mailbox protocol implicitly.
+  if (options.mailboxDatabase || (environment.CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN && !environment.CANTELOP_LOCAL_DATABASE_ORIGIN)) {
     return createDurableSessionRuntime(behaviour, {sandboxId, env: environment, ...(options.mailboxDatabase ? {database: options.mailboxDatabase} : {})});
   }
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);

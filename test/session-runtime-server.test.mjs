@@ -802,3 +802,27 @@ async function waitFor(predicate) {
   }
   throw new Error("condition was not reached");
 }
+
+
+test("local SQL credentials preserve CLI Message admission; hosted credentials select durable admission", async (t) => {
+  for (const local of [false, true]) {
+    let received = false;
+    const server = createServer(createSessionRuntimeHandler(behaviour(async () => { received = true; }), {
+      env: {
+        CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN: "session-token",
+        CANTELOP_WORKSPACE_DATABASE_CREDENTIALS_URL: local ? "http://127.0.0.1:32100/internal/v1/runtime/database/credentials" : "https://console.cantelop.dev/internal/v1/runtime/database/credentials",
+        ...(local ? { CANTELOP_LOCAL_DATABASE_ORIGIN: "http://127.0.0.1:32100" } : {}),
+      },
+    }));
+    await listen(server);
+    try {
+      const snapshot = await (await fetch(`${origin(server)}/__cantelop/v2/runtime`)).json();
+      assert.equal(snapshot.capabilities?.durable_mailbox === true, !local);
+      if (local) {
+        const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(messageEnvelope({ prompt: "local" })) });
+        assert.equal(response.status, 202);
+        assert.equal(received, true);
+      }
+    } finally { await close(server); }
+  }
+});
