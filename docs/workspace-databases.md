@@ -45,8 +45,8 @@ Renew before `expiresAt`, and do not log either token.
 Clients support parameterized `execute`, atomic `batch`, `executeMultiple`, and
 interactive `transaction`. Application code owns its schema definitions. Compatible CLI/platform versions
 automatically generate and apply application migrations from `db/schema.ts`.
-Hosted application tokens allow data operations on application tables only;
-schema changes run through the migration lifecycle. Both surfaces connect directly to the Workspace database.
+API and Session code receive ordinary Workspace credentials, including schema
+operations. Both surfaces connect directly to the same Workspace database.
 
 ```ts
 const tx = await db.transaction("write");
@@ -67,7 +67,7 @@ Call `db.close()` when a manually owned client is finished. The managed Session
 server closes its context client at shutdown. Calling `context.database()` or
 `workspace.database()` again after closing their client creates a fresh client.
 
-Application connections exclude `cantelop_*` system tables. Table naming is not a security
+The Workspace database belongs to the application. Table naming is not a security
 boundary between Sessions. Archived Workspaces cannot issue new credentials;
 already issued credentials remain valid until expiry.
 
@@ -140,8 +140,7 @@ are not supported in this initial protocol. Views are also excluded initially.
 Local destructive changes are intended for disposable development databases.
 
 A write transaction serializes migration execution and commits schema changes
-with their history record. System and application histories are independent:
-`cantelop_system_migrations` records SDK-owned migrations, while
+with their history record.
 `cantelop_application_migrations` records application schema digests, snapshots,
 SQL, and timestamps. Re-activating an already-applied historical schema retains
 the newer database structure; it never automatically down-migrates. After an
@@ -159,31 +158,28 @@ Table and index names beginning with `cantelop_`, `sqlite_`, or `__` are reserve
 case-insensitively. Foreign keys must reference another declared application
 table. Only application objects participate in migration generation.
 
-## Access boundary and rollout
+## Existing databases and rollout
 
-There is one physical database per Workspace. Hosted application credentials use
-Turso's fine-grained permissions, restricted to named application tables and data
-operations. Migration credentials additionally permit schema operations on
-application tables, Drizzle's temporary rebuild tables, and the application
-migration ledger. Before using either grant, the platform verifies that system
-reads are denied; a provider that ignores permissions fails closed. SQLite
-metadata remains readable; this restriction protects system records.
+The Session inbox is in memory. Database provisioning and schema migration do
+not install mailbox tables or a system migration history. Applications own
+persistent queues, checkpoints, and other data through this same database.
+There are no separate system/application credential scopes or table grants.
 
-Local HTTP connections use SQLite's authorizer to deny system access, including
-indirect access through triggers and views. The CLI applies migrations through
-a separate local file connection. Hosted and local databases require no new
-physical database or synchronization between environments.
+Migration generation uses the declared schema and its recorded history, never
+unrelated tables. Reserved names protect the migration ledger and retained
+legacy mailbox history from managed schema changes; they are not an SQL access
+boundary. Existing legacy mailbox tables and unrelated application tables are
+left untouched.
 
-The hosted SDK mailbox still executes inside the trusted Session process and
-requests a privileged internal connection using the runtime capability. That
-connection is never returned by `context.database()`. This separates public
-application access from internal runtime access; it does not sandbox malicious
-code in the same process or hide that process's capability. A stronger boundary
-requires moving mailbox operations behind a platform service.
+First-time adoption fails with `unmanaged_table_conflict` if a declared table
+already exists without managed migration history, even if its columns look
+similar. Automatic baselining of existing tables is not supported yet. Start
+managed tables in a fresh Workspace or keep existing tables under their current
+migration mechanism until an explicit baseline workflow is available. Do not
+remove populated tables or fabricate ledger rows to bypass this check.
 
-Deploy the updated SDK, CLI, and platform together. Old Session runtimes that use
-the application credential path for mailbox SQL are incompatible with the new
-application-only grants. Previously issued full-access tokens remain usable
-until their expiry (15 minutes). Hosted permission enforcement requires a live
-Turso qualification before production rollout; local and mocked tests cannot
-verify the hosted service's implementation.
+Deploy the updated platform/CLI support before applications emit version 4
+schema manifests. The application-owned mailbox runtime from SDK 0.16.0 remains
+the normal runtime. SDK and platform schema validation and migration generation
+must stay aligned. Projects without `db/schema.ts` keep runtime-controlled SQL
+and their existing credential behavior.

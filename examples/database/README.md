@@ -13,6 +13,5 @@ Cantelop provides the renewable libSQL connection and migration lifecycle.
 Add a column to `db/schema.ts` to try an automatic local migration. Both API and
 Session code import the schema. Existing records survive rebuilds and restarts.
 
-Use `cantelop database migrations WORKSPACE_ID --json` to inspect hosted system
-and application migration histories, including the SQL used for application
-changes. System records remain unavailable through application SQL.
+Use `cantelop database migrations WORKSPACE_ID --json` to inspect hosted application migration history, including the SQL used for application
+changes. The Session inbox stays in memory; application queues can use this same schema.
