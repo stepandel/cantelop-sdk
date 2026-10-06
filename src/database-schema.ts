@@ -18,6 +18,31 @@ const namePattern = /^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/;
 function object(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+const typePattern = /^[a-zA-Z]+(?:\s*\(\s*\d+(?:\s*,\s*\d+)?\s*\))?$/;
+const literalPattern = /^(?:-?\d+(?:\.\d+)?(?:e[+-]?\d+)?|NULL|TRUE|FALSE|CURRENT_(?:TIME|DATE|TIMESTAMP)|'(?:[^']|'')*')$/i;
+const actions = new Set(["no action", "restrict", "set null", "set default", "cascade"]);
+function names(value: unknown): boolean {
+  return Array.isArray(value) && value.every(name => typeof name === "string" && namePattern.test(name));
+}
+/** drizzle-kit splices expressions into DDL verbatim; each must stay one self-contained expression. */
+function sqlExpression(value: unknown): boolean {
+  if (typeof value !== "string" || value.length > 4096) return false;
+  let quote: string | undefined;
+  let depth = 0;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    if (quote) { if (character === quote) quote = undefined; continue; }
+    if (character === "'" || character === '"' || character === "`") quote = character;
+    else if (character === "(") depth++;
+    else if (character === ")" && --depth < 0) return false;
+    else if (character === ";" || value.startsWith("--", index) || value.startsWith("/*", index)) return false;
+  }
+  return quote === undefined && depth === 0;
+}
+function columnDefault(value: unknown): boolean {
+  if (value === undefined || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) return true;
+  return typeof value === "string" && (literalPattern.test(value) || (value.startsWith("(") && value.endsWith(")") && sqlExpression(value.slice(1, -1))));
+}
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (object(value)) return `{${Object.keys(value).filter(key => value[key] !== undefined).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
@@ -31,11 +56,24 @@ export function validateApplicationSchema(value: unknown): ApplicationDatabaseSc
   for (const [name, table] of Object.entries(snapshot.tables)) {
     if (!object(table) || table.name !== name || !namePattern.test(name) || /^(cantelop_|sqlite_|__)/i.test(name)) throw new DatabaseSchemaError("reserved_table_name");
     if (!object(table.columns) || Object.keys(table.columns).length > 256) throw new DatabaseSchemaError("invalid_artifact");
+    for (const [key, column] of Object.entries(table.columns)) {
+      if (!object(column) || column.name !== key || !namePattern.test(key) || typeof column.type !== "string" || !typePattern.test(column.type) || !columnDefault(column.default)) throw new DatabaseSchemaError("invalid_column_definition");
+    }
     for (const foreignKey of Object.values(table.foreignKeys ?? {})) {
       if (!object(foreignKey) || !Object.hasOwn(snapshot.tables, foreignKey.tableTo)) throw new DatabaseSchemaError("foreign_key_outside_application");
+      if (foreignKey.tableFrom !== name || !namePattern.test(foreignKey.name) || !names(foreignKey.columnsFrom) || !names(foreignKey.columnsTo)
+        || !actions.has(String(foreignKey.onDelete ?? "no action")) || !actions.has(String(foreignKey.onUpdate ?? "no action"))) throw new DatabaseSchemaError("invalid_foreign_key");
     }
     for (const index of Object.values(table.indexes ?? {})) {
       if (!object(index) || !namePattern.test(index.name) || /^(cantelop_|sqlite_|__)/i.test(index.name)) throw new DatabaseSchemaError("reserved_index_name");
+      if (!Array.isArray(index.columns) || !index.columns.every((column: unknown) => sqlExpression(column) && !String(column).includes("`"))
+        || (index.where !== undefined && !sqlExpression(index.where))) throw new DatabaseSchemaError("invalid_index");
+    }
+    for (const constraint of [...Object.values(table.compositePrimaryKeys ?? {}), ...Object.values(table.uniqueConstraints ?? {})]) {
+      if (!object(constraint) || !namePattern.test(constraint.name) || !names(constraint.columns)) throw new DatabaseSchemaError("invalid_constraint");
+    }
+    for (const constraint of Object.values(table.checkConstraints ?? {})) {
+      if (!object(constraint) || !namePattern.test(constraint.name) || !sqlExpression(constraint.value)) throw new DatabaseSchemaError("invalid_constraint");
     }
   }
   const digest = `sha256:${createHash("sha256").update(canonical({ snapshot, allowDestructiveChanges: value.allowDestructiveChanges })).digest("hex")}`;

@@ -149,7 +149,7 @@ async function buildApiArtifact(
   await build(apiBuildOptions(entrypoint, mainModule, runtimeOrigin));
 
   const discovery = await discoverRoutes(entrypoint);
-  const manifest = await writeApiManifest(outdir, discovery.routes, await buildDatabaseSchema());
+  const manifest = await writeApiManifest(outdir, discovery.routes, await buildDatabaseSchema(await projectSchemaPath(entrypoint)));
   const manifestFile = path.join(outdir, MANIFEST_FILE);
 
   return Object.freeze({
@@ -412,6 +412,7 @@ export async function watchLocalProject(
     mkdir(sessionRuntimeOutdir, { recursive: true }),
   ]);
 
+  const schemaPath = await projectSchemaPath(apiEntrypoint);
   const contexts: BuildContext[] = [];
   try {
     contexts.push(
@@ -423,15 +424,14 @@ export async function watchLocalProject(
           runtimeOrigin,
         ),
         options.onBuild,
-        async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes, await buildDatabaseSchema()),
+        async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes, await buildDatabaseSchema(schemaPath)),
       ),
     );
-    const schemaPath = path.resolve("db/schema.ts");
     if (await exists(schemaPath)) {
       contexts.push(await watchedContext("api", {
         entryPoints: [schemaPath], bundle: true, platform: "node", format: "esm", write: false,
         logLevel: "silent",
-      }, options.onBuild, async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes, await buildDatabaseSchema())));
+      }, options.onBuild, async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes, await buildDatabaseSchema(schemaPath))));
     }
     contexts.push(
       await watchedContext(
@@ -507,6 +507,13 @@ async function exists(filename: string): Promise<boolean> {
   try { await access(filename); return true; } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
+  }
+}
+/** The project root is the nearest ancestor of the API entrypoint holding cantelop.json or package.json. */
+async function projectSchemaPath(entrypoint: string): Promise<string> {
+  for (let directory = path.dirname(path.resolve(entrypoint)); ; directory = path.dirname(directory)) {
+    if (await exists(path.join(directory, "cantelop.json")) || await exists(path.join(directory, "package.json"))) return path.join(directory, "db/schema.ts");
+    if (path.dirname(directory) === directory) return path.resolve("db/schema.ts");
   }
 }
 /** Discovered automatically from the project root; absence opts out of managed application schemas. */

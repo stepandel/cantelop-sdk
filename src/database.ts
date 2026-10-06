@@ -17,6 +17,25 @@ export class DatabaseAccessError extends Error {
   constructor(readonly code: string) { super(`Cantelop database access failed: ${code}`); this.name = "DatabaseAccessError"; }
 }
 
+/** A non-owning view: closing it detaches the caller without closing the shared client. */
+export function borrowWorkspaceDatabase(owner: WorkspaceDatabase): WorkspaceDatabase {
+  let closed = false;
+  const use = <T>(action: () => Promise<T>): Promise<T> => closed ? Promise.reject(new DatabaseAccessError("client_closed")) : action();
+  return Object.freeze({
+    execute(statement: InStatement, args?: InArgs) { return use(() => typeof statement === "string" ? owner.execute(statement, args) : owner.execute(statement)); },
+    batch(statements: InStatement[], mode?: TransactionMode) { return use(() => owner.batch(statements, mode)); },
+    migrate(statements: InStatement[]) { return use(() => owner.migrate(statements)); },
+    sync() { return use(() => owner.sync()); },
+    reconnect() { closed = false; },
+    get protocol() { return owner.protocol; },
+    executeMultiple(sql: string) { return use(() => owner.executeMultiple(sql)); },
+    transaction(mode?: TransactionMode) { return use(() => owner.transaction(mode)); },
+    credentials() { return use(() => owner.credentials()); },
+    close() { closed = true; },
+    get closed() { return closed || owner.closed; },
+  });
+}
+
 /** Renewable client; operations are never automatically replayed. */
 export function createWorkspaceDatabase(
   resolveCredentials: () => Promise<DatabaseCredentials>,

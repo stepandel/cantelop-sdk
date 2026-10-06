@@ -9,7 +9,7 @@ import type {
 } from "./session.js";
 import type { SessionIdentity } from "./resources.js";
 import { createSessionDatabase, createSessionSystemDatabase } from "./session-database.js";
-import type { WorkspaceDatabase } from "./database.js";
+import { borrowWorkspaceDatabase, type WorkspaceDatabase } from "./database.js";
 import { DurableMailbox } from "./durable-mailbox.js";
 import {
   TursoMailboxStore,
@@ -39,9 +39,11 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
   },
 ) {
   const db = options.database ?? createSessionSystemDatabase(options.env);
-  let applicationDatabase = options.database ?? createSessionDatabase(options.env);
+  // An injected client is shared with the mailbox store, so application code only borrows it.
+  const applicationClient = () => options.database ? borrowWorkspaceDatabase(options.database) : createSessionDatabase(options.env);
+  let applicationDatabase = applicationClient();
   const database = async () => {
-    if (applicationDatabase.closed) applicationDatabase = createSessionDatabase(options.env);
+    if (applicationDatabase.closed) applicationDatabase = applicationClient();
     await applicationDatabase.credentials();
     return applicationDatabase;
   };
@@ -434,7 +436,7 @@ export function createDurableSessionRuntime<Input, Event, Reply>(
         await mailbox?.close();
       } finally {
         db.close();
-        if (applicationDatabase !== db) applicationDatabase.close();
+        applicationDatabase.close();
       }
     },
   };
