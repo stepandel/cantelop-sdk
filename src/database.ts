@@ -1,7 +1,7 @@
 import { createClient, type Client, type InStatement, type InArgs, type ResultSet, type Transaction, type TransactionMode } from "@libsql/client/web";
 export type { InStatement, InArgs, ResultSet, Transaction, TransactionMode } from "@libsql/client/web";
 export interface DatabaseCredentials { readonly url: string; readonly authToken: string; readonly expiresAt: string }
-export interface WorkspaceDatabase {
+export interface WorkspaceDatabase extends Client {
   execute(statement: InStatement): Promise<ResultSet>;
   execute(sql: string, args?: InArgs): Promise<ResultSet>;
   batch(statements: InStatement[], mode?: TransactionMode): Promise<ResultSet[]>;
@@ -66,6 +66,10 @@ export function createWorkspaceDatabase(
   return Object.freeze({
     execute(statement: InStatement, args?: InArgs) { return use(client => typeof statement === "string" ? client.execute(statement, args) : client.execute(statement)); },
     batch(statements: InStatement[], mode?: TransactionMode) { return use(client => client.batch(statements, mode)); },
+    migrate(statements: InStatement[]) { return use(client => client.migrate(statements)); },
+    sync() { return use(client => client.sync()); },
+    reconnect() { closed = false; },
+    get protocol() { return "http"; },
     executeMultiple(sql: string) { return use(client => client.executeMultiple(sql)); },
     async transaction(mode: TransactionMode = "write"): Promise<Transaction> {
       const value = await acquire();
