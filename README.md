@@ -111,9 +111,9 @@ running exactly one SDK-managed Session runtime process. The process is never
 shared by multiple Sessions, so module-level agent and conversation state is
 per-Session.
 
-The deployed runtime processes the actor's Workspace Turso mailbox one message
-at a time in acceptance order. Admission, replies, and execution state survive
-runtime replacement. Long-running agent work can move into the Session's single
+The runtime processes the actor's in-memory inbox one message at a time.
+Fire Fuse persists transport admission and replies. The application persists
+its own jobs, checkpoints, and recovery state. Long-running agent work can move into the Session's single
 managed activity, allowing the mailbox to keep receiving commands such as
 steer and cancel. The application defines what every message means; Cantelop
 only provides identity, routing, serialization, activity management, and event
@@ -405,7 +405,7 @@ logical Session.
 ### Implementing different message types
 
 You define the message protocol and control how each message is handled.
-Cantelop persists messages in the Workspace mailbox before activating the
+Fire Fuse persists messages in its transport queue before activating the
 Session's Sandbox. The runtime handles them one at a time in FIFO (acceptance)
 order. It
 does not assign business logic to names such as `chat`, `steer`, or `cancel`.
@@ -576,7 +576,3 @@ while tracked intake, activity, or output handoff is outstanding.
 See the [application queue example](examples/application-queue/README.md) for
 application-owned receipt, queue, steering, cancellation, and checkpoint tables.
 
-The old durable mailbox adapters remain exported for migration qualification.
-Only explicit `mailboxDatabase` injection selects that retired protocol;
-credentials never select it. New applications should use the normal runtime and
-own their persistence through `context.database()`.

@@ -1,4 +1,3 @@
-import { createDurableSessionRuntime } from "./durable-session-runtime.js";
 import { createSessionDatabase } from "./session-database.js";
 /// <reference types="node" />
 
@@ -59,8 +58,6 @@ export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
   sandboxId?: string;
   executionTimeoutMs?: number;
-  /** @deprecated Explicit legacy mailbox injection for migration qualification only. */
-  mailboxDatabase?: import("./database.js").WorkspaceDatabase;
 }
 
 export interface SessionRuntimeServer {
@@ -109,11 +106,6 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; closeDatabase(): void; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
-  // Explicit injection retains the old protocol for migration qualification.
-  // Workspace DB access never selects a mailbox implementation.
-  if (options.mailboxDatabase) {
-    return createDurableSessionRuntime(behaviour, {sandboxId, env: options.env ?? process.env, ...(options.mailboxDatabase ? {database: options.mailboxDatabase} : {})});
-  }
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);
   let sessionDatabase = createSessionDatabase(options.env ?? process.env);
   const database = async () => {
