@@ -36,7 +36,7 @@ export interface SessionOpenBySlugConfig extends SessionOpenBaseConfig {
 export type SessionOpenConfig = SessionOpenByIDConfig | SessionOpenBySlugConfig;
 
 export interface MessageExecution {
- readonly phase: "sending" | "accepted" | "running" | "cancelling" | "settled" | "quiescent" | "unavailable";
+ readonly phase: "sending" | "accepted" | "running" | "cancelling" | "settled" | "retrying" | "recovering" | "quiescent" | "unavailable";
  readonly outcome: "pending" | "succeeded" | "failed" | "timed_out" | "unknown";
  readonly sandboxId: string;
  readonly deadline: Date;

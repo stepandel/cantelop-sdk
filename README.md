@@ -547,26 +547,36 @@ API and Session runtimes share an automatically provisioned Workspace database.
 See [Workspace database access](docs/workspace-databases.md) for SQL clients,
 renewable native credentials, and transaction behavior.
 
-## Durable mailbox adapters
+## Application owned messaging
 
-`@cantelop/sdk/runtime` exports `Mailbox`, `DurableMailbox`,
-`InMemoryMailboxAdapter`, `MailboxStore`, and `TursoMailboxStore`. Both adapters
-keep synchronous `isIdle` and async `enqueue`, `status`, `cancel`, `prepareIdle`,
-`resume`, and `close` methods. `isIdle` includes tracked admissions and settlement
-writes. Releasing compute requires the durable receipt from `prepareIdle()` and
-coordinator acknowledgement of output; local idle alone cannot authorize release.
+The Session inbox stays in memory even when Workspace database credentials are
+available. A successful `receive` return acknowledges application intake.
+Applications that need durable work commit their own queue or control update
+before returning. Keep agent runs in `context.activity` so new receive handlers
+can queue, steer, or cancel them while they run.
 
-The platform acquires a pinned lease and grants a sandbox/epoch/lease tuple before
-`resume()`. Work admitted after parking stays queued until a fresh grant. The
-runtime selects Turso when Workspace database credentials are supplied; local
-legacy handlers without credentials retain their existing in-memory behavior.
-Mailbox schema migration belongs to the platform, before activation. Deploy the
-matching platform coordinator before using the durable runtime in production.
+`onActivate(context)` runs once in each runtime incarnation, before its first
+receive or recovery callback. Restore pending application jobs and checkpoints
+there, and register the worker as tracked activity. The hook has the Session,
+database, activity, output, signal, and send capabilities. If restoration fails,
+intake fails rather than acknowledging uninitialized work.
 
-Within `receive` and `onRecover`, use `await context.send(message)` to observe
-durable admission errors. The runtime also tracks unawaited admissions. Activity
-`send()` remains buffered and its admissions complete before activity becomes
-idle. Message handlers never hold a database transaction while application code
-runs. An interrupted handler has an unknown outcome and is not automatically
-replayed; recovery hooks must reconcile application side effects. Terminal IDs
-and deduplication reservations are retained for 30 days.
+Set `redelivery: true` only when your receive handler deduplicates message IDs
+across process loss. The platform may then redeliver unacknowledged intake after
+confirming the old owner is terminated, within the original delivery deadline.
+Without that opt-in, interrupted intake remains uncertain and is not replayed.
+An application DB commit and the platform acknowledgement are separate commits;
+external side effects are never guaranteed exactly once.
+
+`context.send()` and activity completion messages enter the in-memory inbox.
+Persist internal follow-ups yourself if they must survive a crash. Acknowledged
+intake and a completed application job are separate states. Compute remains busy
+while tracked intake, activity, or output handoff is outstanding.
+
+See the [application queue example](examples/application-queue/README.md) for
+application-owned receipt, queue, steering, cancellation, and checkpoint tables.
+
+The old durable mailbox adapters remain exported for migration qualification.
+Only explicit `mailboxDatabase` injection selects that retired protocol;
+credentials never select it. New applications should use the normal runtime and
+own their persistence through `context.database()`.

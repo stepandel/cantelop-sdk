@@ -59,7 +59,16 @@ export interface SessionRecoveryContext<Message, Event = never> {
   send(message: Message): Promise<void>;
 }
 
+/** Runs once per runtime incarnation, before intake or recovery. */
+export type SessionActivationContext<Message, Event = never> = Omit<
+  SessionContext<Message, Event, never>, "message" | "reply"
+>;
+
 export interface SessionBehaviour<Message, Event = never, Reply = never> {
+  /** Opt in only when intake is idempotent across process loss using message.id. */
+  readonly redelivery?: boolean;
+  onActivate?(context: SessionActivationContext<Message, Event>): Awaitable<void>;
+  /** Successful return acknowledges intake. Commit durable work before returning. */
   receive(context: SessionContext<Message, Event, Reply>): Awaitable<void>;
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }
