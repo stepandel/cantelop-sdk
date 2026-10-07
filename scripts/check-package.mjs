@@ -57,6 +57,10 @@ try {
     path.join(consumer, "qualify.mjs"),
     [
       'import assert from "node:assert/strict";',
+      'import { createCodex, createCodexWorkspaceStorage } from "@cantelop/sdk/codex";',
+      'assert.equal(typeof createCodex, "function");',
+      'assert.equal(typeof createCodexWorkspaceStorage, "function");',
+
       'import { CANTELOP_CLI_BUILD_PROTOCOL_VERSION, buildApi, buildSessionRuntime, buildLocalApi, watchLocalProject } from "@cantelop/sdk/build";',
       'import { defineApi } from "@cantelop/sdk/api";',
       'import { createApiWorker } from "@cantelop/sdk/edge";',

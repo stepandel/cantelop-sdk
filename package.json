@@ -48,6 +48,10 @@
       "types": "./dist/database.d.ts",
       "import": "./dist/database.js"
     },
+    "./codex": {
+      "types": "./dist/codex.d.ts",
+      "import": "./dist/codex.js"
+    },
     "./schema": {
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
@@ -64,7 +68,10 @@
     "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs && node scripts/check-database-example.mjs",
     "check:package": "pnpm build && node scripts/check-package.mjs",
     "prepack": "pnpm build",
-    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs"
+    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
+    "build:codex": "node scripts/build-codex.mjs",
+    "check:codex-native": "pnpm build && node scripts/check-codex-native.mjs",
+    "check:codex-harness": "pnpm build && node scripts/check-codex-harness.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",

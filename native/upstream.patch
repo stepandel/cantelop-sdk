@@ -1,0 +1,2409 @@
+diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
+index 1cee117..4c7225f 100644
+--- a/codex-rs/Cargo.lock
++++ b/codex-rs/Cargo.lock
+@@ -1595,6 +1595,22 @@ dependencies = [
+  "displaydoc",
+ ]
+ 
++[[package]]
++name = "cantelop-codex-workspace"
++version = "0.1.0"
++dependencies = [
++ "base64 0.22.1",
++ "futures-core",
++ "futures-util",
++ "log",
++ "reqwest 0.12.28",
++ "serde",
++ "serde_json",
++ "sqlx",
++ "sqlx-core",
++ "tokio",
++]
++
+ [[package]]
+ name = "caseless"
+ version = "0.2.2"
+@@ -1968,6 +1984,7 @@ name = "codex-agent-message-board-extension"
+ version = "0.0.0"
+ dependencies = [
+  "base64 0.22.1",
++ "cantelop-codex-workspace",
+  "caseless",
+  "chrono",
+  "codex-extension-api",
+@@ -2079,6 +2096,7 @@ dependencies = [
+  "app_test_support",
+  "axum",
+  "base64 0.22.1",
++ "cantelop-codex-workspace",
+  "chrono",
+  "clap",
+  "codex-agent-extension",
+@@ -2511,6 +2529,7 @@ dependencies = [
+  "app_test_support",
+  "assert_cmd",
+  "assert_matches",
++ "cantelop-codex-workspace",
+  "chrono",
+  "clap",
+  "clap_complete",
+@@ -4660,13 +4679,13 @@ name = "codex-state"
+ version = "0.0.0"
+ dependencies = [
+  "anyhow",
++ "cantelop-codex-workspace",
+  "chrono",
+  "codex-git-utils",
+  "codex-history",
+  "codex-protocol",
+  "codex-utils-absolute-path",
+  "file-id",
+- "libsqlite3-sys",
+  "log",
+  "pretty_assertions",
+  "scopeguard",
+@@ -4674,7 +4693,6 @@ dependencies = [
+  "serde_json",
+  "sqlx",
+  "sqlx-macros",
+- "sqlx-sqlite",
+  "strum 0.27.2",
+  "tokio",
+  "tracing",
+@@ -4746,6 +4764,7 @@ dependencies = [
+ name = "codex-thread-store"
+ version = "0.0.0"
+ dependencies = [
++ "cantelop-codex-workspace",
+  "chrono",
+  "codex-app-server-protocol",
+  "codex-extension-items",
+@@ -9994,7 +10013,6 @@ version = "0.37.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
+ dependencies = [
+- "cc",
+  "pkg-config",
+  "vcpkg",
+ ]
+diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
+index ce7ed1f..e0231a7 100644
+--- a/codex-rs/Cargo.toml
++++ b/codex-rs/Cargo.toml
+@@ -1,5 +1,6 @@
+ [workspace]
+ members = [
++    "cantelop-workspace",
+     "aws-auth",
+     "analytics",
+     "agent-graph-store",
+@@ -169,6 +170,7 @@ edition = "2024"
+ license = "Apache-2.0"
+ 
+ [workspace.dependencies]
++cantelop-codex-workspace = { path = "cantelop-workspace" }
+ # Internal
+ codex-realtime-webrtc = { path = "realtime-webrtc" }
+ app_test_support = { path = "app-server/tests/common" }
+@@ -490,7 +492,6 @@ sqlx = { version = "=0.9.0", default-features = false, features = [
+     "migrate",
+     "runtime-tokio",
+     "tls-rustls",
+-    "sqlite-bundled",
+     "time",
+     "uuid",
+ ] }
+diff --git a/codex-rs/app-server-protocol/src/lib.rs b/codex-rs/app-server-protocol/src/lib.rs
+index eb2b76d..44f7e35 100644
+--- a/codex-rs/app-server-protocol/src/lib.rs
++++ b/codex-rs/app-server-protocol/src/lib.rs
+@@ -43,6 +43,7 @@ pub use protocol::v1::GitSha;
+ pub use protocol::v1::InitializeCapabilities;
+ pub use protocol::v1::InitializeParams;
+ pub use protocol::v1::InitializeResponse;
++pub use protocol::v1::{CantelopWorkspaceStorage, CantelopShutdownParams, CantelopShutdownResponse};
+ pub use protocol::v1::InterruptConversationResponse;
+ pub use protocol::v1::LoginApiKeyParams;
+ pub use protocol::v1::SandboxSettings;
+diff --git a/codex-rs/app-server-protocol/src/protocol/common.rs b/codex-rs/app-server-protocol/src/protocol/common.rs
+index 3e73b44..ab0c4ef 100644
+--- a/codex-rs/app-server-protocol/src/protocol/common.rs
++++ b/codex-rs/app-server-protocol/src/protocol/common.rs
+@@ -497,6 +497,11 @@ enum GetAccountRateLimitsParamsTypeScript {
+ }
+ 
+ client_request_definitions! {
++    CantelopShutdown => "cantelop/shutdown" {
++        params: v1::CantelopShutdownParams,
++        serialization: None,
++        response: v1::CantelopShutdownResponse,
++    },
+     Initialize => "initialize" {
+         params: v1::InitializeParams,
+         serialization: None,
+diff --git a/codex-rs/app-server-protocol/src/protocol/v1.rs b/codex-rs/app-server-protocol/src/protocol/v1.rs
+index 7d05fb1..a8f7519 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v1.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v1.rs
+@@ -72,6 +72,8 @@ pub struct InitializeCapabilities {
+ #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+ #[serde(rename_all = "camelCase")]
+ pub struct InitializeResponse {
++    #[serde(default)]
++    pub cantelop_workspace_storage: Option<CantelopWorkspaceStorage>,
+     pub user_agent: String,
+     /// Absolute path to the server's $CODEX_HOME directory.
+     pub codex_home: AbsolutePathBuf,
+@@ -245,3 +247,23 @@ pub struct SandboxSettings {
+ pub struct InterruptConversationResponse {
+     pub abort_reason: TurnAbortReason,
+ }
++
++/// Storage contract of the pinned Cantelop native build.
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++pub struct CantelopWorkspaceStorage {
++    pub protocol_version: u32,
++    pub backend: String,
++    pub local_sqlite: bool,
++    pub domains: Vec<String>,
++}
++impl CantelopWorkspaceStorage {
++    pub fn workspace() -> Self {
++        Self { protocol_version: 1, backend: "workspace".into(), local_sqlite: false,
++            domains: ["threads", "history", "metadata", "projects", "sections", "attachments", "agent_graph", "goals", "memories", "queues", "logs", "remote_control", "imports", "message_boards"].into_iter().map(String::from).collect() }
++    }
++}
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++pub struct CantelopShutdownParams {}
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++pub struct CantelopShutdownResponse {}
+diff --git a/codex-rs/app-server-transport/src/transport/mod.rs b/codex-rs/app-server-transport/src/transport/mod.rs
+index 232ce94..769eb53 100644
+--- a/codex-rs/app-server-transport/src/transport/mod.rs
++++ b/codex-rs/app-server-transport/src/transport/mod.rs
+@@ -379,6 +379,7 @@ mod tests {
+             id: RequestId::Integer(7),
+             result: Box::new(ClientResponsePayload::Initialize(
+                 codex_app_server_protocol::InitializeResponse {
++                    cantelop_workspace_storage: None,
+                     user_agent: "codex-test-agent".to_string(),
+                     codex_home,
+                     platform_family: "unix".to_string(),
+diff --git a/codex-rs/app-server-transport/src/transport/remote_control/segment_tests.rs b/codex-rs/app-server-transport/src/transport/remote_control/segment_tests.rs
+index 3b2406b..df17656 100644
+--- a/codex-rs/app-server-transport/src/transport/remote_control/segment_tests.rs
++++ b/codex-rs/app-server-transport/src/transport/remote_control/segment_tests.rs
+@@ -136,6 +136,7 @@ fn invalid_response_becomes_remote_control_jsonrpc_error() {
+             message: Box::new(OutgoingMessage::Response(OutgoingResponse {
+                 id: RequestId::Integer(7),
+                 result: Box::new(ClientResponsePayload::Initialize(InitializeResponse {
++                    cantelop_workspace_storage: None,
+                     user_agent: "codex-test-agent".to_string(),
+                     codex_home,
+                     platform_family: "unix".to_string(),
+diff --git a/codex-rs/app-server-transport/src/transport/remote_control/tests.rs b/codex-rs/app-server-transport/src/transport/remote_control/tests.rs
+index 490ac1e..7b6a927 100644
+--- a/codex-rs/app-server-transport/src/transport/remote_control/tests.rs
++++ b/codex-rs/app-server-transport/src/transport/remote_control/tests.rs
+@@ -1888,6 +1888,7 @@ async fn remote_control_http_mode_enrolls_before_connecting() {
+                 result: Box::new(
+                     codex_app_server_protocol::ClientResponsePayload::Initialize(
+                         codex_app_server_protocol::InitializeResponse {
++                            cantelop_workspace_storage: None,
+                             user_agent: "codex-test-agent".to_string(),
+                             codex_home: codex_home.path().abs(),
+                             platform_family: "test-family".to_string(),
+diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
+index 0ef3050..fc0c5db 100644
+--- a/codex-rs/app-server/Cargo.toml
++++ b/codex-rs/app-server/Cargo.toml
+@@ -25,6 +25,7 @@ doctest = false
+ workspace = true
+ 
+ [dependencies]
++cantelop-codex-workspace = { workspace = true }
+ codex-utils-process = { workspace = true }
+ anyhow = { workspace = true }
+ base64 = { workspace = true }
+diff --git a/codex-rs/app-server/src/lib.rs b/codex-rs/app-server/src/lib.rs
+index 896aa66..0d33d50 100644
+--- a/codex-rs/app-server/src/lib.rs
++++ b/codex-rs/app-server/src/lib.rs
+@@ -1388,71 +1388,12 @@ struct StateDbInitResult {
+ async fn init_sqlite_state_db_with_fresh_start_on_corruption(
+     config: &Config,
+ ) -> anyhow::Result<StateDbInitResult> {
+-    let (result, backups) = codex_state::collect_runtime_db_backups(async {
+-        let mut attempted_backups = HashSet::new();
+-        loop {
+-            let err = match rollout_state_db::try_init(config).await {
+-                Ok(state_db) => return Ok(state_db),
+-                Err(err) => err,
+-            };
+-            let database_path = codex_state::runtime_db_path_for_corruption_error(&err)
+-                .unwrap_or_else(|| config.sqlite_config().state_db_path());
+-            if !codex_state::is_sqlite_corruption_error(&err)
+-                && !sqlite_home_is_blocking_file(database_path.as_path())
+-            {
+-                return Err(err);
+-            }
+-
+-            if !attempted_backups.insert(database_path.clone()) {
+-                return Err(anyhow::anyhow!(
+-                    "failed to initialize sqlite state runtime after moving damaged database file into a backup folder: {err}"
+-                ));
+-            }
+-
+-            let original_error = err.to_string();
+-            emit_state_db_backup_warning(&format!(
+-                "Codex local database at {} appears damaged. Moving it into a backup folder so the app server can rebuild it from saved data.",
+-                database_path.display()
+-            ));
+-            let backups = codex_state::backup_runtime_db_for_fresh_start(database_path.as_path())
+-                .await
+-                .map_err(|backup_err| {
+-                    anyhow::anyhow!(
+-                        "failed to move damaged sqlite state database files into a backup folder: {backup_err}; original error: {original_error}"
+-                    )
+-                })?;
+-            for backup in &backups {
+-                emit_state_db_backup_warning(&format!(
+-                    "Moved damaged Codex local database file {} to {}",
+-                    backup.original_path.display(),
+-                    backup.backup_path.display()
+-                ));
+-            }
+-        }
+-    })
+-    .await;
+-    let state_db = result?;
+-    let mut recovered_databases = Vec::new();
+-    let mut backup_folders = HashSet::new();
+-    for backup in backups {
+-        if let Some(folder) = backup.backup_path.parent()
+-            && backup_folders.insert(folder.to_path_buf())
+-        {
+-            recovered_databases.push(RecoveredSqliteDatabase {
+-                database_path: backup.original_path.display().to_string(),
+-                backup_folder: folder.display().to_string(),
+-            });
+-        }
++    // Remote initialization errors must never rebuild or discard workspace data.
++    if !matches!(config.experimental_thread_store, codex_core::config::ThreadStoreConfig::Local) {
++        anyhow::bail!("the Cantelop build requires its workspace-backed persistent thread store");
+     }
+-    let recovery_notice = sqlite_recovery_notice(&recovered_databases);
+-    if let Some(notice) = &recovery_notice {
+-        emit_state_db_backup_warning(SQLITE_RECOVERY_CONFIG_WARNING_SUMMARY);
+-        emit_state_db_backup_warning(&notice.details);
+-    }
+-    Ok(StateDbInitResult {
+-        state_db: Some(state_db),
+-        recovery_notice,
+-    })
++    let state_db = rollout_state_db::try_init(config).await?;
++    Ok(StateDbInitResult { state_db: Some(state_db), recovery_notice: None })
+ }
+ 
+ fn sqlite_home_is_blocking_file(database_path: &Path) -> bool {
+diff --git a/codex-rs/app-server/src/main.rs b/codex-rs/app-server/src/main.rs
+index 4119ced..cbe901d 100644
+--- a/codex-rs/app-server/src/main.rs
++++ b/codex-rs/app-server/src/main.rs
+@@ -77,8 +77,16 @@ struct AppServerArgs {
+ }
+ 
+ fn main() -> anyhow::Result<()> {
++    let mut arguments = std::env::args_os().collect::<Vec<_>>();
++    if arguments.len() == 2 && arguments[1] == "--cantelop-storage-probe" {
++        println!("{}", serde_json::to_string(&codex_app_server_protocol::CantelopWorkspaceStorage::workspace())?);
++        return Ok(());
++    }
++    if arguments.get(1).is_some_and(|argument| argument == "app-server") { arguments.remove(1); }
++
+     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
+     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
++        let _ = cantelop_codex_workspace::WorkspaceConnectOptions::from_environment()?;
+         let AppServerArgs {
+             config_overrides,
+             code_mode_host,
+@@ -90,7 +98,7 @@ fn main() -> anyhow::Result<()> {
+             disable_plugin_startup_tasks_for_tests,
+             remote_control,
+             managed_daemon,
+-        } = AppServerArgs::parse();
++        } = AppServerArgs::parse_from(arguments);
+         let loader_overrides = if disable_managed_config_from_debug_env() {
+             LoaderOverrides::without_managed_config_for_tests()
+         } else {
+diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
+index 6b705c5..e62c272 100644
+--- a/codex-rs/app-server/src/message_processor.rs
++++ b/codex-rs/app-server/src/message_processor.rs
+@@ -1086,6 +1086,16 @@ impl MessageProcessor {
+             request_id: codex_request.id().clone(),
+         };
+         let result: Result<Option<ClientResponsePayload>, JSONRPCErrorError> = match codex_request {
++            ClientRequest::CantelopShutdown { .. } => {
++                self.turn_admission.begin_drain();
++                let mut active = self.turn_admission.subscribe_active();
++                tokio::time::timeout(std::time::Duration::from_secs(20), active.wait_for(|count| *count == 0))
++                    .await.map_err(|_| crate::error_code::internal_error("native request admission did not drain"))?
++                    .map_err(|_| crate::error_code::internal_error("native admission tracker closed"))?;
++                self.drain_background_tasks().await;
++                self.thread_processor.cantelop_shutdown().await?;
++                Ok(Some(codex_app_server_protocol::CantelopShutdownResponse {}.into()))
++            }
+             ClientRequest::Initialize { .. } => {
+                 panic!("Initialize should be handled before initialized request dispatch");
+             }
+diff --git a/codex-rs/app-server/src/request_processors/initialize_processor.rs b/codex-rs/app-server/src/request_processors/initialize_processor.rs
+index d68a29d..b02a610 100644
+--- a/codex-rs/app-server/src/request_processors/initialize_processor.rs
++++ b/codex-rs/app-server/src/request_processors/initialize_processor.rs
+@@ -211,6 +211,7 @@ impl InitializeRequestProcessor {
+ 
+         let user_agent = get_codex_user_agent();
+         let response = InitializeResponse {
++            cantelop_workspace_storage: Some(codex_app_server_protocol::CantelopWorkspaceStorage::workspace()),
+             user_agent,
+             codex_home,
+             platform_family: std::env::consts::FAMILY.to_string(),
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 8bdf6bb..f94292b 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -1280,6 +1280,17 @@ impl ThreadRequestProcessor {
+         self.thread_state_manager.clear_all_listeners().await;
+     }
+ 
++    pub(crate) async fn cantelop_shutdown(&self) -> Result<(), JSONRPCErrorError> {
++        let report = self.thread_manager.shutdown_all_threads_bounded(Duration::from_secs(10)).await;
++        if !report.submit_failed.is_empty() || !report.timed_out.is_empty() {
++            return Err(internal_error("native thread persistence did not finish during shutdown"));
++        }
++        if let Some(log_db) = &self.log_db {
++            log_db.flush().await;
++            if log_db.has_write_failure() { return Err(internal_error("native diagnostic persistence failed")); }
++        }
++        Ok(())
++    }
+     pub(crate) async fn shutdown_threads(&self) {
+         let report = self
+             .thread_manager
+diff --git a/codex-rs/cli/Cargo.toml b/codex-rs/cli/Cargo.toml
+index 608921c..0ae2b5e 100644
+--- a/codex-rs/cli/Cargo.toml
++++ b/codex-rs/cli/Cargo.toml
+@@ -23,6 +23,7 @@ doctest = false
+ workspace = true
+ 
+ [dependencies]
++cantelop-codex-workspace = { workspace = true }
+ codex-utils-process = { workspace = true }
+ anyhow = { workspace = true }
+ chrono = { workspace = true }
+diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
+index 8d062a2..ef419b7 100644
+--- a/codex-rs/cli/src/main.rs
++++ b/codex-rs/cli/src/main.rs
+@@ -1029,6 +1029,11 @@ fn stage_str(stage: Stage) -> &'static str {
+ }
+ 
+ fn main() -> anyhow::Result<()> {
++    if std::env::args().skip(1).collect::<Vec<_>>() == ["--cantelop-storage-probe"] {
++        println!("{}", serde_json::to_string(&codex_app_server_protocol::CantelopWorkspaceStorage::workspace())?);
++        return Ok(());
++    }
++
+     codex_build_info::initialize!();
+     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
+     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
+@@ -1042,6 +1047,7 @@ async fn cli_main(
+     arg0_paths: Arg0DispatchPaths,
+     remote_control_disabled: bool,
+ ) -> anyhow::Result<()> {
++    let _ = cantelop_codex_workspace::WorkspaceConnectOptions::from_environment()?;
+     let MultitoolCli {
+         config_overrides: mut root_config_overrides,
+         feature_toggles,
+diff --git a/codex-rs/ext/agent-message-board/Cargo.toml b/codex-rs/ext/agent-message-board/Cargo.toml
+index f522893..25ca620 100644
+--- a/codex-rs/ext/agent-message-board/Cargo.toml
++++ b/codex-rs/ext/agent-message-board/Cargo.toml
+@@ -13,6 +13,7 @@ doctest = false
+ workspace = true
+ 
+ [dependencies]
++cantelop-codex-workspace = { workspace = true }
+ base64 = { workspace = true }
+ caseless = { workspace = true }
+ chrono = { workspace = true, features = ["serde"] }
+diff --git a/codex-rs/ext/agent-message-board/src/local.rs b/codex-rs/ext/agent-message-board/src/local.rs
+index 6413ae1..a3593a0 100644
+--- a/codex-rs/ext/agent-message-board/src/local.rs
++++ b/codex-rs/ext/agent-message-board/src/local.rs
+@@ -30,8 +30,8 @@ use futures::StreamExt;
+ use serde::Deserialize;
+ use serde::Serialize;
+ use sqlx::Row;
+-use sqlx::SqliteConnection;
+-use sqlx::SqlitePool;
++use cantelop_codex_workspace::WorkspaceConnection as SqliteConnection;
++use cantelop_codex_workspace::WorkspacePool as SqlitePool;
+ use std::collections::HashMap;
+ use std::collections::HashSet;
+ use std::path::PathBuf;
+@@ -111,10 +111,7 @@ impl LocalAgentMessageBoard {
+         identity: SessionId,
+         host: Arc<dyn MessageBoardHost>,
+     ) -> Result<Self> {
+-        tokio::fs::create_dir_all(sqlite.home()).await?;
+-        let path = tokio::fs::canonicalize(sqlite.home())
+-            .await?
+-            .join(DATABASE_FILE);
++        let path = sqlite.home().join(DATABASE_FILE);
+         let mut pools = POOLS.lock().await;
+         pools.retain(|_, pool| pool.strong_count() > 0);
+         let pool = if let Some(pool) = pools
+diff --git a/codex-rs/ext/agent-message-board/src/local/lifecycle.rs b/codex-rs/ext/agent-message-board/src/local/lifecycle.rs
+index d44109d..6c2a540 100644
+--- a/codex-rs/ext/agent-message-board/src/local/lifecycle.rs
++++ b/codex-rs/ext/agent-message-board/src/local/lifecycle.rs
+@@ -13,7 +13,7 @@ use super::storage_error;
+ use codex_protocol::SessionId;
+ use codex_protocol::error::Result;
+ use codex_state::SqliteConfig;
+-use sqlx::Sqlite;
++use cantelop_codex_workspace::Workspace as Sqlite;
+ use sqlx::Transaction;
+ use std::sync::Weak;
+ 
+@@ -28,12 +28,10 @@ impl LocalAgentMessageBoard {
+     )]
+     pub async fn delete_boards(sqlite: &SqliteConfig, roots: &[SessionId]) -> Result<()> {
+         let path = sqlite.home().join(DATABASE_FILE);
+-        if roots.is_empty() || !tokio::fs::try_exists(&path).await? {
++        if roots.is_empty() || !sqlite.store_exists(&path).await.map_err(storage_error)? {
+             return Ok(());
+         }
+-        let path = tokio::fs::canonicalize(sqlite.home())
+-            .await?
+-            .join(DATABASE_FILE);
++        let path = sqlite.home().join(DATABASE_FILE);
+         let mut pools = POOLS.lock().await;
+         let pool = match sqlite.open_read_write_pool(&path).await {
+             Ok(pool) => pool,
+diff --git a/codex-rs/state/Cargo.toml b/codex-rs/state/Cargo.toml
+index d98de0d..2f04778 100644
+--- a/codex-rs/state/Cargo.toml
++++ b/codex-rs/state/Cargo.toml
+@@ -5,19 +5,18 @@ edition.workspace = true
+ license.workspace = true
+ 
+ [dependencies]
++cantelop-codex-workspace = { workspace = true }
+ anyhow = { workspace = true }
+ chrono = { workspace = true }
+ codex-history = { workspace = true }
+ codex-protocol = { workspace = true }
+ codex-utils-absolute-path = { workspace = true }
+ file-id = { workspace = true }
+-libsqlite3-sys = { workspace = true }
+ log = { workspace = true }
+ serde = { workspace = true, features = ["derive"] }
+ serde_json = { workspace = true }
+ sqlx = { workspace = true }
+ sqlx-macros = { workspace = true }
+-sqlx-sqlite = { workspace = true }
+ strum = { workspace = true, features = ["derive"] }
+ tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+ tracing = { workspace = true }
+diff --git a/codex-rs/state/migrations/0023_drop_logs.sql b/codex-rs/state/migrations/0023_drop_logs.sql
+index dce1ffc..f5d8663 100644
+--- a/codex-rs/state/migrations/0023_drop_logs.sql
++++ b/codex-rs/state/migrations/0023_drop_logs.sql
+@@ -1,3 +1,3 @@
+-PRAGMA auto_vacuum = INCREMENTAL;
++-- Physical vacuum policy is managed by the workspace database.
+ 
+ DROP TABLE IF EXISTS logs;
+diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
+index 5ae36f8..632a508 100644
+--- a/codex-rs/state/src/lib.rs
++++ b/codex-rs/state/src/lib.rs
+@@ -4,10 +4,6 @@
+ //! from JSONL rollouts and mirrors it into a local SQLite database. Backfill
+ //! orchestration and rollout scanning live in `codex-core`.
+ 
+-const _: () = assert!(
+-    libsqlite3_sys::SQLITE_VERSION_NUMBER >= 3_051_003,
+-    "bundled SQLite must include the WAL-reset corruption fix",
+-);
+ 
+ mod audit;
+ mod delegated_preview;
+diff --git a/codex-rs/state/src/migrations.rs b/codex-rs/state/src/migrations.rs
+index efbb76c..ef02e37 100644
+--- a/codex-rs/state/src/migrations.rs
++++ b/codex-rs/state/src/migrations.rs
+@@ -1,7 +1,7 @@
+ use std::borrow::Cow;
+ 
+ use sqlx::migrate::Migrator;
+-use sqlx_sqlite::SqlitePool;
++use cantelop_codex_workspace::WorkspacePool as SqlitePool;
+ 
+ pub(crate) static STATE_MIGRATOR: Migrator = sqlx_macros::migrate!("./migrations");
+ pub(crate) static LOGS_MIGRATOR: Migrator = sqlx_macros::migrate!("./logs_migrations");
+diff --git a/codex-rs/state/src/model/backfill_state.rs b/codex-rs/state/src/model/backfill_state.rs
+index 353929f..183a088 100644
+--- a/codex-rs/state/src/model/backfill_state.rs
++++ b/codex-rs/state/src/model/backfill_state.rs
+@@ -2,7 +2,7 @@ use anyhow::Result;
+ use chrono::DateTime;
+ use chrono::Utc;
+ use sqlx::Row;
+-use sqlx::sqlite::SqliteRow;
++use cantelop_codex_workspace::WorkspaceRow as SqliteRow;
+ 
+ /// Persisted lifecycle state for rollout metadata backfill.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+diff --git a/codex-rs/state/src/model/queued_item.rs b/codex-rs/state/src/model/queued_item.rs
+index ae7ec0c..9de3388 100644
+--- a/codex-rs/state/src/model/queued_item.rs
++++ b/codex-rs/state/src/model/queued_item.rs
+@@ -1,7 +1,7 @@
+ use anyhow::Result;
+ use codex_protocol::ThreadId;
+ use sqlx::Row;
+-use sqlx::sqlite::SqliteRow;
++use cantelop_codex_workspace::WorkspaceRow as SqliteRow;
+ 
+ /// One durable, ordered user submission for a thread.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+diff --git a/codex-rs/state/src/model/rollout_migration_state.rs b/codex-rs/state/src/model/rollout_migration_state.rs
+index 37400a2..469af6c 100644
+--- a/codex-rs/state/src/model/rollout_migration_state.rs
++++ b/codex-rs/state/src/model/rollout_migration_state.rs
+@@ -9,7 +9,7 @@
+ 
+ use anyhow::Result;
+ use sqlx::Row;
+-use sqlx::sqlite::SqliteRow;
++use cantelop_codex_workspace::WorkspaceRow as SqliteRow;
+ 
+ /// Creation-ordered thread frontier checked by one rollout migration.
+ #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+diff --git a/codex-rs/state/src/model/thread_goal.rs b/codex-rs/state/src/model/thread_goal.rs
+index 12d2a78..515c51a 100644
+--- a/codex-rs/state/src/model/thread_goal.rs
++++ b/codex-rs/state/src/model/thread_goal.rs
+@@ -5,7 +5,7 @@ use chrono::Utc;
+ use codex_protocol::ThreadId;
+ use serde::Serialize;
+ use sqlx::Row;
+-use sqlx::sqlite::SqliteRow;
++use cantelop_codex_workspace::WorkspaceRow as SqliteRow;
+ 
+ use super::epoch_millis_to_datetime;
+ 
+diff --git a/codex-rs/state/src/model/thread_metadata.rs b/codex-rs/state/src/model/thread_metadata.rs
+index 9237a57..925cbb4 100644
+--- a/codex-rs/state/src/model/thread_metadata.rs
++++ b/codex-rs/state/src/model/thread_metadata.rs
+@@ -12,7 +12,7 @@ use codex_protocol::protocol::ThreadSource;
+ use serde::Deserialize;
+ use serde::Serialize;
+ use sqlx::Row;
+-use sqlx::sqlite::SqliteRow;
++use cantelop_codex_workspace::WorkspaceRow as SqliteRow;
+ use std::collections::HashMap;
+ use std::path::PathBuf;
+ 
+diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
+index a145dfc..e98bb66 100644
+--- a/codex-rs/state/src/runtime.rs
++++ b/codex-rs/state/src/runtime.rs
+@@ -28,9 +28,9 @@ use codex_protocol::ThreadId;
+ use serde_json::Value;
+ use sqlx::QueryBuilder;
+ use sqlx::Row;
+-use sqlx::Sqlite;
+-use sqlx::SqliteConnection;
+-use sqlx::SqlitePool;
++use cantelop_codex_workspace::Workspace as Sqlite;
++use cantelop_codex_workspace::WorkspaceConnection as SqliteConnection;
++use cantelop_codex_workspace::WorkspacePool as SqlitePool;
+ use std::collections::BTreeSet;
+ use std::path::Path;
+ use std::path::PathBuf;
+@@ -91,8 +91,8 @@ const LOG_PARTITION_ROW_LIMIT: i64 = 1_000;
+ pub struct StateRuntime {
+     sqlite: SqliteConfig,
+     default_provider: String,
+-    pool: Arc<sqlx::SqlitePool>,
+-    logs_pool: Arc<sqlx::SqlitePool>,
++    pool: Arc<cantelop_codex_workspace::WorkspacePool>,
++    logs_pool: Arc<cantelop_codex_workspace::WorkspacePool>,
+     thread_goals: GoalStore,
+     memories: MemoryStore,
+     memories_v2: Arc<tokio::sync::OnceCell<MemoryStore>>,
+@@ -127,7 +127,6 @@ impl StateRuntime {
+         default_provider: String,
+         telemetry_override: Option<&dyn DbTelemetry>,
+     ) -> anyhow::Result<Arc<Self>> {
+-        tokio::fs::create_dir_all(sqlite.home()).await?;
+         let state_migrator = runtime_state_migrator();
+         let logs_migrator = runtime_logs_migrator();
+         let goals_migrator = runtime_goals_migrator();
+@@ -138,7 +137,7 @@ impl StateRuntime {
+         let goals_path = sqlite.goals_db_path();
+         let memories_path = sqlite.memories_db_path();
+         let queue_path = sqlite.queue_db_path();
+-        let has_memories_v2 = tokio::fs::try_exists(sqlite.memories_v2_db_path()).await?;
++        let has_memories_v2 = sqlite.store_exists(&sqlite.memories_v2_db_path()).await?;
+         let pool = match sqlite
+             .open_state_db(&state_migrator, telemetry_override)
+             .await
+@@ -322,7 +321,7 @@ impl StateRuntime {
+                 codex_protocol::MemoryVersion::V1 => sqlite.memories_db_path(),
+                 codex_protocol::MemoryVersion::V2 => sqlite.memories_v2_db_path(),
+             };
+-            if !tokio::fs::try_exists(path).await? {
++            if !sqlite.store_exists(&path).await? {
+                 continue;
+             }
+             let pool = match version {
+@@ -360,7 +359,7 @@ pub async fn open_thread_history_db(sqlite: &SqliteConfig) -> anyhow::Result<Sql
+ }
+ 
+ pub(super) async fn ensure_backfill_state_row_in_pool(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+ ) -> anyhow::Result<()> {
+     // Eagerly check if the operation would have no effect to avoid blocking waiting for a SQLite
+     // writer for no reason in the hot startup path.
+@@ -400,56 +399,8 @@ pub async fn sqlite_integrity_check(
+     path: &Path,
+     deadline: Option<Instant>,
+ ) -> anyhow::Result<SqliteIntegrityCheck> {
+-    let pool = sqlite
+-        .open_read_only_pool(
+-            path,
+-            deadline.map(|deadline| deadline.saturating_duration_since(Instant::now())),
+-        )
+-        .await?;
+-    let mut connection = pool.acquire().await?;
+-    if let Some(deadline) = deadline {
+-        // Lock waits do not invoke the progress handler; share the remaining budget.
+-        QueryBuilder::<Sqlite>::new("PRAGMA busy_timeout = ")
+-            .push(
+-                deadline
+-                    .saturating_duration_since(Instant::now())
+-                    .as_millis(),
+-            )
+-            .build()
+-            .execute(&mut *connection)
+-            .await?;
+-        // Interrupt SQLite itself: dropping a timed-out future leaves its worker scanning.
+-        connection
+-            .lock_handle()
+-            .await?
+-            .set_progress_handler(/*num_ops*/ 1_000, move || Instant::now() < deadline);
+-    }
+-    let mut rows = Vec::<String>::new();
+-    // Keep corruption rows even when a later step interrupts the scan.
+-    let result = sqlx::query::<Sqlite>("PRAGMA integrity_check")
+-        .try_map(|row| {
+-            rows.push(row.try_get(/*index*/ 0)?);
+-            Ok(())
+-        })
+-        .fetch_all(&mut *connection)
+-        .await;
+-    drop(connection);
+-    pool.close().await;
+-    match result {
+-        Ok(_) => Ok(SqliteIntegrityCheck::Complete(rows)),
+-        Err(sqlx::Error::Database(error))
+-            if deadline.is_some()
+-                && error.code().is_some_and(|code| {
+-                    matches!(
+-                        code.parse::<i32>().ok().map(|code| code & 0xff),
+-                        Some(libsqlite3_sys::SQLITE_INTERRUPT | libsqlite3_sys::SQLITE_BUSY)
+-                    )
+-                }) =>
+-        {
+-            Ok(SqliteIntegrityCheck::TimedOut(rows))
+-        }
+-        Err(error) => Err(error.into()),
+-    }
++    let _ = (sqlite, path, deadline);
++    anyhow::bail!("physical database integrity checks are owned by the workspace database service")
+ }
+ 
+ #[cfg(test)]
+@@ -466,7 +417,7 @@ mod tests {
+     use codex_protocol::ThreadId;
+     use codex_utils_absolute_path::test_support::PathExt;
+     use pretty_assertions::assert_eq;
+-    use sqlx::SqlitePool;
++    use cantelop_codex_workspace::WorkspacePool as SqlitePool;
+     use sqlx::migrate::MigrateError;
+     use std::collections::BTreeMap;
+     use std::collections::BTreeSet;
+diff --git a/codex-rs/state/src/runtime/goals.rs b/codex-rs/state/src/runtime/goals.rs
+index ed616e1..b0b41b5 100644
+--- a/codex-rs/state/src/runtime/goals.rs
++++ b/codex-rs/state/src/runtime/goals.rs
+@@ -611,7 +611,7 @@ RETURNING
+     }
+ }
+ 
+-fn thread_goal_from_row(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<crate::ThreadGoal> {
++fn thread_goal_from_row(row: &cantelop_codex_workspace::WorkspaceRow) -> anyhow::Result<crate::ThreadGoal> {
+     ThreadGoalRow::try_from_row(row).and_then(crate::ThreadGoal::try_from)
+ }
+ 
+diff --git a/codex-rs/state/src/runtime/logs.rs b/codex-rs/state/src/runtime/logs.rs
+index 9b331b4..88bf572 100644
+--- a/codex-rs/state/src/runtime/logs.rs
++++ b/codex-rs/state/src/runtime/logs.rs
+@@ -518,7 +518,7 @@ mod tests {
+     use chrono::Utc;
+     use codex_utils_absolute_path::test_support::PathExt;
+     use pretty_assertions::assert_eq;
+-    use sqlx::SqlitePool;
++    use cantelop_codex_workspace::WorkspacePool as SqlitePool;
+     use sqlx::migrate::Migrator;
+     use std::borrow::Cow;
+     use std::path::Path;
+diff --git a/codex-rs/state/src/runtime/logs_maintenance.rs b/codex-rs/state/src/runtime/logs_maintenance.rs
+index 7d78797..c2d45d2 100644
+--- a/codex-rs/state/src/runtime/logs_maintenance.rs
++++ b/codex-rs/state/src/runtime/logs_maintenance.rs
+@@ -3,7 +3,7 @@
+ 
+ use super::StateRuntime;
+ use chrono::Utc;
+-use sqlx::SqlitePool;
++use cantelop_codex_workspace::WorkspacePool as SqlitePool;
+ use std::sync::Arc;
+ use std::time::Duration;
+ 
+@@ -19,7 +19,6 @@ impl StateRuntime {
+                 /*period*/ period,
+             );
+             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+-            let mut first_sweep = true;
+             loop {
+                 // Hold no strong runtime reference while waiting.
+                 interval.tick().await;
+@@ -38,16 +37,7 @@ impl StateRuntime {
+                 {
+                     tracing::warn!("failed to prune diagnostic logs: {err}");
+                 }
+-                if first_sweep {
+-                    first_sweep = false;
+-                    // Preserve the startup checkpoint without waiting for readers or writers.
+-                    if let Err(err) = sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
+-                        .execute(runtime.logs_pool.as_ref())
+-                        .await
+-                    {
+-                        tracing::warn!("failed to checkpoint diagnostic logs: {err}");
+-                    }
+-                }
++
+             }
+         });
+     }
+@@ -66,8 +56,7 @@ async fn prune_by_age_and_size(
+             .await?;
+         // Exclude free pages: SQLite reuses them without shrinking the file.
+         let occupied_bytes: i64 = sqlx::query_scalar(
+-            "SELECT (page_count - freelist_count) * page_size \
+-             FROM pragma_page_count(), pragma_freelist_count(), pragma_page_size()",
++            "SELECT COALESCE(SUM(estimated_bytes), 0) FROM logs",
+         )
+         .fetch_one(pool)
+         .await?;
+diff --git a/codex-rs/state/src/runtime/logs_maintenance_tests.rs b/codex-rs/state/src/runtime/logs_maintenance_tests.rs
+index 1ca3939..a0f43d8 100644
+--- a/codex-rs/state/src/runtime/logs_maintenance_tests.rs
++++ b/codex-rs/state/src/runtime/logs_maintenance_tests.rs
+@@ -8,7 +8,7 @@ use crate::migrations::LOGS_MIGRATOR;
+ use chrono::Utc;
+ use codex_utils_absolute_path::test_support::PathExt;
+ use pretty_assertions::assert_eq;
+-use sqlx::SqlitePool;
++use cantelop_codex_workspace::WorkspacePool as SqlitePool;
+ use std::path::PathBuf;
+ use std::time::Duration;
+ 
+diff --git a/codex-rs/state/src/runtime/memories.rs b/codex-rs/state/src/runtime/memories.rs
+index 2cb66d1..dc75fa3 100644
+--- a/codex-rs/state/src/runtime/memories.rs
++++ b/codex-rs/state/src/runtime/memories.rs
+@@ -15,7 +15,7 @@ use chrono::DateTime;
+ use chrono::Duration;
+ use sqlx::Executor;
+ use sqlx::QueryBuilder;
+-use sqlx::Sqlite;
++use cantelop_codex_workspace::Workspace as Sqlite;
+ use uuid::Uuid;
+ 
+ const JOB_KIND_MEMORY_STAGE1: &str = "memory_stage1";
+@@ -549,7 +549,7 @@ WHERE so.thread_id = ? AND so.source_updated_at = ?
+ 
+     async fn stage1_output_from_row_if_thread_enabled(
+         &self,
+-        row: &sqlx::sqlite::SqliteRow,
++        row: &cantelop_codex_workspace::WorkspaceRow,
+     ) -> anyhow::Result<Option<Stage1Output>> {
+         let thread_id: String = row.try_get("thread_id")?;
+         let Some(thread) = self
+@@ -1461,7 +1461,7 @@ WHERE kind = ? OR kind = ?
+ }
+ 
+ fn stage1_output_from_row_and_thread(
+-    row: &sqlx::sqlite::SqliteRow,
++    row: &cantelop_codex_workspace::WorkspaceRow,
+     thread: ThreadMetadata,
+ ) -> anyhow::Result<Stage1Output> {
+     let source_updated_at: i64 = row.try_get("source_updated_at")?;
+@@ -1738,7 +1738,7 @@ mod tests {
+         ThreadId::from_string(value).expect("thread id")
+     }
+ 
+-    fn memory_pool(runtime: &StateRuntime) -> &sqlx::SqlitePool {
++    fn memory_pool(runtime: &StateRuntime) -> &cantelop_codex_workspace::WorkspacePool {
+         runtime.memories().pool.as_ref()
+     }
+ 
+diff --git a/codex-rs/state/src/runtime/memory_versions.rs b/codex-rs/state/src/runtime/memory_versions.rs
+index ac75303..ba56eda 100644
+--- a/codex-rs/state/src/runtime/memory_versions.rs
++++ b/codex-rs/state/src/runtime/memory_versions.rs
+@@ -27,7 +27,7 @@ impl StateRuntime {
+ 
+     pub async fn clear_all_memory_data(&self) -> anyhow::Result<()> {
+         self.memories.clear_memory_data().await?;
+-        if tokio::fs::try_exists(self.sqlite.memories_v2_db_path()).await? {
++        if self.sqlite.store_exists(&self.sqlite.memories_v2_db_path()).await? {
+             self.memories_for_version(MemoryVersion::V2)
+                 .await?
+                 .clear_memory_data()
+@@ -41,7 +41,7 @@ impl StateRuntime {
+         thread_id: ThreadId,
+     ) -> anyhow::Result<()> {
+         self.memories.delete_thread_memory(thread_id).await?;
+-        if tokio::fs::try_exists(self.sqlite.memories_v2_db_path()).await? {
++        if self.sqlite.store_exists(&self.sqlite.memories_v2_db_path()).await? {
+             self.memories_for_version(MemoryVersion::V2)
+                 .await?
+                 .delete_thread_memory(thread_id)
+diff --git a/codex-rs/state/src/runtime/projects.rs b/codex-rs/state/src/runtime/projects.rs
+index 8a94d2e..80ffe93 100644
+--- a/codex-rs/state/src/runtime/projects.rs
++++ b/codex-rs/state/src/runtime/projects.rs
+@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
+ 
+ use sqlx::QueryBuilder;
+ use sqlx::Row;
+-use sqlx::Sqlite;
++use cantelop_codex_workspace::Workspace as Sqlite;
+ use uuid::Uuid;
+ 
+ use super::StateRuntime;
+@@ -375,8 +375,8 @@ impl StateRuntime {
+ }
+ 
+ async fn project_from_row_in_tx(
+-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+-    row: &sqlx::sqlite::SqliteRow,
++    tx: &mut sqlx::Transaction<'_, cantelop_codex_workspace::Workspace>,
++    row: &cantelop_codex_workspace::WorkspaceRow,
+ ) -> anyhow::Result<Project> {
+     let id: String = row.try_get("id")?;
+     let roots =
+@@ -395,7 +395,7 @@ async fn project_from_row_in_tx(
+ }
+ 
+ fn project_from_row(
+-    row: &sqlx::sqlite::SqliteRow,
++    row: &cantelop_codex_workspace::WorkspaceRow,
+     roots: Vec<ProjectRoot>,
+ ) -> anyhow::Result<Project> {
+     Ok(Project {
+@@ -411,7 +411,7 @@ fn project_from_row(
+ }
+ 
+ async fn replace_roots(
+-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
++    tx: &mut sqlx::Transaction<'_, cantelop_codex_workspace::Workspace>,
+     project_id: &str,
+     roots: &[ProjectRoot],
+ ) -> anyhow::Result<()> {
+diff --git a/codex-rs/state/src/runtime/queued_items.rs b/codex-rs/state/src/runtime/queued_items.rs
+index 3cbf32b..c804d03 100644
+--- a/codex-rs/state/src/runtime/queued_items.rs
++++ b/codex-rs/state/src/runtime/queued_items.rs
+@@ -41,7 +41,7 @@ impl SqliteQueueStore {
+         let Some(connection) = connection.as_mut() else {
+             unreachable!("queue change-version connection was initialized");
+         };
+-        Ok(sqlx::query_scalar("PRAGMA data_version")
++        Ok(sqlx::query_scalar("SELECT COALESCE(MAX(revision), 0) FROM queued_thread_revisions")
+             .fetch_one(connection)
+             .await?)
+     }
+diff --git a/codex-rs/state/src/runtime/reclamation.rs b/codex-rs/state/src/runtime/reclamation.rs
+index 29c46e4..5b337dd 100644
+--- a/codex-rs/state/src/runtime/reclamation.rs
++++ b/codex-rs/state/src/runtime/reclamation.rs
+@@ -1,415 +1,8 @@
+-//! Reclaims unused SQLite pages in opted-in databases, reducing batches after stalled passes.
+-use crate::RuntimeDbPath;
++//! Physical page reclamation belongs to the hosted workspace database.
+ use crate::SqliteConfig;
+-use log::LevelFilter;
+-use sqlx::ConnectOptions;
+-use sqlx::Connection;
+-use sqlx::SqliteConnection;
+-use sqlx::sqlite::SqliteConnectOptions;
+-use sqlx::sqlite::SqliteSynchronous;
+-use std::fs::File;
+-use std::path::Path;
+ use std::sync::Arc;
+-use std::time::Duration;
+-use std::time::Instant;
+-use tokio::sync::watch;
+-
+-const IDLE_INTERVAL: Duration = Duration::from_secs(60);
+-const ACTIVE_INTERVAL: Duration = Duration::from_millis(50);
+-const CONTENTION_INTERVAL: Duration = Duration::from_millis(500);
+-const PASS_DURATION: Duration = Duration::from_millis(100);
+-const MIN_FREE_BYTES: i64 = 64 * 1024 * 1024;
+-const RESERVE_BYTES: i64 = 16 * 1024 * 1024;
+-const PASS_PAGES: u32 = 1024;
+-const BATCH_PAGES: u32 = 64;
+-
+-/// Owns background reclamation for opted-in databases registered with `SqliteConfig`.
+-///
+-/// A per-home file lock elects one active worker, which visits databases serially
+-/// on individual retry schedules. Shutdown waits for the dedicated SQLite
+-/// connection to close before the worker releases the lock.
+-pub(crate) struct SqliteReclamationWorker {
+-    shutdown: watch::Sender<()>,
+-    finished: watch::Receiver<()>,
+-}
+-
++pub(crate) struct SqliteReclamationWorker;
+ impl SqliteReclamationWorker {
+-    pub(crate) fn spawn(sqlite: SqliteConfig) -> Arc<Self> {
+-        let (shutdown, mut receiver) = watch::channel(());
+-        let (finish, finished) = watch::channel(());
+-        tokio::spawn(async move {
+-            // Declared first so completion is signaled after all worker resources drop.
+-            let _finish = finish;
+-            let mut scheduled = sqlite
+-                .runtime_db_paths()
+-                .into_iter()
+-                .filter_map(|db| {
+-                    if db.background_reclamation {
+-                        Some((db, Instant::now(), ReclamationState::default()))
+-                    } else {
+-                        None
+-                    }
+-                })
+-                .collect::<Vec<_>>();
+-            let mut owner = None;
+-            let mut delay = IDLE_INTERVAL;
+-            loop {
+-                tokio::select! {
+-                    _ = receiver.changed() => break,
+-                    _ = tokio::time::sleep(delay) => {}
+-                }
+-                if owner.is_none() {
+-                    owner = try_ownership(sqlite.home()).await.ok().flatten();
+-                }
+-                if owner.is_none() {
+-                    continue;
+-                }
+-                delay = visit(&mut scheduled, &receiver).await;
+-            }
+-        });
+-
+-        Arc::new(Self { shutdown, finished })
+-    }
+-
+-    pub(crate) async fn close(&self) {
+-        self.shutdown.send_replace(());
+-        // Every caller waits for task completion, even if another close is canceled.
+-        let _ = self.finished.clone().changed().await;
+-    }
+-}
+-
+-async fn visit(
+-    scheduled: &mut [(RuntimeDbPath, Instant, ReclamationState)],
+-    shutdown: &watch::Receiver<()>,
+-) -> Duration {
+-    for (db, due, state) in &mut *scheduled {
+-        let started = Instant::now();
+-        if shutdown.has_changed().unwrap_or(true) {
+-            break;
+-        }
+-        if *due > started {
+-            continue;
+-        }
+-        let result = reclaim(
+-            &db.path,
+-            ReclamationOptions {
+-                budget: Budget {
+-                    deadline: Some(started + PASS_DURATION),
+-                    pages: PASS_PAGES,
+-                },
+-                batch_pages: state.batch_pages,
+-            },
+-            shutdown,
+-        )
+-        .await;
+-        crate::telemetry::record_reclamation(db.label, started.elapsed(), &result);
+-        *due = Instant::now() + state.retry_after(&result);
+-    }
+-    scheduled
+-        .iter()
+-        .map(|(_, due, _)| due.saturating_duration_since(Instant::now()))
+-        .min()
+-        .unwrap_or(IDLE_INTERVAL)
+-}
+-
+-async fn try_ownership(home: &Path) -> std::io::Result<Option<File>> {
+-    let lock = tokio::fs::OpenOptions::new()
+-        .read(true)
+-        .write(true)
+-        .create(true)
+-        .truncate(false)
+-        .open(home.join(".sqlite-maintenance.lock"))
+-        .await?
+-        .into_std()
+-        .await;
+-    match lock.try_lock() {
+-        Ok(()) => Ok(Some(lock)),
+-        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+-        Err(std::fs::TryLockError::Error(error)) => Err(error),
+-    }
+-}
+-
+-pub(crate) struct ReclamationPass {
+-    pub(crate) pages: u32,
+-    outcome: PassOutcome,
+-}
+-
+-#[derive(Debug, PartialEq, Eq)]
+-enum PassOutcome {
+-    Idle,
+-    Active,
+-    Contended,
+-    Interrupted,
+-    Shutdown,
+-}
+-
+-#[derive(Debug, PartialEq, Eq)]
+-struct ReclamationState {
+-    batch_pages: u32,
+-    stalled_passes: u32,
+-}
+-
+-impl Default for ReclamationState {
+-    fn default() -> Self {
+-        Self {
+-            batch_pages: BATCH_PAGES,
+-            stalled_passes: 0,
+-        }
+-    }
+-}
+-
+-impl ReclamationState {
+-    fn retry_after(&mut self, result: &anyhow::Result<ReclamationPass>) -> Duration {
+-        if let Ok(pass) = result
+-            && pass.outcome == PassOutcome::Interrupted
+-            && pass.pages == 0
+-        {
+-            self.stalled_passes = self.stalled_passes.saturating_add(1);
+-            self.batch_pages = (self.batch_pages / 2).max(1);
+-
+-            // exponentially backoffs from CONTENTION_INTERVAL to IDLE_INTERVAL (500ms -> 60s)
+-            return (CONTENTION_INTERVAL * (1 << (self.stalled_passes - 1).min(7)))
+-                .min(IDLE_INTERVAL);
+-        }
+-
+-        // Keep the smaller batch after progress; growing it would repeat the stall.
+-        self.stalled_passes = 0;
+-        match result {
+-            Ok(pass) => match pass.outcome {
+-                PassOutcome::Idle | PassOutcome::Shutdown => IDLE_INTERVAL,
+-                PassOutcome::Active | PassOutcome::Interrupted => ACTIVE_INTERVAL,
+-                PassOutcome::Contended => CONTENTION_INTERVAL,
+-            },
+-            Err(_) => IDLE_INTERVAL,
+-        }
+-    }
+-}
+-
+-struct Budget {
+-    deadline: Option<Instant>,
+-    /// Amount of pages to reclaim per transaction
+-    pages: u32,
+-}
+-
+-struct ReclamationOptions {
+-    budget: Budget,
+-    batch_pages: u32,
+-}
+-
+-impl From<Budget> for ReclamationOptions {
+-    fn from(budget: Budget) -> Self {
+-        Self {
+-            budget,
+-            batch_pages: BATCH_PAGES,
+-        }
+-    }
+-}
+-
+-async fn reclaim(
+-    path: &Path,
+-    options: impl Into<ReclamationOptions>,
+-    shutdown: &watch::Receiver<()>,
+-) -> anyhow::Result<ReclamationPass> {
+-    if !tokio::fs::try_exists(path).await? {
+-        return Ok(ReclamationPass {
+-            pages: 0,
+-            outcome: PassOutcome::Idle,
+-        });
+-    }
+-    #[expect(
+-        clippy::disallowed_methods,
+-        reason = "maintenance needs a dedicated connection with no busy wait or automatic checkpoints"
+-    )]
+-    let mut connection = match SqliteConnection::connect_with(
+-        &SqliteConnectOptions::new()
+-            .filename(path)
+-            .create_if_missing(false)
+-            .busy_timeout(Duration::ZERO)
+-            .synchronous(SqliteSynchronous::Normal)
+-            // Keep commits from doing checkpoint I/O while holding up writers.
+-            .pragma("wal_autocheckpoint", "0")
+-            // A 16 MiB cache reduced CPU time in large-database measurements.
+-            .pragma("cache_size", "-16384")
+-            .log_statements(LevelFilter::Off)
+-            .log_slow_statements(LevelFilter::Off, Duration::ZERO),
+-    )
+-    .await
+-    {
+-        Ok(connection) => connection,
+-        Err(error) => match outcome_after_error(&error) {
+-            Some(outcome) => {
+-                return Ok(ReclamationPass { pages: 0, outcome });
+-            }
+-            None => return Err(error.into()),
+-        },
+-    };
+-
+-    let result = reclaim_pages(&mut connection, options, shutdown).await;
+-    connection.close().await?;
+-    result
+-}
+-
+-/// Reclaims free pages in short transactions while preserving a reusable reserve.
+-///
+-/// Each batch checks the reserve under `BEGIN IMMEDIATE` and commits before
+-/// checkpointing or sleeping. The pass bounds reclaimed freelist pages and checks
+-/// a cooperative deadline; storage I/O can overrun that deadline.
+-async fn reclaim_pages(
+-    connection: &mut SqliteConnection,
+-    options: impl Into<ReclamationOptions>,
+-    shutdown: &watch::Receiver<()>,
+-) -> anyhow::Result<ReclamationPass> {
+-    let ReclamationOptions {
+-        budget,
+-        batch_pages,
+-    } = options.into();
+-    if budget
+-        .deadline
+-        .is_some_and(|deadline| Instant::now() >= deadline)
+-        || shutdown.has_changed().unwrap_or(true)
+-    {
+-        return Ok(ReclamationPass {
+-            pages: 0,
+-            outcome: if shutdown.has_changed().unwrap_or(true) {
+-                PassOutcome::Shutdown
+-            } else {
+-                PassOutcome::Interrupted
+-            },
+-        });
+-    }
+-    let mut reclaimed = 0;
+-    let mut outcome = PassOutcome::Contended;
+-    let result: Result<(), sqlx::Error> = async {
+-        let stop = shutdown.clone();
+-        connection
+-            .lock_handle()
+-            .await?
+-            .set_progress_handler(/*num_ops*/ 1, move || {
+-                !stop.has_changed().unwrap_or(true)
+-                    && budget
+-                        .deadline
+-                        .is_none_or(|deadline| Instant::now() < deadline)
+-            });
+-
+-        let (mode, page_size, pages, free): (i64, i64, i64, i64) = sqlx::query_as(
+-            "SELECT auto_vacuum, page_size, page_count, freelist_count \
+-         FROM pragma_auto_vacuum, pragma_page_size, pragma_page_count, pragma_freelist_count",
+-        )
+-        .fetch_one(&mut *connection)
+-        .await?;
+-
+-        // Require incremental auto-vacuum and at least 64 MiB and 25% free space.
+-        if mode != 2 || free * page_size < MIN_FREE_BYTES || free < pages / 4 {
+-            outcome = PassOutcome::Idle;
+-            return Ok(());
+-        }
+-        if !checkpoint_complete(connection).await? {
+-            return Ok(());
+-        }
+-
+-        outcome = PassOutcome::Active;
+-        let reserve = (RESERVE_BYTES / page_size).max(pages / 10);
+-        let version: i64 = sqlx::query_scalar("PRAGMA data_version")
+-            .fetch_one(&mut *connection)
+-            .await?;
+-
+-        while reclaimed < budget.pages
+-            && budget
+-                .deadline
+-                .is_none_or(|deadline| Instant::now() < deadline)
+-            && !shutdown.has_changed().unwrap_or(true)
+-        {
+-            // Check inside the same write transaction, so a foreground writer cannot
+-            // consume the reserve between our free-page check and vacuum.
+-            let mut transaction = connection.begin_with("BEGIN IMMEDIATE").await?;
+-            let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+-                .fetch_one(&mut *transaction)
+-                .await?;
+-            if free <= reserve {
+-                transaction.rollback().await?;
+-                outcome = PassOutcome::Idle;
+-                break;
+-            }
+-
+-            let batch = i64::from(batch_pages.min(budget.pages - reclaimed)).min(free - reserve);
+-            sqlx::query(sqlx::AssertSqlSafe(format!(
+-                "PRAGMA incremental_vacuum({batch})"
+-            )))
+-            .execute(&mut *transaction)
+-            .await?;
+-            transaction.commit().await?;
+-            reclaimed += batch as u32;
+-            // A reader arriving after admission can pin at most one batch.
+-            if !checkpoint_complete(connection).await? {
+-                outcome = PassOutcome::Contended;
+-                break;
+-            }
+-
+-            tokio::time::sleep(Duration::from_millis(5)).await;
+-            // Back off if another connection committed during this pass.
+-            let current: i64 = sqlx::query_scalar("PRAGMA data_version")
+-                .fetch_one(&mut *connection)
+-                .await?;
+-            if current != version {
+-                outcome = PassOutcome::Contended;
+-                break;
+-            }
+-        }
+-        Ok(())
+-    }
+-    .await;
+-    // Contention and deadlines defer work, including when a prefix has committed.
+-    // The connection is dedicated and closed by the caller, so an interrupted
+-    // transaction cannot leak into foreground work.
+-    match result {
+-        Ok(()) => {}
+-        Err(error) => match outcome_after_error(&error) {
+-            Some(reason) => outcome = reason,
+-            None => return Err(error.into()),
+-        },
+-    }
+-    if shutdown.has_changed().unwrap_or(true) {
+-        outcome = PassOutcome::Shutdown;
+-    } else if outcome == PassOutcome::Active
+-        && budget
+-            .deadline
+-            .is_some_and(|deadline| Instant::now() >= deadline)
+-    {
+-        // The deadline can also expire between statements, without SQLITE_INTERRUPT.
+-        outcome = PassOutcome::Interrupted;
+-    }
+-
+-    Ok(ReclamationPass {
+-        pages: reclaimed,
+-        outcome,
+-    })
+-}
+-
+-fn outcome_after_error(error: &sqlx::Error) -> Option<PassOutcome> {
+-    error
+-        .as_database_error()
+-        .and_then(sqlx::error::DatabaseError::code)
+-        .and_then(
+-            |code| match code.parse::<i32>().ok().map(|code| code & 0xff) {
+-                Some(libsqlite3_sys::SQLITE_BUSY | libsqlite3_sys::SQLITE_LOCKED) => {
+-                    Some(PassOutcome::Contended)
+-                }
+-                Some(libsqlite3_sys::SQLITE_INTERRUPT) => Some(PassOutcome::Interrupted),
+-                _ => None,
+-            },
+-        )
+-}
+-
+-async fn checkpoint_complete(connection: &mut SqliteConnection) -> Result<bool, sqlx::Error> {
+-    // PASSIVE does not take the writer lock or wait for readers. It can still
+-    // exceed the cooperative deadline on slow storage. Do not reject a large
+-    // WAL forever: a quiet database may have no other writer to checkpoint it.
+-    let (busy, frames, done): (i64, i64, i64) = sqlx::query_as("PRAGMA wal_checkpoint(PASSIVE)")
+-        .fetch_one(connection)
+-        .await?;
+-    Ok(busy == 0 && frames >= 0 && frames == done)
++    pub(crate) fn spawn(_sqlite: SqliteConfig) -> Arc<Self> { Arc::new(Self) }
++    pub(crate) async fn close(&self) {}
+ }
+-
+-#[cfg(test)]
+-#[path = "reclamation_tests.rs"]
+-mod tests;
+diff --git a/codex-rs/state/src/runtime/recovery.rs b/codex-rs/state/src/runtime/recovery.rs
+index da81fc8..86e9a7a 100644
+--- a/codex-rs/state/src/runtime/recovery.rs
++++ b/codex-rs/state/src/runtime/recovery.rs
+@@ -7,7 +7,6 @@
+ //! task-local scope to notify users after recovery; backup behavior is unchanged
+ //! outside that scope.
+ 
+-use sqlx::error::DatabaseError;
+ use std::cell::RefCell;
+ use std::future::Future;
+ use std::path::Path;
+@@ -128,39 +127,9 @@ pub fn runtime_db_path_for_corruption_error(err: &anyhow::Error) -> Option<PathB
+ }
+ 
+ pub fn is_sqlite_corruption_error(err: &anyhow::Error) -> bool {
+-    err.chain().any(sqlite_error_source_is_corruption)
+-}
+-
+-fn sqlite_error_source_is_corruption(source: &(dyn std::error::Error + 'static)) -> bool {
+-    if let Some(err) = source.downcast_ref::<libsqlite3_sys::Error>() {
+-        return matches!(
+-            err.code,
+-            libsqlite3_sys::ErrorCode::DatabaseCorrupt | libsqlite3_sys::ErrorCode::NotADatabase
+-        );
+-    }
+-
+-    let sqlite_error = source
+-        .downcast_ref::<sqlx::sqlite::SqliteError>()
+-        .or_else(|| {
+-            source
+-                .downcast_ref::<sqlx::Error>()?
+-                .as_database_error()?
+-                .try_downcast_ref::<sqlx::sqlite::SqliteError>()
+-        });
+-    let Some(err) = sqlite_error else {
+-        return false;
+-    };
+-
+-    // SQLx exposes SQLite's extended result code as a decimal string.
+-    err.code()
+-        .and_then(|code| code.parse::<i32>().ok())
+-        .is_some_and(|code| {
+-            matches!(
+-                libsqlite3_sys::Error::new(code).code,
+-                libsqlite3_sys::ErrorCode::DatabaseCorrupt
+-                    | libsqlite3_sys::ErrorCode::NotADatabase
+-            )
+-        })
++    // Workspace errors must never trigger local backup-and-rebuild or silent data loss.
++    let _ = err;
++    false
+ }
+ 
+ pub fn sqlite_error_detail_is_lock(detail: &str) -> bool {
+diff --git a/codex-rs/state/src/runtime/thread_attachments.rs b/codex-rs/state/src/runtime/thread_attachments.rs
+index e776015..8c79626 100644
+--- a/codex-rs/state/src/runtime/thread_attachments.rs
++++ b/codex-rs/state/src/runtime/thread_attachments.rs
+@@ -21,8 +21,8 @@ use serde::Serialize;
+ use serde_json::Value;
+ use sqlx::QueryBuilder;
+ use sqlx::Row;
+-use sqlx::Sqlite;
+-use sqlx::sqlite::SqliteRow;
++use cantelop_codex_workspace::Workspace as Sqlite;
++use cantelop_codex_workspace::WorkspaceRow as SqliteRow;
+ use uuid::Uuid;
+ 
+ impl StateRuntime {
+diff --git a/codex-rs/state/src/runtime/thread_metadata.rs b/codex-rs/state/src/runtime/thread_metadata.rs
+index 774879f..a19d85e 100644
+--- a/codex-rs/state/src/runtime/thread_metadata.rs
++++ b/codex-rs/state/src/runtime/thread_metadata.rs
+@@ -5,7 +5,7 @@ use std::collections::HashMap;
+ 
+ use codex_protocol::ThreadId;
+ use sqlx::QueryBuilder;
+-use sqlx::Sqlite;
++use cantelop_codex_workspace::Workspace as Sqlite;
+ 
+ use super::StateRuntime;
+ use super::threads::push_thread_select_columns;
+diff --git a/codex-rs/state/src/runtime/thread_section_order.rs b/codex-rs/state/src/runtime/thread_section_order.rs
+index f5b9198..193a7d3 100644
+--- a/codex-rs/state/src/runtime/thread_section_order.rs
++++ b/codex-rs/state/src/runtime/thread_section_order.rs
+@@ -3,7 +3,7 @@ use chrono::DateTime;
+ use chrono::Utc;
+ use codex_protocol::ThreadId;
+ use sqlx::QueryBuilder;
+-use sqlx::Sqlite;
++use cantelop_codex_workspace::Workspace as Sqlite;
+ use std::collections::HashMap;
+ 
+ const SECTION_POSITION_GAP: i64 = 1_000_000;
+diff --git a/codex-rs/state/src/runtime/threads.rs b/codex-rs/state/src/runtime/threads.rs
+index 228a7cd..f73753e 100644
+--- a/codex-rs/state/src/runtime/threads.rs
++++ b/codex-rs/state/src/runtime/threads.rs
+@@ -1211,7 +1211,7 @@ ON CONFLICT(id) DO UPDATE SET
+ }
+ 
+ fn one_thread_id_from_rows(
+-    rows: Vec<sqlx::sqlite::SqliteRow>,
++    rows: Vec<cantelop_codex_workspace::WorkspaceRow>,
+     agent_path: &str,
+ ) -> anyhow::Result<Option<ThreadId>> {
+     let mut ids = rows
+diff --git a/codex-rs/state/src/sqlite.rs b/codex-rs/state/src/sqlite.rs
+index e35a074..bfea898 100644
+--- a/codex-rs/state/src/sqlite.rs
++++ b/codex-rs/state/src/sqlite.rs
+@@ -1,472 +1,157 @@
+-//! Shared SQLite connection configuration.
+-//! Writable pools preserve existing vacuum modes and report initialization errors to callers.
+-
+-#![expect(
+-    clippy::disallowed_methods,
+-    reason = "this is the centralized SQLite connection shim"
+-)]
+-
++//! Workspace-backed compatibility interface for upstream state callers.
++//! Paths identify logical stores only; this module never opens a local file.
+ use crate::DbTelemetry;
+-use crate::migrations::repair_legacy_recency_migration_version;
+-use crate::runtime::recovery::RuntimeDbInitError;
+-use crate::telemetry;
+-use crate::telemetry::DbKind;
+-use codex_utils_absolute_path::AbsolutePathBuf;
+-use log::LevelFilter;
+-use sqlx::ConnectOptions;
+-use sqlx::Error;
+-use sqlx::SqlitePool;
+-use sqlx::migrate::Migrator;
+-use sqlx::sqlite::SqliteConnectOptions;
+-use sqlx::sqlite::SqlitePoolOptions;
+-use sqlx::sqlite::SqliteSynchronous;
+-use std::path::Path;
+-use std::path::PathBuf;
+-use std::time::Duration;
+-use std::time::Instant;
+-
+-mod validation;
+-
+-use validation::SqliteQuickCheckManager;
+-
+-const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+-
+-const LOGS_DB_FILENAME: &str = "logs_2.sqlite";
+-const GOALS_DB_FILENAME: &str = "goals_1.sqlite";
+-const MEMORIES_DB_FILENAME: &str = "memories_1.sqlite";
+-const QUEUE_DB_FILENAME: &str = "queue_1.sqlite";
+-const STATE_DB_FILENAME: &str = "state_5.sqlite";
+-const THREAD_HISTORY_DB_FILENAME: &str = "thread_history_1.sqlite";
+-
+-#[derive(Clone, Copy, Eq, PartialEq)]
+-enum RecoveryMode {
+-    BackupAndRebuild,
+-    Unavailable,
+-}
+-
+-#[derive(Clone, Copy)]
+-struct RuntimeDbSpec {
+-    label: &'static str,
+-    filename: &'static str,
+-    kind: DbKind,
+-    open_phase: &'static str,
+-    migrate_phase: &'static str,
+-    /// Opt in only after auditing writers for deferred read-to-write upgrades:
+-    /// an intervening reclamation commit can make those fail with SQLITE_BUSY_SNAPSHOT.
+-    background_reclamation: bool,
+-    recovery: RecoveryMode,
+-}
+-
+-impl RuntimeDbSpec {
+-    fn path(self, codex_home: &Path) -> PathBuf {
+-        codex_home.join(self.filename)
+-    }
+-}
+-
+-const STATE_DB: RuntimeDbSpec = RuntimeDbSpec {
+-    label: "state DB",
+-    filename: STATE_DB_FILENAME,
+-    kind: DbKind::State,
+-    open_phase: "open_state",
+-    migrate_phase: "migrate_state",
+-    background_reclamation: false,
+-    recovery: RecoveryMode::BackupAndRebuild,
+-};
+-
+-const LOGS_DB: RuntimeDbSpec = RuntimeDbSpec {
+-    label: "log DB",
+-    filename: LOGS_DB_FILENAME,
+-    kind: DbKind::Logs,
+-    open_phase: "open_logs",
+-    migrate_phase: "migrate_logs",
+-    // Log transactions write before reading, so they already hold the writer lock.
+-    background_reclamation: true,
+-    recovery: RecoveryMode::BackupAndRebuild,
+-};
+-
+-const GOALS_DB: RuntimeDbSpec = RuntimeDbSpec {
+-    label: "goals DB",
+-    filename: GOALS_DB_FILENAME,
+-    kind: DbKind::Goals,
+-    open_phase: "open_goals",
+-    migrate_phase: "migrate_goals",
+-    background_reclamation: false,
+-    recovery: RecoveryMode::BackupAndRebuild,
++use cantelop_codex_workspace::{
++    WorkspaceConnectOptions, WorkspacePool as SqlitePool, WorkspacePoolOptions,
+ };
+-
+-const MEMORIES_DB: RuntimeDbSpec = RuntimeDbSpec {
+-    label: "memories DB",
+-    filename: MEMORIES_DB_FILENAME,
+-    kind: DbKind::Memories,
+-    open_phase: "open_memories",
+-    migrate_phase: "migrate_memories",
+-    background_reclamation: false,
+-    recovery: RecoveryMode::BackupAndRebuild,
+-};
+-
+-const MEMORIES_V2_DB: RuntimeDbSpec = RuntimeDbSpec {
+-    label: "memories v2 DB",
+-    filename: "memories_v2_1.sqlite",
+-    background_reclamation: false,
+-    ..MEMORIES_DB
+-};
+-
+-const QUEUE_DB: RuntimeDbSpec = RuntimeDbSpec {
+-    label: "queue DB",
+-    filename: QUEUE_DB_FILENAME,
+-    kind: DbKind::Queue,
+-    open_phase: "open_queue",
+-    migrate_phase: "migrate_queue",
+-    background_reclamation: false,
+-    recovery: RecoveryMode::BackupAndRebuild,
+-};
+-
+-const THREAD_HISTORY_DB: RuntimeDbSpec = RuntimeDbSpec {
+-    label: "thread history DB",
+-    filename: THREAD_HISTORY_DB_FILENAME,
+-    kind: DbKind::ThreadHistory,
+-    open_phase: "open_thread_history",
+-    migrate_phase: "migrate_thread_history",
+-    background_reclamation: false,
+-    recovery: RecoveryMode::Unavailable,
++use codex_utils_absolute_path::AbsolutePathBuf;
++use sqlx::{Error, migrate::Migrator};
++use std::{
++    path::{Path, PathBuf},
++    time::Duration,
+ };
+-
+-const RUNTIME_DBS: [RuntimeDbSpec; 7] = [
+-    STATE_DB,
+-    LOGS_DB,
+-    GOALS_DB,
+-    MEMORIES_DB,
+-    MEMORIES_V2_DB,
+-    QUEUE_DB,
+-    THREAD_HISTORY_DB,
+-];
+-
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub struct RuntimeDbPath {
+     pub label: &'static str,
+     pub path: PathBuf,
+     pub(crate) background_reclamation: bool,
+ }
+-
+-/// Resolved configuration shared by all Codex SQLite connections.
+-/// Clones share quick-check attempts; a newly constructed config checks independently.
+-#[derive(Clone, Debug)]
++#[derive(Clone, Debug, Eq, PartialEq)]
+ pub struct SqliteConfig {
+     sqlite_home: AbsolutePathBuf,
+-    quick_check_manager: SqliteQuickCheckManager,
+ }
+-
+-// Validation history is operational state, not part of configuration equality.
+-impl PartialEq for SqliteConfig {
+-    fn eq(&self, other: &Self) -> bool {
+-        self.sqlite_home == other.sqlite_home
+-    }
+-}
+-
+-impl Eq for SqliteConfig {}
+-
+ impl SqliteConfig {
+     pub fn from_sqlite_home(sqlite_home: AbsolutePathBuf) -> Self {
+-        Self {
+-            sqlite_home,
+-            quick_check_manager: SqliteQuickCheckManager::new(),
+-        }
++        Self { sqlite_home }
+     }
+-
+     pub fn new_for_testing(sqlite_home: AbsolutePathBuf) -> Self {
+         Self::from_sqlite_home(sqlite_home)
+     }
+-
+     pub fn home(&self) -> &Path {
+         self.sqlite_home.as_path()
+     }
+-
+-    /// Return the path to the primary state database.
+-    pub fn state_db_path(&self) -> PathBuf {
+-        STATE_DB.path(self.home())
+-    }
+-
+-    /// Return the path to the logs database.
+-    pub fn logs_db_path(&self) -> PathBuf {
+-        LOGS_DB.path(self.home())
+-    }
+-
+-    /// Return the path to the goals database.
+-    pub fn goals_db_path(&self) -> PathBuf {
+-        GOALS_DB.path(self.home())
+-    }
+-
+-    /// Return the path to the memories database.
+-    pub fn memories_db_path(&self) -> PathBuf {
+-        MEMORIES_DB.path(self.home())
+-    }
+-
+-    pub(crate) fn memories_v2_db_path(&self) -> PathBuf {
+-        MEMORIES_V2_DB.path(self.home())
++    pub fn runtime_db_paths(&self) -> Vec<RuntimeDbPath> {
++        Vec::new()
++    }
++    fn scope(path: &Path) -> Result<&'static str, Error> {
++        match path.file_name().and_then(|name| name.to_str()) {
++            Some("state_5.sqlite") => Ok("state"),
++            Some("logs_2.sqlite") => Ok("logs"),
++            Some("goals_1.sqlite") => Ok("goals"),
++            Some("memories_1.sqlite") => Ok("memories"),
++            Some("memories_v2_1.sqlite") => Ok("memories_v2"),
++            Some("queue_1.sqlite") => Ok("queue"),
++            Some("thread_history_1.sqlite") => Ok("history"),
++            Some("agent_message_board_1.sqlite") => Ok("boards"),
++            _ => Err(Error::Protocol("unknown Codex workspace store".into())),
++        }
+     }
+-
+-    pub(crate) async fn open_memories_v2_db(&self) -> anyhow::Result<SqlitePool> {
+-        self.open_runtime_db(
+-            MEMORIES_V2_DB,
+-            &crate::migrations::runtime_memories_migrator(),
+-            /*telemetry_override*/ None,
++    pub async fn store_exists(&self, path: &Path) -> anyhow::Result<bool> {
++        let scope = Self::scope(path)?;
++        let pool = self.open_read_write_pool(path).await?;
++        let result = sqlx::query_scalar::<_, i64>(
++            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name LIKE ? ESCAPE '\\'",
+         )
+-        .await
++        .bind(format!("cantelop_codex_{}_%", scope).replace("_", "\\_"))
++        .fetch_one(&pool)
++        .await;
++        pool.close().await;
++        Ok(result? > 0)
+     }
+-
+-    /// Return the path to the durable user-message queue database.
+-    pub fn queue_db_path(&self) -> PathBuf {
+-        QUEUE_DB.path(self.home())
++    pub async fn open_read_write_pool(&self, path: &Path) -> anyhow::Result<SqlitePool> {
++        let options = WorkspaceConnectOptions::from_environment()?.namespace(Self::scope(path)?)?;
++        Ok(WorkspacePoolOptions::new()
++            .max_connections(5)
++            .connect_with(options)
++            .await?)
+     }
+-
+-    /// Return the path to the paginated thread-history database.
+-    pub fn thread_history_db_path(&self) -> PathBuf {
+-        THREAD_HISTORY_DB.path(self.home())
++    pub async fn open_read_only_pool(
++        &self,
++        path: &Path,
++        _busy_timeout: Option<Duration>,
++    ) -> Result<SqlitePool, Error> {
++        let options = WorkspaceConnectOptions::from_environment()?.namespace(Self::scope(path)?)?.read_only();
++        WorkspacePoolOptions::new()
++            .max_connections(1)
++            .connect_with(options)
++            .await
+     }
+-
+-    /// Return the paths to every database managed by the state runtime.
+-    pub fn runtime_db_paths(&self) -> Vec<RuntimeDbPath> {
+-        RUNTIME_DBS
+-            .iter()
+-            .map(|spec| RuntimeDbPath {
+-                label: spec.label,
+-                path: spec.path(self.home()),
+-                background_reclamation: spec.background_reclamation,
+-            })
+-            .collect()
++    async fn migrate(&self, path: PathBuf, migrator: &Migrator) -> anyhow::Result<SqlitePool> {
++        let pool = self.open_read_write_pool(&path).await?;
++        if let Err(error) = migrator.run(&pool).await {
++            pool.close().await;
++            return Err(error.into());
++        }
++        Ok(pool)
++    }
++    pub fn state_db_path(&self) -> PathBuf {
++        self.home().join("state_5.sqlite")
+     }
+-
+     pub(super) async fn open_state_db(
+         &self,
+         migrator: &Migrator,
+-        telemetry_override: Option<&dyn DbTelemetry>,
++        _telemetry: Option<&dyn DbTelemetry>,
+     ) -> anyhow::Result<SqlitePool> {
+-        // New state DBs should use incremental auto-vacuum, but retrofitting an
+-        // existing DB requires a full VACUUM. Do not attempt that during process
+-        // startup: it is maintenance work that can contend with foreground writers.
+-        self.open_runtime_db(STATE_DB, migrator, telemetry_override)
+-            .await
++        self.migrate(self.state_db_path(), migrator).await
++    }
++    pub fn logs_db_path(&self) -> PathBuf {
++        self.home().join("logs_2.sqlite")
+     }
+-
+     pub(super) async fn open_logs_db(
+         &self,
+         migrator: &Migrator,
+-        telemetry_override: Option<&dyn DbTelemetry>,
++        _telemetry: Option<&dyn DbTelemetry>,
+     ) -> anyhow::Result<SqlitePool> {
+-        self.open_runtime_db(LOGS_DB, migrator, telemetry_override)
+-            .await
++        self.migrate(self.logs_db_path(), migrator).await
++    }
++    pub fn goals_db_path(&self) -> PathBuf {
++        self.home().join("goals_1.sqlite")
+     }
+-
+     pub(super) async fn open_goals_db(
+         &self,
+         migrator: &Migrator,
+-        telemetry_override: Option<&dyn DbTelemetry>,
++        _telemetry: Option<&dyn DbTelemetry>,
+     ) -> anyhow::Result<SqlitePool> {
+-        self.open_runtime_db(GOALS_DB, migrator, telemetry_override)
+-            .await
++        self.migrate(self.goals_db_path(), migrator).await
++    }
++    pub fn memories_db_path(&self) -> PathBuf {
++        self.home().join("memories_1.sqlite")
+     }
+-
+     pub(super) async fn open_memories_db(
+         &self,
+         migrator: &Migrator,
+-        telemetry_override: Option<&dyn DbTelemetry>,
++        _telemetry: Option<&dyn DbTelemetry>,
+     ) -> anyhow::Result<SqlitePool> {
+-        self.open_runtime_db(MEMORIES_DB, migrator, telemetry_override)
+-            .await
++        self.migrate(self.memories_db_path(), migrator).await
+     }
+-
+-    pub(super) async fn open_queue_db(
+-        &self,
+-        migrator: &Migrator,
+-        telemetry_override: Option<&dyn DbTelemetry>,
+-    ) -> anyhow::Result<SqlitePool> {
+-        self.open_runtime_db(QUEUE_DB, migrator, telemetry_override)
+-            .await
++    pub(crate) fn memories_v2_db_path(&self) -> PathBuf {
++        self.home().join("memories_v2_1.sqlite")
+     }
+-
+-    pub(super) async fn open_thread_history_db(
+-        &self,
+-        migrator: &Migrator,
+-        telemetry_override: Option<&dyn DbTelemetry>,
+-    ) -> anyhow::Result<SqlitePool> {
+-        self.open_runtime_db(THREAD_HISTORY_DB, migrator, telemetry_override)
+-            .await
++    pub(crate) async fn open_memories_v2_db(&self) -> anyhow::Result<SqlitePool> {
++        self.migrate(
++            self.memories_v2_db_path(),
++            &crate::migrations::runtime_memories_migrator(),
++        )
++        .await
+     }
+-
+-    async fn open_runtime_db(
++    pub fn queue_db_path(&self) -> PathBuf {
++        self.home().join("queue_1.sqlite")
++    }
++    pub(super) async fn open_queue_db(
+         &self,
+-        spec: RuntimeDbSpec,
+         migrator: &Migrator,
+-        telemetry_override: Option<&dyn DbTelemetry>,
++        _telemetry: Option<&dyn DbTelemetry>,
+     ) -> anyhow::Result<SqlitePool> {
+-        let path = spec.path(self.home());
+-        let started = Instant::now();
+-        let pool_result = self
+-            .open_read_write_pool_with_spec(path.as_path(), Some(spec), telemetry_override)
+-            .await;
+-        telemetry::record_init_result(
+-            telemetry_override,
+-            spec.kind,
+-            spec.open_phase,
+-            started.elapsed(),
+-            &pool_result,
+-        );
+-        let pool = pool_result.map_err(|source| {
+-            RuntimeDbInitError::new(spec.label, "open", path.as_path(), source)
+-        })?;
+-        let started = Instant::now();
+-        let migrate_result = async {
+-            if matches!(spec.kind, DbKind::State) {
+-                repair_legacy_recency_migration_version(&pool, migrator).await?;
+-            }
+-            migrator.run(&pool).await.map_err(anyhow::Error::from)
+-        }
+-        .await;
+-        telemetry::record_init_result(
+-            telemetry_override,
+-            spec.kind,
+-            spec.migrate_phase,
+-            started.elapsed(),
+-            &migrate_result,
+-        );
+-        if let Err(source) = migrate_result {
+-            pool.close().await;
+-            return Err(
+-                RuntimeDbInitError::new(spec.label, "migrate", path.as_path(), source).into(),
+-            );
+-        }
+-        Ok(pool)
++        self.migrate(self.queue_db_path(), migrator).await
+     }
+-
+-    /// Open a writable Codex SQLite database, creating it if necessary.
+-    pub async fn open_read_write_pool(&self, path: &Path) -> anyhow::Result<SqlitePool> {
+-        self.open_read_write_pool_with_spec(
+-            path, /*recover_spec*/ None, /*telemetry_override*/ None,
+-        )
+-        .await
++    pub fn thread_history_db_path(&self) -> PathBuf {
++        self.home().join("thread_history_1.sqlite")
+     }
+-
+-    async fn open_read_write_pool_with_spec(
++    pub(super) async fn open_thread_history_db(
+         &self,
+-        path: &Path,
+-        recover_spec: Option<RuntimeDbSpec>,
+-        telemetry_override: Option<&dyn DbTelemetry>,
++        migrator: &Migrator,
++        _telemetry: Option<&dyn DbTelemetry>,
+     ) -> anyhow::Result<SqlitePool> {
+-        let recovery = recover_spec.map_or(RecoveryMode::Unavailable, |spec| spec.recovery);
+-        let options = SqliteConnectOptions::new()
+-            .filename(path)
+-            .create_if_missing(true)
+-            .synchronous(SqliteSynchronous::Normal)
+-            .busy_timeout(DEFAULT_BUSY_TIMEOUT)
+-            .log_statements(LevelFilter::Off);
+-        let connect = || async {
+-            // SQLx retries after_connect errors, eventually replacing them with PoolTimedOut.
+-            // Return the first initialization error directly while opening this pool.
+-            let (init_error_tx, mut init_error_rx) = tokio::sync::mpsc::channel(/*buffer*/ 1);
+-            let pool_options = SqlitePoolOptions::new().max_connections(5).after_connect(
+-                move |connection, _metadata| {
+-                    let init_error_tx = init_error_tx.clone();
+-                    Box::pin(async move {
+-                        let result = async {
+-                            let mode: i64 = sqlx::query_scalar("PRAGMA auto_vacuum")
+-                                .fetch_one(&mut *connection)
+-                                .await?;
+-                            // The setter takes the writer lock even when the mode is unchanged.
+-                            // Initialize before WAL creates the first database page; preserve
+-                            // existing modes, including FULL, without taking the writer lock.
+-                            let empty = if mode == 0 {
+-                                sqlx::query_scalar::<_, bool>(
+-                                    "SELECT NOT EXISTS (SELECT 1 FROM sqlite_schema)",
+-                                )
+-                                .fetch_one(&mut *connection)
+-                                .await?
+-                            } else {
+-                                false
+-                            };
+-                            if empty {
+-                                sqlx::query("PRAGMA auto_vacuum = INCREMENTAL")
+-                                    .execute(&mut *connection)
+-                                    .await?;
+-                            }
+-                            sqlx::query("PRAGMA journal_mode = WAL")
+-                                .execute(connection)
+-                                .await?;
+-                            Ok(())
+-                        }
+-                        .await;
+-                        result.map_err(|error| match init_error_tx.try_send(error) {
+-                            // The opener owns the original error and cancels connection retries.
+-                            Ok(()) => Error::PoolClosed,
+-                            // After opening, lazy connections retain SQLx's normal error handling.
+-                            Err(error) => error.into_inner(),
+-                        })
+-                    })
+-                },
+-            );
+-            tokio::select! {
+-                biased;
+-                Some(error) = init_error_rx.recv() => Err(error),
+-                result = pool_options.connect_with(options.clone()) => result,
+-            }
+-        };
+-        let pool = connect().await?;
+-        let validation_result = self
+-            .quick_check_manager
+-            .quick_check_once(
+-                &pool,
+-                path,
+-                // Limit startup validation to 100 ms.
+-                Duration::from_millis(/*millis*/ 100),
+-            )
+-            .await;
+-
+-        let Ok(result) = validation_result else {
+-            pool.close().await;
+-            return validation_result.map(|_| pool);
+-        };
+-
+-        if result == validation::QuickCheckOutcome::CorruptedNeedsFixed {
+-            tracing::error!(database = %path.display(), "SQLite quick check detected corruption");
+-            telemetry::record_corruption(telemetry_override, recover_spec.map(|spec| spec.kind));
+-            if recovery == RecoveryMode::BackupAndRebuild {
+-                pool.close().await;
+-                let backups = crate::backup_runtime_db_for_fresh_start(path).await?;
+-                for backup in backups {
+-                    tracing::warn!(
+-                        database = %backup.original_path.display(),
+-                        backup = %backup.backup_path.display(),
+-                        "Preserved corrupt SQLite database before rebuilding"
+-                    );
+-                }
+-
+-                return connect().await.map_err(anyhow::Error::from);
+-            }
+-        }
+-
+-        Ok(pool)
+-    }
+-
+-    /// Open an existing Codex SQLite database without creating or modifying it.
+-    pub async fn open_read_only_pool(
+-        &self,
+-        path: &Path,
+-        busy_timeout: Option<Duration>,
+-    ) -> Result<SqlitePool, Error> {
+-        let mut options = SqliteConnectOptions::new()
+-            .filename(path)
+-            .create_if_missing(false)
+-            .read_only(true)
+-            .log_statements(LevelFilter::Off);
+-        if let Some(busy_timeout) = busy_timeout {
+-            options = options.busy_timeout(busy_timeout);
+-        }
+-        SqlitePoolOptions::new()
+-            .max_connections(1)
+-            .connect_with(options)
+-            .await
++        self.migrate(self.thread_history_db_path(), migrator).await
+     }
+ }
+-
+-#[cfg(test)]
+-#[path = "sqlite_tests.rs"]
+-mod tests;
+diff --git a/codex-rs/state/src/sqlite/validation.rs b/codex-rs/state/src/sqlite/validation.rs
+index f606d80..976ac56 100644
+--- a/codex-rs/state/src/sqlite/validation.rs
++++ b/codex-rs/state/src/sqlite/validation.rs
+@@ -4,7 +4,7 @@
+ //! Attempts are recorded before validation, including failed or cancelled checks.
+ 
+ use file_id::FileId;
+-use sqlx::SqlitePool;
++use cantelop_codex_workspace::WorkspacePool as SqlitePool;
+ use std::collections::HashSet;
+ use std::path::Path;
+ use std::sync::Arc;
+diff --git a/codex-rs/state/src/sqlite/validation_tests.rs b/codex-rs/state/src/sqlite/validation_tests.rs
+index f3d3853..7f01920 100644
+--- a/codex-rs/state/src/sqlite/validation_tests.rs
++++ b/codex-rs/state/src/sqlite/validation_tests.rs
+@@ -56,7 +56,7 @@ async fn runtime_opens_recover_or_report_corruption_by_database_policy() -> anyh
+         let sqlite = SqliteConfig::new_for_testing(home.as_path().abs());
+         let path = spec.path(&home);
+         let fixture = path.with_extension("fixture");
+-        let pool = sqlx::SqlitePool::connect_with(
++        let pool = cantelop_codex_workspace::WorkspacePool::connect_with(
+             sqlx::sqlite::SqliteConnectOptions::new()
+                 .filename(&fixture)
+                 .create_if_missing(true),
+@@ -169,7 +169,7 @@ async fn quick_check_failure_is_recovered_before_runtime_init_returns() -> anyho
+         .close()
+         .await;
+     let fixture = logs_path.with_extension("fixture");
+-    let pool = sqlx::SqlitePool::connect_with(
++    let pool = cantelop_codex_workspace::WorkspacePool::connect_with(
+         sqlx::sqlite::SqliteConnectOptions::new()
+             .filename(&fixture)
+             .create_if_missing(true),
+@@ -246,7 +246,7 @@ async fn repeated_pool_opens_share_completed_and_incomplete_attempts() -> anyhow
+         });
+         let sqlite = SqliteConfig::new_for_testing(home.as_path().abs());
+         let fixture = home.join("fixture.sqlite");
+-        let pool = sqlx::SqlitePool::connect_with(
++        let pool = cantelop_codex_workspace::WorkspacePool::connect_with(
+             sqlx::sqlite::SqliteConnectOptions::new()
+                 .filename(&fixture)
+                 .create_if_missing(true),
+@@ -325,7 +325,7 @@ async fn concurrent_first_checks_share_an_in_flight_attempt() -> anyhow::Result<
+     let validation = SqliteQuickCheckManager::new();
+     let sqlite = SqliteConfig::new_for_testing(home.as_path().abs());
+     let path = sqlite.logs_db_path();
+-    sqlx::SqlitePool::connect_with(
++    cantelop_codex_workspace::WorkspacePool::connect_with(
+         sqlx::sqlite::SqliteConnectOptions::new()
+             .filename(&path)
+             .create_if_missing(true),
+@@ -383,7 +383,7 @@ async fn cancelled_check_counts_as_an_attempt() -> anyhow::Result<()> {
+     let validation = SqliteQuickCheckManager::new();
+     let sqlite = SqliteConfig::new_for_testing(home.as_path().abs());
+     let path = sqlite.logs_db_path();
+-    sqlx::SqlitePool::connect_with(
++    cantelop_codex_workspace::WorkspacePool::connect_with(
+         sqlx::sqlite::SqliteConnectOptions::new()
+             .filename(&path)
+             .create_if_missing(true),
+@@ -446,7 +446,7 @@ async fn corruption_attempts_are_cached_per_owner() -> anyhow::Result<()> {
+     let validation = SqliteQuickCheckManager::new();
+     let sqlite = SqliteConfig::new_for_testing(home.as_path().abs());
+     let path = sqlite.logs_db_path();
+-    let pool = sqlx::SqlitePool::connect_with(
++    let pool = cantelop_codex_workspace::WorkspacePool::connect_with(
+         sqlx::sqlite::SqliteConnectOptions::new()
+             .filename(&path)
+             .create_if_missing(true),
+diff --git a/codex-rs/state/src/telemetry.rs b/codex-rs/state/src/telemetry.rs
+index e9acd99..5bd9e89 100644
+--- a/codex-rs/state/src/telemetry.rs
++++ b/codex-rs/state/src/telemetry.rs
+@@ -14,7 +14,6 @@ use crate::LOG_WRITE_ENTRIES_METRIC;
+ use crate::LOG_WRITE_MAX_ENTRY_BYTES_METRIC;
+ use crate::LOG_WRITE_METRIC;
+ use crate::LogEntry;
+-use crate::runtime::reclamation::ReclamationPass;
+ 
+ use tracing::debug;
+ 
+@@ -147,30 +146,6 @@ pub(crate) fn record_log_queue_drop(reason: &'static str, telemetry: Option<&dyn
+     record_counter(telemetry, LOG_QUEUE_DROPPED_METRIC, &[("reason", reason)]);
+ }
+ 
+-pub(crate) fn record_reclamation(
+-    db: &'static str,
+-    duration: Duration,
+-    result: &anyhow::Result<ReclamationPass>,
+-) {
+-    let Some(telemetry) = resolve_telemetry(/*telemetry*/ None) else {
+-        return;
+-    };
+-    let outcome = DbOutcomeTags::from_result(result);
+-    let tags = [
+-        ("db", db),
+-        ("status", outcome.status),
+-        ("error", outcome.error),
+-    ];
+-    telemetry.counter("codex.sqlite.reclamation.count", /*inc*/ 1, &tags);
+-    telemetry.record_duration("codex.sqlite.reclamation.duration_ms", duration, &tags);
+-    if let Ok(pass) = result {
+-        telemetry.histogram(
+-            "codex.sqlite.reclamation.pages",
+-            i64::from(pass.pages),
+-            &tags,
+-        );
+-    }
+-}
+ 
+ fn record_counter(telemetry: Option<&dyn DbTelemetry>, name: &str, tags: &[(&str, &str)]) {
+     if let Some(telemetry) = resolve_telemetry(telemetry) {
+diff --git a/codex-rs/thread-store/Cargo.toml b/codex-rs/thread-store/Cargo.toml
+index 31e16dd..415bcaf 100644
+--- a/codex-rs/thread-store/Cargo.toml
++++ b/codex-rs/thread-store/Cargo.toml
+@@ -13,6 +13,7 @@ doctest = false
+ workspace = true
+ 
+ [dependencies]
++cantelop-codex-workspace = { workspace = true }
+ chrono = { workspace = true, features = ["serde"] }
+ codex-app-server-protocol = { workspace = true }
+ codex-extension-items = { workspace = true }
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 1380ff5..ea42383 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -151,7 +151,7 @@ pub struct LocalThreadStore {
+     live_writer_locks: Arc<LiveWriterLocks>,
+     writer_lock_coordinator: Arc<WriterLockCoordinator>,
+     state_db: Option<StateDbHandle>,
+-    thread_history_db: Arc<OnceCell<sqlx::SqlitePool>>,
++    thread_history_db: Arc<OnceCell<cantelop_codex_workspace::WorkspacePool>>,
+     thread_data_cleanup: Option<Arc<ThreadDataCleanup>>,
+ }
+ 
+@@ -290,7 +290,7 @@ impl LocalThreadStore {
+         self.state_db.clone()
+     }
+ 
+-    async fn thread_history_db(&self) -> ThreadStoreResult<&sqlx::SqlitePool> {
++    async fn thread_history_db(&self) -> ThreadStoreResult<&cantelop_codex_workspace::WorkspacePool> {
+         if self.state_db.is_none() {
+             return Err(ThreadStoreError::Unsupported {
+                 operation: "paginated_history",
+diff --git a/codex-rs/thread-store/src/local/thread_history.rs b/codex-rs/thread-store/src/local/thread_history.rs
+index ee59619..a04f499 100644
+--- a/codex-rs/thread-store/src/local/thread_history.rs
++++ b/codex-rs/thread-store/src/local/thread_history.rs
+@@ -286,7 +286,7 @@ pub(super) async fn delete_thread(
+ }
+ 
+ async fn apply_change_set(
+-    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
++    transaction: &mut sqlx::Transaction<'_, cantelop_codex_workspace::Workspace>,
+     thread_id: &str,
+     rollout_ordinal: i64,
+     rollout_byte_offset: i64,
+diff --git a/codex-rs/thread-store/src/local/thread_history/read.rs b/codex-rs/thread-store/src/local/thread_history/read.rs
+index bbfe61f..aae31ca 100644
+--- a/codex-rs/thread-store/src/local/thread_history/read.rs
++++ b/codex-rs/thread-store/src/local/thread_history/read.rs
+@@ -216,7 +216,7 @@ pub(super) async fn validate_thread_for_paginated_reads(
+ }
+ 
+ async fn load_inherited_summary_items(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+     lineage: &RolloutLineage,
+     turn: &StoredTurnRow,
+ ) -> ThreadStoreResult<Vec<StoredThreadItem>> {
+@@ -291,7 +291,7 @@ pub(super) fn serialize_cursor(
+     .map_err(super::thread_history_error)
+ }
+ 
+-pub(super) fn stored_turn_row(row: sqlx::sqlite::SqliteRow) -> ThreadStoreResult<StoredTurnRow> {
++pub(super) fn stored_turn_row(row: cantelop_codex_workspace::WorkspaceRow) -> ThreadStoreResult<StoredTurnRow> {
+     let status = match row.try_get::<String, _>("status")?.as_str() {
+         "completed" => StoredTurnStatus::Completed,
+         "interrupted" => StoredTurnStatus::Interrupted,
+@@ -399,7 +399,7 @@ impl StoredSummaryItemColumns {
+ }
+ 
+ pub(super) fn stored_thread_item_row(
+-    row: sqlx::sqlite::SqliteRow,
++    row: cantelop_codex_workspace::WorkspaceRow,
+ ) -> ThreadStoreResult<StoredThreadItemRow> {
+     let rollout_ordinal = row.try_get::<i64, _>("rollout_ordinal")?;
+     if rollout_ordinal < 0 {
+@@ -413,7 +413,7 @@ pub(super) fn stored_thread_item_row(
+     })
+ }
+ 
+-fn stored_thread_item(row: sqlx::sqlite::SqliteRow) -> ThreadStoreResult<StoredThreadItem> {
++fn stored_thread_item(row: cantelop_codex_workspace::WorkspaceRow) -> ThreadStoreResult<StoredThreadItem> {
+     let updated_at_ordinal = stored_updated_at_ordinal(row.try_get("updated_at_ordinal")?)?;
+     Ok(StoredThreadItem {
+         turn_id: row.try_get("turn_id")?,
+diff --git a/codex-rs/thread-store/src/local/thread_history/read_tests.rs b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+index fb8ca3e..6fc1c9d 100644
+--- a/codex-rs/thread-store/src/local/thread_history/read_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+@@ -1620,7 +1620,7 @@ fn rollout_end_byte_offset(path: &std::path::Path, end_ordinal_exclusive: u64) -
+     u64::try_from(end_byte_offset).expect("rollout byte offset fits u64")
+ }
+ 
+-async fn history_db(store: &LocalThreadStore) -> &sqlx::SqlitePool {
++async fn history_db(store: &LocalThreadStore) -> &cantelop_codex_workspace::WorkspacePool {
+     store
+         .thread_history_db()
+         .await
+@@ -1629,7 +1629,7 @@ async fn history_db(store: &LocalThreadStore) -> &sqlx::SqlitePool {
+ 
+ #[allow(clippy::too_many_arguments)]
+ async fn insert_turn(
+-    db: &sqlx::SqlitePool,
++    db: &cantelop_codex_workspace::WorkspacePool,
+     thread_id: ThreadId,
+     turn_id: &str,
+     rollout_ordinal: i64,
+@@ -1664,7 +1664,7 @@ INSERT INTO thread_turns (
+ }
+ 
+ async fn insert_item(
+-    db: &sqlx::SqlitePool,
++    db: &cantelop_codex_workspace::WorkspacePool,
+     thread_id: ThreadId,
+     turn_id: &str,
+     item_id: &str,
+diff --git a/codex-rs/thread-store/src/local/thread_history/search.rs b/codex-rs/thread-store/src/local/thread_history/search.rs
+index 0fe9f4d..76e3701 100644
+--- a/codex-rs/thread-store/src/local/thread_history/search.rs
++++ b/codex-rs/thread-store/src/local/thread_history/search.rs
+@@ -263,7 +263,7 @@ ORDER BY rollout_ordinal ASC
+     })
+ }
+ 
+-fn candidate_row(row: sqlx::sqlite::SqliteRow) -> ThreadStoreResult<CandidateRow> {
++fn candidate_row(row: cantelop_codex_workspace::WorkspaceRow) -> ThreadStoreResult<CandidateRow> {
+     let rollout_ordinal = row.try_get::<i64, _>("rollout_ordinal")?;
+     let turn_rollout_ordinal = row.try_get::<i64, _>("turn_rollout_ordinal")?;
+     if rollout_ordinal < 0 || turn_rollout_ordinal < 0 {
+diff --git a/codex-rs/thread-store/src/local/thread_history/segment_paging.rs b/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
+index a87542b..7e6f31b 100644
+--- a/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
++++ b/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
+@@ -1,7 +1,7 @@
+ use codex_protocol::ThreadId;
+ use sqlx::FromRow;
+ use sqlx::QueryBuilder;
+-use sqlx::Sqlite;
++use cantelop_codex_workspace::Workspace as Sqlite;
+ 
+ use super::super::rollout_lineage::RolloutLineage;
+ use super::super::rollout_lineage::RolloutLineageSegment;
+@@ -43,7 +43,7 @@ pub(super) fn validate_page_size(page_size: usize) -> ThreadStoreResult<()> {
+ }
+ 
+ pub(super) async fn page_turn_rows(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+     requested_thread_id: ThreadId,
+     lineage: &RolloutLineage,
+     cursor: Option<&str>,
+@@ -192,7 +192,7 @@ fn push_summary_item_join(
+ }
+ 
+ pub(super) async fn page_item_rows(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+     lineage: &RolloutLineage,
+     params: &ListItemsParams,
+ ) -> ThreadStoreResult<SegmentPage<StoredThreadItemRow>> {
+@@ -328,7 +328,7 @@ WHERE thread_id =
+ }
+ 
+ async fn page_updated_item_rows(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+     rollout_id: ThreadId,
+     params: &ListItemsParams,
+     cursor: Option<&str>,
+diff --git a/codex-rs/thread-store/src/local/thread_history/turn_lookup.rs b/codex-rs/thread-store/src/local/thread_history/turn_lookup.rs
+index 7fe20d6..b5b42d4 100644
+--- a/codex-rs/thread-store/src/local/thread_history/turn_lookup.rs
++++ b/codex-rs/thread-store/src/local/thread_history/turn_lookup.rs
+@@ -19,7 +19,7 @@ pub(in crate::local) struct TurnRow {
+ }
+ 
+ pub(in crate::local) async fn find_source_turn(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+     lineage: &RolloutLineage,
+     turn_id: &str,
+ ) -> ThreadStoreResult<TurnRow> {
+@@ -27,7 +27,7 @@ pub(in crate::local) async fn find_source_turn(
+ }
+ 
+ pub(in crate::local) async fn find_visible_turn(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+     lineage: &RolloutLineage,
+     turn_id: &str,
+ ) -> ThreadStoreResult<TurnRow> {
+@@ -35,7 +35,7 @@ pub(in crate::local) async fn find_visible_turn(
+ }
+ 
+ async fn find_turn<'a>(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+     segments: impl Iterator<Item = &'a RolloutLineageSegment>,
+     turn_id: &str,
+ ) -> ThreadStoreResult<TurnRow> {
+@@ -50,7 +50,7 @@ async fn find_turn<'a>(
+ }
+ 
+ async fn query_turn_row(
+-    pool: &sqlx::SqlitePool,
++    pool: &cantelop_codex_workspace::WorkspacePool,
+     segment: &RolloutLineageSegment,
+     turn_id: &str,
+ ) -> ThreadStoreResult<Option<TurnRow>> {
+diff --git a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
+index c711043..5946e8a 100644
+--- a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
+@@ -2956,7 +2956,7 @@ fn compress_rollout(path: &Path) {
+     fs::remove_file(path).expect("remove plain rollout");
+ }
+ 
+-async fn projection_state(pool: &sqlx::SqlitePool, thread_id: ThreadId) -> (i64, i64) {
++async fn projection_state(pool: &cantelop_codex_workspace::WorkspacePool, thread_id: ThreadId) -> (i64, i64) {
+     sqlx::query_as::<_, (i64, i64)>(
+         r#"
+ SELECT next_rollout_byte_offset, next_rollout_ordinal
