@@ -5,6 +5,12 @@ Workspaces. This TypeScript SDK lets you define an agent's HTTP API and Session
 runtime, send messages to the agent, and stream its responses. You control the
 agent logic; Cantelop manages routing and Sandbox lifecycle.
 
+## Codex harness
+
+Use `@cantelop/sdk/codex` to run a Cantelop-enabled native Codex app-server with
+workspace-backed SQL persistence. See [the native Codex guide](docs/codex.md) for
+the build recipe, storage coverage, and lifecycle API.
+
 ## Prerequisites
 
 ### To use the SDK
