@@ -39,24 +39,26 @@ Use a verified executable from that repository's CI artifacts or tagged releases
 or build it from its checkout:
 
 ```sh
-git clone git@github.com:stepandel/cantelop-codex-native.git
+git clone --branch cantelop git@github.com:stepandel/cantelop-codex-native.git
 cd cantelop-codex-native
-rustup toolchain install 1.95.0 --profile minimal
-npm run build
-export CANTELOP_CODEX_PATH="$PWD/native/bin/cantelop-codex"
+rustup toolchain install "$(node cantelop/scripts/toolchain.mjs)" --profile minimal
+npm --prefix cantelop run build
+export CANTELOP_CODEX_PATH="$PWD/cantelop/bin/cantelop-codex"
 ```
 
 Build for the target Session platform; a macOS executable does not run in a Linux
 Sandbox. The SDK does not automatically download native binaries or bundle them
-in its npm tarball. The native repository is currently private, so repository
-and release access require authorization.
+in its npm tarball. The native repository is a public GitHub fork of OpenAI Codex. Its default
+`cantelop` branch contains the workspace integration; `main` retains upstream
+source.
 
 The executable must advertise storage protocol **1**, backend `workspace`,
 `localSqlite: false`, and every required storage domain. The SDK validates its
 preflight probe and initialization response. Native release metadata records
 these capabilities, its pinned upstream revision, and the tested SDK revision;
 select a compatible native release independently of the SDK version. The native
-repository documents the wire contract and verifies it in CI.
+repository documents the wire contract and upstream merge process in
+`cantelop/README.md` and verifies compatibility in CI.
 
 ## Storage coverage
 
