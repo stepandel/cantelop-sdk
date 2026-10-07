@@ -49,7 +49,8 @@ test("gaps, missing snapshots, invalid chunks and oversized snapshots require re
   const decoder = createPiDurableEventDecoder();
   decoder.push(frames[0]);
   assert.throws(() => decoder.push(frames[2]), /gap/);
-  assert.throws(() => decoder.push({ ...frames[0], sequence: 1 }), /snapshot/);
+  decoder.push(frames[0]);
+  assert.throws(() => decoder.push({ ...frames[0], streamId: "other", sequence: 1 }), /snapshot/);
   assert.throws(() => decoder.push({ ...frames[0], parts: 0 }), /Invalid/);
   assert.throws(
     () => createPiDurableEventDecoder({ maxBytes: 10 }).push(frames[0]),
@@ -59,6 +60,19 @@ test("gaps, missing snapshots, invalid chunks and oversized snapshots require re
     decoder.push(encodePiDurableUpdate(snapshot, "fresh", 0)[0]),
     snapshot,
   );
+});
+
+test("a reset decoder resynchronizes from a live snapshot on the running stream", () => {
+  const decoder = createPiDurableEventDecoder();
+  decoder.push(encodePiDurableUpdate(snapshot, "live", 0)[0]);
+  assert.throws(() => decoder.push(encodePiDurableUpdate({ type: "change", conversationId: 1, ops: [] }, "live", 2)[0]), /gap/);
+  const large = { ...snapshot, value: { ...snapshot.value, docs: { large: { text: "x".repeat(60000) } } } };
+  const partial = encodePiDurableUpdate(large, "live", 3);
+  assert.equal(decoder.push(partial[1]), undefined); // tail of an update joined part-way
+  const change = { type: "change", conversationId: 1, ops: [] };
+  assert.equal(decoder.push(encodePiDurableUpdate(change, "live", 4)[0]), undefined);
+  assert.deepEqual(decoder.push(encodePiDurableUpdate(snapshot, "live", 5)[0]), snapshot);
+  assert.deepEqual(decoder.push(encodePiDurableUpdate(change, "live", 6)[0]), change);
 });
 
 test("decoder bounds chunk metadata as well as decoded bytes", () => {

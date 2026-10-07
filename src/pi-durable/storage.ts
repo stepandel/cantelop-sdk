@@ -40,9 +40,15 @@ const databaseLines = new WeakMap<WorkspaceDatabase, Promise<unknown>>();
 async function begin(database: WorkspaceDatabase): Promise<Transaction> {
   const deadline = Date.now() + 5_000;
   for (;;) {
+    let tx: Transaction | undefined;
     try {
-      return await database.transaction("write");
+      tx = await database.transaction("write");
+      // libsql's remote client sends BEGIN lazily with the first statement. Force it
+      // with a read so a busy rejection surfaces here, before any write is issued.
+      await tx.execute("SELECT 1");
+      return tx;
     } catch (error) {
+      tx?.close();
       // Only a definite pre-admission SQLite busy rejection is safe to retry.
       // Transport failures and statements/commits are never replayed.
       if (

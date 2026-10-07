@@ -57,7 +57,9 @@ export function encodePiDurableUpdate(
 
 /**
  * Decode one conversation stream. A gap throws: request a new snapshot and reset.
- * A new stream must begin at sequence zero with a snapshot. Bound memory by maxBytes.
+ * A new stream must begin at sequence zero with a snapshot. A reset decoder joins a
+ * live stream at any sequence and ignores updates until its next snapshot, so a
+ * snapshot requested mid-activity resynchronizes. Bound memory by maxBytes.
  */
 export function createPiDurableEventDecoder(
   options: { maxBytes?: number } = {},
@@ -75,8 +77,10 @@ export function createPiDurableEventDecoder(
     parts = 0,
     length = 0;
   let chunks: Uint8Array[] = [];
+  let synced = false;
   const reset = () => {
     streamId = undefined;
+    synced = false;
     conversationId = undefined;
     sequence = 0;
     part = 0;
@@ -105,11 +109,14 @@ export function createPiDurableEventDecoder(
         )
           throw new Error("Invalid Pi event frame");
         if (event.streamId !== streamId) {
-          if (event.sequence !== 0 || event.part !== 0)
+          // A reset decoder skips the tail of an update it joined part-way through.
+          if (event.part !== 0 && streamId === undefined) return undefined;
+          if (event.part !== 0 || (event.sequence !== 0 && streamId !== undefined))
             throw new Error("Pi stream requires a fresh snapshot");
           reset();
           streamId = event.streamId;
           conversationId = event.conversationId;
+          sequence = event.sequence;
         }
         if (event.conversationId !== conversationId)
           throw new Error("Pi conversation changed inside a stream");
@@ -161,6 +168,9 @@ export function createPiDurableEventDecoder(
         parts = 0;
         length = 0;
         chunks = [];
+        // Joined mid-stream: deltas are unusable until the next snapshot.
+        if (!synced && update.type !== "snapshot") return undefined;
+        synced = true;
         return update;
       } catch (error) {
         reset();

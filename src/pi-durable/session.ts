@@ -113,6 +113,10 @@ export function definePiDurableSession<
   let latest: Activation | undefined;
   let sessionId: string | undefined;
   let halted = false;
+  // Runtime shutdown is final; a halted execution reopens on the next intake.
+  let stopped = false;
+  let lifetime: AbortSignal | undefined;
+  let closing: Promise<void> = Promise.resolve();
   let inFlight = 0;
   let running = false;
   let liveSnapshot: (() => Promise<void>) | undefined;
@@ -136,15 +140,23 @@ export function definePiDurableSession<
     (opened !== undefined && Object.keys(opened.graph.value.tasks).length > 0);
 
   async function open(context: Activation): Promise<Opened> {
-    if (halted)
-      throw new Error(
-        "Pi Session execution has stopped; activate a replacement runtime",
-      );
+    if (stopped) throw new Error("Pi Session runtime has stopped");
+    if (halted) {
+      if (running) throw new Error("Pi Session execution is stopping; retry");
+      // The failed execution disposed and closed its harness. Reopening fences it and
+      // resolves any ambiguous commit from the persisted log.
+      halted = false;
+      opened = undefined;
+      opening = undefined;
+    }
     if (sessionId !== undefined && sessionId !== context.session.id)
       throw new Error("A Pi Session behaviour belongs to one runtime Session");
     sessionId = context.session.id;
     latest = context;
     opening ??= (async () => {
+      await closing.catch(() => {});
+      // Shutdown follows the runtime incarnation, not the Message that reopened it.
+      const signal = lifetime ?? context.signal;
       const harnessOptions =
         typeof options.harness === "function"
           ? await options.harness(context)
@@ -167,11 +179,12 @@ export function definePiDurableSession<
           queueMicrotask(kick);
         });
         const stop = () => {
+          stopped = true;
           halted = true;
           notify();
           void harness.close(BACKGROUND_CONTEXT).finally(() => opened?.dispose()).catch(report);
         };
-        context.signal.addEventListener("abort", stop, { once: true });
+        signal.addEventListener("abort", stop, { once: true });
         opened = {
           harness,
           root,
@@ -179,12 +192,12 @@ export function definePiDurableSession<
           dispose: () => {
             unsubscribe();
             graph.dispose();
-            context.signal.removeEventListener("abort", stop);
+            signal.removeEventListener("abort", stop);
           },
         };
-        if (context.signal.aborted) {
+        if (signal.aborted) {
           stop();
-          throw context.signal.reason;
+          throw signal.reason;
         }
         harness.resume();
         return opened;
@@ -357,7 +370,8 @@ export function definePiDurableSession<
             running = false;
             if (halted) {
               owner.dispose();
-              await owner.harness.close(BACKGROUND_CONTEXT);
+              closing = owner.harness.close(BACKGROUND_CONTEXT);
+              await closing;
             }
             // InMemoryActivity tracks this flush through re-admission. It closes the
             // race between task graph idle and a concurrent new durable submission.
@@ -390,6 +404,7 @@ export function definePiDurableSession<
   return defineSessionBehaviour({
     redelivery: true,
     async onActivate(context) {
+      lifetime ??= context.signal;
       await open(context);
       kick();
     },
