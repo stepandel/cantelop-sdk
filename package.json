@@ -69,8 +69,6 @@
     "check:package": "pnpm build && node scripts/check-package.mjs",
     "prepack": "pnpm build",
     "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
-    "build:codex": "node scripts/build-codex.mjs",
-    "check:codex-native": "pnpm build && node scripts/check-codex-native.mjs",
     "check:codex-harness": "pnpm build && node scripts/check-codex-harness.mjs"
   },
   "dependencies": {

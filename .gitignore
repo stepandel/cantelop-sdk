@@ -4,7 +4,3 @@ node_modules/
 .env
 .env.*
 !.env.example
-native/**/target/
-
-native/build/
-native/bin/

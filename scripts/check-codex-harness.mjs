@@ -7,7 +7,9 @@ import { createClient } from "@libsql/client";
 import { createCodex } from "../dist/codex.js";
 
 // Real native harness, mocked model provider. No paid API calls or user credentials.
-const executable = resolve(process.argv[2] ?? "native/bin/cantelop-codex");
+const selectedExecutable = process.argv[2] ?? process.env.CANTELOP_CODEX_PATH;
+if (!selectedExecutable) throw new Error("Pass a native executable path or set CANTELOP_CODEX_PATH; see docs/codex.md");
+const executable = resolve(selectedExecutable);
 const directory = await mkdtemp(join(tmpdir(), "cantelop-native-harness-"));
 const home = join(directory, "home");
 await mkdir(home);

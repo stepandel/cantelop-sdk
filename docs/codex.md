@@ -27,26 +27,36 @@ Borrowed database clients must return integers without losing precision: use
 creates and leaves borrowed clients open. Set `CANTELOP_CODEX_PATH` to the native
 executable, or pass its path through `executable`.
 
-## Build the native executable
+## Select a native executable
 
-The source recipe pins OpenAI Codex to
-[`24edd7b89026865149d58d0a090694a2146b6d3c`](https://github.com/openai/codex/tree/24edd7b89026865149d58d0a090694a2146b6d3c)
-and applies `native/upstream.patch`. There is no dependency on a separately
-maintained GitHub fork. Install Rust 1.95.0 with rustup and the upstream Codex
-platform build prerequisites, then run from this SDK checkout:
+Native source, upstream updates, builds, and binary releases live in
+[`stepandel/cantelop-codex-native`](https://github.com/stepandel/cantelop-codex-native).
+The native repository has its own version and release cycle. Updating upstream
+Codex does not require an SDK release unless the storage protocol or TypeScript
+API changes.
+
+Use a verified executable from that repository's CI artifacts or tagged releases,
+or build it from its checkout:
 
 ```sh
+git clone git@github.com:stepandel/cantelop-codex-native.git
+cd cantelop-codex-native
 rustup toolchain install 1.95.0 --profile minimal
-pnpm build:codex
+npm run build
 export CANTELOP_CODEX_PATH="$PWD/native/bin/cantelop-codex"
 ```
 
-`--source /path/to/checkout` and `--output /path/to/cantelop-codex` let you choose
-build locations. The recipe refuses to overwrite a modified or mismatched
-checkout. `--prepare-only` prepares the source without compiling it. Build for
-the target Session platform; an executable built on macOS does not run in a
-Linux Sandbox. Native executables are not downloaded automatically or included
-in the JavaScript npm tarball.
+Build for the target Session platform; a macOS executable does not run in a Linux
+Sandbox. The SDK does not automatically download native binaries or bundle them
+in its npm tarball. The native repository is currently private, so repository
+and release access require authorization.
+
+The executable must advertise storage protocol **1**, backend `workspace`,
+`localSqlite: false`, and every required storage domain. The SDK validates its
+preflight probe and initialization response. Native release metadata records
+these capabilities, its pinned upstream revision, and the tested SDK revision;
+select a compatible native release independently of the SDK version. The native
+repository documents the wire contract and verifies it in CI.
 
 ## Storage coverage
 
@@ -83,16 +93,13 @@ reported to the caller.
 ```sh
 pnpm test
 pnpm check:package
-pnpm check:codex-native
-pnpm check:codex-harness
-# Also exercise every pinned upstream migration on a prepared checkout:
-pnpm check:codex-native /path/to/prepared/codex
+# Requires a compatible native executable from the separate repository:
+CANTELOP_CODEX_PATH=/path/to/cantelop-codex pnpm check:codex-harness
 ```
 
-The protocol fixture tests are not a substitute for native harness tests. The
-native driver checks use a temporary local libSQL database as test infrastructure,
-while production connections use the workspace client.
-
-`codex-native.yml` prepares and builds the pinned fork on Linux, runs the native
-lifecycle smoke test against a mocked provider, and uploads the executable as a
-CI artifact.
+The SDK owns protocol fixture tests, package import checks, and the real native
+lifecycle smoke test. The native repository owns Rust driver checks, every
+pinned upstream migration, compilation, and executable release artifacts. Its
+CI runs the SDK's real lifecycle test against a pinned SDK checkout and a mocked
+provider. Native test infrastructure uses a temporary local libSQL database;
+production connections use the workspace client.
