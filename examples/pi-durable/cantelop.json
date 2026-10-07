@@ -1,0 +1,9 @@
+{
+  "app": "pi-durable",
+  "api": "src/api.ts",
+  "session": "src/session.ts",
+  "environment": {
+    "OPENAI_API_KEY": { "secret": true, "required": true },
+    "PI_MODEL": { "default": "gpt-6-sol" }
+  }
+}

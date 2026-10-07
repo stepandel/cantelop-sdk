@@ -1,0 +1,15 @@
+{
+  "name": "@cantelop/example-pi-durable",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": { "check": "tsc -p tsconfig.api.json && tsc -p tsconfig.session.json" },
+  "dependencies": {
+    "@cantelop/sdk": "workspace:*",
+    "@earendil-works/pi-durable": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/chord": "1.0.4"
+  },
+  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.6.3" }
+}

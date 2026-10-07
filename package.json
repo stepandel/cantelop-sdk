@@ -51,6 +51,14 @@
     "./schema": {
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
+    },
+    "./pi-durable": {
+      "types": "./dist/pi-durable.d.ts",
+      "import": "./dist/pi-durable.js"
+    },
+    "./pi-durable/events": {
+      "types": "./dist/pi-durable/events.d.ts",
+      "import": "./dist/pi-durable/events.js"
     }
   },
   "files": [
@@ -61,10 +69,11 @@
     "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs",
-    "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs && node scripts/check-database-example.mjs",
+    "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs && node scripts/check-database-example.mjs && node scripts/check-pi-durable-example.mjs",
     "check:package": "pnpm build && node scripts/check-package.mjs",
     "prepack": "pnpm build",
-    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs"
+    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
+    "test:pi-durable:bun": "pnpm build && bun test test/pi-durable-storage.test.mjs && bun test test/pi-durable-session.test.mjs && bun test test/pi-durable-events.test.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",
@@ -74,6 +83,25 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "@earendil-works/pi-durable": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/chord": "1.0.4"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-durable": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/chord": "1.0.4"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-durable": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/chord": {
+      "optional": true
+    }
   }
 }
