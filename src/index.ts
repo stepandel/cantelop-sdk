@@ -33,3 +33,8 @@ export type {
   UnknownMessageStatus,
 } from "./api.js";
 export { RemoteAppError } from "./api.js";
+export { createApp } from "./client.js";
+export type {
+  App, AppConnection, CreateAppOptions, IntegrationSessionOptions,
+  SessionRef, WorkspaceRef, WorkspaceSelector,
+} from "./integration.js";
