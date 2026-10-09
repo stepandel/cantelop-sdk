@@ -1,4 +1,5 @@
-import { edgeRequest, createEdgeConnection } from "./edge-connection.js";
+import { AppConfigurationError } from "./app-config.js";
+import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
 import type { App, AppCommandEnvelope, CreateAppOptions, IntegrationSessionOptions, MessageCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceSelector } from "./integration.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
@@ -6,8 +7,8 @@ import { streamSessionEvents } from "./stream.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** Backend integration through the protocol-managed App Edge API. */
-export function createApp<Message = unknown, Event = unknown, Reply = unknown, View = unknown>(options: CreateAppOptions): App<Message, Event, Reply, View> {
-  const connection = options?.connection ?? createEdgeConnection(options);
+export function createApp<Message = unknown, Event = unknown, Reply = unknown, View = unknown>(options: CreateAppOptions = {}): App<Message, Event, Reply, View> {
+  const connection = resolveEdgeConnection(options);
   if (typeof connection.fetch !== "function") throw new TypeError("An App Edge connection is required");
   const edgeFetch = (request: Request) => connection.fetch(edgeRequest(request));
   function send(envelope: AppCommandEnvelope, signal?: AbortSignal) {
@@ -112,7 +113,7 @@ export function createApp<Message = unknown, Event = unknown, Reply = unknown, V
   });
 }
 function submissionError(error: unknown, id: string, signal?: AbortSignal): unknown {
-  if (signal?.aborted) return error;
+  if (signal?.aborted || error instanceof AppConfigurationError) return error;
   if (error instanceof RemoteAppError) return new RemoteAppError(error.code, error.status, id, { cause: error });
   return new RemoteAppError("command_outcome_unknown", 0, id, { cause: error });
 }

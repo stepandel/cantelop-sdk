@@ -15,3 +15,12 @@ test("backend integration bundles without build tooling or native Session runtim
     assert.equal(/node_modules\/.*(?:esbuild|drizzle-kit)/.test(input), false, input);
   }
 });
+
+test("automatic App configuration bundles for worker hosts without Node profile dependencies", async () => {
+  const result = await build({
+    stdin: { contents: 'import { createApp } from "@cantelop/sdk"; export const app = createApp();', resolveDir: process.cwd(), loader: "js" },
+    bundle: true, platform: "browser", format: "esm", write: false, metafile: true,
+  });
+  assert.equal(Object.keys(result.metafile.inputs).some(input => /app-config-node\.js$/.test(input)), false);
+  assert.equal(Object.keys(result.metafile.inputs).some(input => /app-config-empty\.js$/.test(input)), true);
+});

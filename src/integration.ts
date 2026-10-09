@@ -19,9 +19,20 @@ export interface AppConnection {
   readonly localDatabaseOrigin?: string;
 }
 
+/** Select an App by identity; its connection is resolved from runtime/CLI configuration. */
+export type AppSelector =
+  | { readonly id: string; readonly slug?: never }
+  | { readonly slug: string; readonly id?: never };
+
 export type CreateAppOptions =
-  | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never }
-  | { readonly edgeUrl: string; readonly accessToken: string; readonly connection?: never };
+  | ((AppSelector | { readonly id?: never; readonly slug?: never }) & {
+      readonly profile?: string;
+      readonly connection?: never;
+      readonly edgeUrl?: never;
+      readonly accessToken?: never;
+    })
+  | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never; readonly id?: never; readonly slug?: never; readonly profile?: never }
+  | { readonly edgeUrl: string; readonly accessToken: string; readonly connection?: never; readonly id?: never; readonly slug?: never; readonly profile?: never };
 
 export interface App<Message, Event = unknown, Reply = unknown, View = unknown> {
   workspace(selector: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View>;

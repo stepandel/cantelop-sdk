@@ -1,4 +1,5 @@
-import type { AppConnection } from "./integration.js";
+import { AppConfigurationError, resolveAppConfiguration, assertAppOptions, captureConfigurationContext } from "./app-config.js";
+import type { AppConnection, CreateAppOptions } from "./integration.js";
 
 export const EDGE_ORIGIN = "https://edge.cantelop.internal";
 
@@ -31,5 +32,29 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
         ...(request.body === null ? {} : { body: await request.arrayBuffer() }),
       }));
     },
+  });
+}
+
+/** Capture configuration at construction; resolve files lazily on first operation. */
+export function resolveEdgeConnection(options: CreateAppOptions): AppConnection {
+  assertAppOptions(options);
+  if (options.connection !== undefined) return options.connection;
+  if (options.edgeUrl !== undefined) return createEdgeConnection(options);
+  const context = captureConfigurationContext();
+  const selection = { ...options };
+  let pending: Promise<AppConnection> | undefined;
+  return Object.freeze({
+    async fetch(request: Request) {
+      request.signal.throwIfAborted();
+      pending ??= resolveAppConfiguration(selection, context).then(createEdgeConnection).catch(error => {
+        pending = undefined;
+        if (error instanceof AppConfigurationError) throw error;
+        throw new AppConfigurationError("app_configuration_invalid");
+      });
+      const connection = await pending;
+      request.signal.throwIfAborted();
+      return connection.fetch(request);
+    },
+    ...(context.localDatabaseOrigin === undefined ? {} : { localDatabaseOrigin: context.localDatabaseOrigin }),
   });
 }

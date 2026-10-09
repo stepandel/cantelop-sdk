@@ -26,6 +26,9 @@ try {
     assert.equal(paths.some(file => file.startsWith(`dist/${removed}.`)), false);
     assert.equal(`./${removed}` in manifest.exports, false);
   }
+  for (const target of Object.values(manifest.imports["#cantelop-app-config"])) {
+    assert.ok(paths.includes(target.replace(/^\.\//, "")), "configuration adapter is not packed");
+  }
   assert.ok(paths.includes("dist/client.js"));
   assert.ok(paths.includes("dist/integration.d.ts"));
   assert.ok(paths.includes("dist/stream.js"));
@@ -79,6 +82,11 @@ try {
     'import { createApp, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type AppCommandEnvelope, type SessionEventCursor } from "@cantelop/sdk";',
     'const connection: AppConnection = { fetch: async () => new Response(null) };',
     'const app = createApp<{ prompt: string }, { text: string }, { answer: string }, { entries: string[] }>({ connection });',
+    'createApp();',
+    'createApp({ slug: "support-agent" });',
+    'createApp({ id: "app_0123456789abcdef0123456789abcdef", profile: "production" });',
+    '// @ts-expect-error App selectors require exactly one ID or slug.',
+    'createApp({ id: "app_0123456789abcdef0123456789abcdef", slug: "support-agent" });',
     'const workspace = app.workspace({ slug: "customer" });',
     'const session = workspace.session({ keepAliveSeconds: 300 });',
     'const receipt = await session.dispatch({ prompt: "hello" });',
@@ -117,6 +125,7 @@ try {
   ], { cwd: consumer, maxBuffer: 1024 * 1024 });
   await writeFile(path.join(consumer, "integration.mjs"), [
     'import assert from "node:assert/strict";',
+    'import { writeFile } from "node:fs/promises";',
     'import { createApp, CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "@cantelop/sdk";',
     'assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 2);',
     'let calls = 0;',
@@ -132,6 +141,20 @@ try {
     'assert.equal((await session.dispatch({ prompt: "hello" })).state, "accepted");',
     'assert.equal(calls, 1);',
     'for (const method of ["dispatch", "request", "stream", "view", "steer", "cancel", "stop"]) assert.equal(typeof session[method], "function");',
+    'for (const key of Object.keys(process.env)) if (key.startsWith("CANTELOP_")) delete process.env[key];',
+    'const appID = "app_0123456789abcdef0123456789abcdef";',
+    'await writeFile("./integration.json", JSON.stringify({ schemaVersion: 1, activeProfile: "default", profiles: { default: { defaultApp: { id: appID }, apps: [{ id: appID, slug: "packed-app", accessToken: "packed-integration-token" }] } } }), { mode: 0o600 });',
+    'process.env.CANTELOP_INTEGRATION_CONFIG = `${process.cwd()}/integration.json`;',
+    'globalThis.fetch = async request => {',
+    '  assert.equal(request.url, "https://packed-app.cantelop.dev/commands");',
+    '  assert.equal(request.headers.get("authorization"), "Bearer packed-integration-token");',
+    '  const body = await request.json();',
+    '  return Response.json({ protocolVersion: 2, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });',
+    '};',
+    'const automatic = createApp().workspace({ slug: "customer" }).session();',
+    'assert.equal((await automatic.dispatch({ prompt: "configured" })).state, "accepted");',
+    'const selected = createApp({ id: appID }).workspace({ slug: "customer" }).session();',
+    'assert.equal((await selected.steer({ prompt: "priority" })).state, "accepted");',
   ].join("\n"));
   await runCommand(process.execPath, ["integration.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   const artifactManifest = JSON.parse(await readFile(path.join(consumer, "artifact", "cantelop-runtime.json"), "utf8"));

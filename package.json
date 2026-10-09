@@ -67,5 +67,11 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.6.3"
+  },
+  "imports": {
+    "#cantelop-app-config": {
+      "node": "./dist/app-config-node.js",
+      "default": "./dist/app-config-empty.js"
+    }
   }
 }
