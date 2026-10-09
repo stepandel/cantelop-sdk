@@ -77,6 +77,7 @@ test("canonical view validates Workspace binding; invalid snapshots fail closed"
     { ...fixtures.active, id: "other" },
     { ...fixtures.active, observed_at: "bad" },
     { ...fixtures.active, state: "done" },
+    { ...fixtures.active, state: ["active"] },
     { ...fixtures.active, workspace_id: undefined },
     { ...fixtures.active, workspace_id: "wsp_" + "f".repeat(32) },
     { ...fixtures.active, capabilities: { steer: "true", abort: true } },

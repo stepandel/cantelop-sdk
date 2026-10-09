@@ -22,7 +22,7 @@ export async function viewSession(
     method: "GET", ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!isRecord(value) || value.protocol_version !== CANTELOP_INTEGRATION_PROTOCOL_VERSION || value.id !== id ||
-      !["unmaterialized", "active", "idle"].includes(String(value.state)) ||
+      typeof value.state !== "string" || !["unmaterialized", "active", "idle"].includes(value.state) ||
       typeof value.observed_at !== "string" || !isRecord(value.capabilities) ||
       typeof value.capabilities.steer !== "boolean" || typeof value.capabilities.abort !== "boolean") throw invalid("invalid_session_view");
   const observedAt = new Date(value.observed_at);

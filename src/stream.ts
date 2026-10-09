@@ -10,14 +10,15 @@ export async function* streamSessionEvents<Event>(
   sessionId: string,
   options: SessionStreamOptions = {},
 ): AsyncGenerator<SessionEvent<Event>> {
-  const cursor = options.after;
+  const cursor = options.after === undefined ? undefined : { ...options.after };
+  const signal = options.signal;
   if (cursor !== undefined && (!/^[0-9a-f]{32}$/.test(cursor.streamId) || !Number.isSafeInteger(cursor.sequence) || cursor.sequence < 0)) {
     throw new TypeError("An event cursor requires a stream ID and non-negative safe integer sequence");
   }
   const controller = new AbortController();
-  const abort = () => controller.abort(options.signal?.reason);
-  options.signal?.addEventListener("abort", abort, { once: true });
-  if (options.signal?.aborted) abort();
+  const abort = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
   let body: ReadableStream<Uint8Array> | null = null;
   try {
     controller.signal.throwIfAborted();
@@ -87,7 +88,7 @@ export async function* streamSessionEvents<Event>(
     // SSE does not dispatch a partial frame at EOF.
   } finally {
     controller.abort();
-    options.signal?.removeEventListener("abort", abort);
+    signal?.removeEventListener("abort", abort);
     // readLines releases its lock even when the consumer breaks after an event.
     if (body && !body.locked) await body.cancel().catch(() => {});
   }
