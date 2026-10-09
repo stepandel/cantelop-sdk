@@ -9,7 +9,7 @@ test('references remain lazy, immutable and capture selectors/options; submissio
   const calls = [];
   const connection = { async fetch(request) {
     assert.equal(this, connection);
-    assert.equal(request.url, 'https://edge.cantelop.internal/__cantelop/app/v2/commands');
+    assert.equal(request.url, 'https://edge.cantelop.internal/commands');
     assert.equal(request.method, 'POST');
     const body = await request.json(); calls.push(body); return accepted(body);
   } };

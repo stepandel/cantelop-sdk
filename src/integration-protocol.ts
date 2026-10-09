@@ -1,7 +1,7 @@
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 
 export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
-export const APP_COMMAND_PATH = "/__cantelop/app/v2/commands";
+export const APP_COMMAND_PATH = "/commands";
 export const MAX_COMMAND_BYTES = 1024 * 1024;
 export const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`;
 export function assertMessageID(id: unknown): asserts id is string {

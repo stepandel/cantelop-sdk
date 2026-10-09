@@ -39,7 +39,9 @@ The normal factory accepts HTTPS `edgeUrl` and an App-scoped `accessToken`, disa
 
 ## Common command envelope
 
-All operations use `POST /__cantelop/app/v2/commands`, including streaming. `CANTELOP_INTEGRATION_PROTOCOL_VERSION` is 2; this replaces the earlier alpha's incompatible route-based protocol 1.
+All operations use `POST {app_url}/commands`, including streaming. The URL is unversioned; the payload carries `protocolVersion`. `CANTELOP_INTEGRATION_PROTOCOL_VERSION` is 2; this replaces the earlier alpha’s incompatible route-based protocol 1.
+
+`app_url` is the deployed Cantelop App origin, for example `https://<app-slug>.cantelop.dev`; it is distinct from the customer backend that calls the SDK. The existing platform dispatcher selects the App by hostname and forwards the path unchanged. The generated App Edge Worker handles `/commands`; no platform path router is required.
 
 ```json
 {

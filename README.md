@@ -123,4 +123,4 @@ pnpm test:bun
 
 Package qualification checks the actual npm tarball, removed exports/files, generated Edge and native runtime build artifacts, and a clean consumer's integration types. Publishing remains a separate operation; see [release guidance](docs/releasing.md).
 
-All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope at `POST /__cantelop/app/v2/commands`. The Edge interprets each operation through its own handler; Edge ↔ Sandbox remains the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
+All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope at `POST /commands`. The Edge interprets each operation through its own handler; Edge ↔ Sandbox remains the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).

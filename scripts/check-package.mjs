@@ -122,6 +122,7 @@ try {
     'let calls = 0;',
     'const app = createApp({ connection: { async fetch(request) {',
     '  calls++;',
+    '  assert.equal(new URL(request.url).pathname, "/commands");',
     '  const body = await request.json();',
     '  assert.equal(body.workspace.id, "wsp_0123456789abcdef0123456789abcdef");',
     '  return Response.json({ protocolVersion: 2, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });',
