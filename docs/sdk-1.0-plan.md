@@ -1,6 +1,6 @@
 # Cantelop SDK 1.0 implementation plan
 
-Status: implementation sequence, October 9, 2026. The SDK branch now replaces Edge API authoring with a 1.0 prerelease and runtime-only build protocol 6. CLI/platform implementation and cross-repository rollout gates remain outstanding.
+Status: implementation sequence, October 9, 2026. The SDK branch now replaces Edge API authoring with a 1.0 prerelease and protocol-managed Edge plus native runtime build protocol 6. CLI/platform implementation and cross-repository rollout gates remain outstanding.
 
 SDK 1.0 exposes the existing Cantelop capabilities directly to application backends through App → Workspace → Session. Developers define their Session runtime; Cantelop supplies the ingress, transport, and middleware. Optional webhook triggers use the same Session contract. Delivery guarantees, persistence responsibilities, and Session lifecycle remain unchanged.
 
@@ -133,7 +133,7 @@ Use a versioned operation discriminator outside the application payload to disti
 - Replace customer-API compilation for 1.0 projects with generation of the opinionated ingress artifact from runtime/capability metadata.
 - Keep build/runtime adapters callable by the CLI but outside the supported application authoring surface. Remove `defineApi`, Router types, and API/edge authoring exports from the 1.0 SDK. Preserve legacy authoring through separately versioned published 0.x packages and compatible CLI branches.
 - Update schema discovery so `db/schema.ts` works from the manifest/project root without an API entry point. Preserve managed migrations and local database behavior.
-- Increment the CLI build protocol from 5 to 6 for the incompatible runtime-only contract; update CLI negotiation accordingly. Publish deterministic artifact/capability schemas and matching package qualification.
+- Increment the CLI build protocol from 5 to 6 for the incompatible generated-Edge/native-runtime contract; update CLI negotiation accordingly. Publish deterministic artifact/capability schemas and matching package qualification.
 
 **CLI**
 
@@ -194,3 +194,7 @@ Support both application-hosted handlers using the backend SDK and optional Cant
 | Control plane and console | Build/release artifact validation, generated Worker lifecycle/bindings, credential and trigger persistence, deployment configuration and integration UI |
 
 Phases are dependency gates, not estimates. Phase 2 needs Phase 1; Phase 3 builds on direct ingress; Phase 4 can proceed alongside Phase 3 after artifact/control contracts are frozen; Phase 5 follows a stable ingress and build contract; Phase 6 qualifies the complete supported path.
+
+## Architecture clarification
+
+Runtime-only describes developer authoring, not deployment topology. The Edge API remains an App Worker implemented by the SDK protocol and generated with `buildEdgeApi`. The CLI deploys it alongside `buildSessionRuntime`; dispatcher, outbound Worker, broker, trusted App identity, release gates, and environment synchronization remain part of the platform. The backend SDK targets the App Edge URL with a scoped integration token. It never calls private platform APIs directly. CLI protocol 6 must qualify both artifacts before the alpha can be deployed.

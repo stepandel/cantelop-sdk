@@ -23,7 +23,11 @@ function agentService(connection: AppConnection) {
 }
 ```
 
-The factory currently requires an explicit `AppConnection`; it does not invent a hosted URL or assume existing account deploy credentials can invoke runtime operations. `connection.fetch(request)` receives requests at the private runtime origin and owns authenticated routing for one App. This is a transport seam for platform/local adapters and tests, not instructions to expose the private origin publicly. The credential-based factory in the 1.0 plan is a subsequent platform-backed change.
+The normal factory accepts `{ edgeUrl, accessToken }`. It connects to the App Edge origin with a Bearer token and disables redirect following. HTTPS is required except for local loopback development. Platform credential issuance, rotation, revocation, and URL discovery remain follow-ups; deploy credentials are not integration tokens.
+
+`{ connection: AppConnection }` is a transport seam for tests/local adapters. It receives requests at the logical `https://edge.cantelop.internal` origin using the Edge protocol paths. The private serializer is adapted before any request leaves the SDK. Backend code never calls the private platform runtime origin.
+
+The deployed architecture remains `backend → SDK → dispatcher → protocol-managed App Edge Worker → outbound Worker → broker/gateway → runtime`. The SDK generates the Edge implementation. The platform supplies trusted App identity through the existing outbound chain; client headers cannot supply it.
 
 Workspace and Session references are lazy. Slug resolution is shared across Sessions created from the same Workspace reference; a failed resolution can be retried. A canonical ID bypasses provisioning. `workspace.resolve()` retrieves metadata or provisions a slug, and `workspace.database()` uses the existing renewable database credential route. The resolved metadata is cached on that reference; it is not a live status subscription.
 
@@ -53,7 +57,7 @@ The iterator converts existing SSE envelopes to `{ cursor, sessionId, messageId,
 
 ## Versioned control and inspection protocol
 
-`CANTELOP_INTEGRATION_PROTOCOL_VERSION` is 1. The following private App-bound adapter routes are new contracts; the current platform does not yet implement them. Never fall back from a control to an application message or interpret an unsupported route as an idle Session.
+`CANTELOP_INTEGRATION_PROTOCOL_VERSION` is 1. The following App Edge protocol routes are new contracts; the current platform does not yet implement them. Never fall back from a control to an application message or interpret an unsupported route as an idle Session.
 
 Every Session route carries exactly one `workspace_id` or `workspace_slug` query parameter. Session IDs are URL-encoded. Authentication and trusted App context are supplied by the connection/ingress, not by query parameters.
 
@@ -64,7 +68,7 @@ Every Session route carries exactly one `workspace_id` or `workspace_slug` query
 | `POST /__cantelop/integration/v1/sessions/{id}/controls` | `steer()` / `abort()` | Versioned accepted receipt |
 | `GET /__cantelop/integration/v1/sessions/{id}/controls/{messageId}` | Control receipt `status()` | Versioned existing message status shape |
 
-Existing dispatch, request, Workspace open/database, and event routes remain unchanged. Canonical Workspace metadata resolution additionally requires `GET /__cantelop/v1/workspaces/{workspaceId}` on the App-bound adapter; it must enforce ownership and never provision.
+Existing dispatch, request, Workspace open/database, status, and event serializers retain their behavior. The SDK sends these operations through the Edge prefix `/__cantelop/app/v1`; the generated Worker translates only its fixed route allowlist to private `/__cantelop/v1` paths. Canonical Workspace metadata resolution requires `GET /__cantelop/app/v1/workspaces/{workspaceId}`; private ownership enforcement remains a platform follow-up. Controls/inspection keep the versioned integration paths shown above on both sides of the Worker.
 
 ### Controls
 
@@ -102,19 +106,23 @@ The shared fixture at `test/fixtures/integration-v1.json` contains representativ
 1. Implement App-bound canonical Workspace lookup and the versioned Session routes above. Check App ownership and Session/Workspace binding on every operation, including stop, status, and read-only inspection.
 2. Add scoped integration credential issuance, rotation, revocation, and verification. Public ingress must derive trusted App context and retain release gates, limits, quotas, audit logging, and streaming behavior. Keep internal origins private.
 3. Implement typed runtime steering/abort capabilities and versioned admission/runtime control delivery. Do not forward control envelopes to ordinary `receive()` as application payloads. Preserve FIFO intake, persistent admission/deduplication, recovery, and cancellation acknowledgment/completion distinctions.
-4. Generate platform-owned ingress and capability metadata, preserving Worker bindings, environment/secrets synchronization, deployment gates, and legacy releases.
+4. Deploy SDK-generated protocol Edge artifacts through the existing dispatcher/outbound chain, preserving Worker bindings, environment/secrets synchronization, deployment gates, and legacy releases. Provision the reserved `CANTELOP_INTEGRATION_TOKEN` binding per App; the generated Worker fails closed with `integration_not_configured` when it is absent. The initial alpha accepts one token per App; platform rotation/revocation must replace that binding before production rollout.
 5. Add optional managed webhook ingress after the common integration path is stable. Persist/deduplicate intake before acknowledging a provider; outbound replies remain agent/application behavior.
 
-### Runtime-only SDK artifact
+### Protocol-managed Edge and native runtime artifacts
+
+`buildEdgeApi({ outdir, runtimeOrigin? })` generates a standard module Worker and `cantelop-edge.json` (`kind: "cantelop-protocol-edge"`, schema 1, CLI protocol 6, integration protocol 1). It requires the reserved token binding and forwards only declared integration operations. It strips caller authorization and context headers before private forwarding; the outbound Worker derives trusted App context. Bodies, query parameters, SSE responses, remote errors, and cancellation are preserved. Authentication and routing are protocol code; business payload validation and App/Workspace authorization remain in the private platform/runtime handlers. HTTP numeric loopback `runtimeOrigin` is available only for local CLI builds. Production always uses the existing private runtime origin. No remote target comes from a client request.
+
+The CLI builds and uploads this Edge artifact alongside the following native runtime artifact. The removed public `./api` and `./edge` exports stay removed; the internal Worker module is not an application authoring API.
 
 `buildSessionRuntime({ entrypoint, outdir, projectRoot? })` emits the native bundle and `cantelop-runtime.json`. The manifest has `kind: "cantelop-session-runtime"`, `schema_version: 1`, `main_module: "session-runtime.mjs"`, `cli_build_protocol_version: 6`, `runtime_protocol_version: 2`, and `integration_protocol_version: 1`. An optional `database_schema` carries the existing database schema protocol. Capabilities are currently `{ steer: false, abort: false }`; the runtime control follow-up must implement hooks and validated capability metadata before advertising support.
 
-`watchLocalProject` accepts the Session entrypoint/output, optional project root, and `onBuild`; events are `session-runtime` or `database-schema`. There is no API entrypoint/output/runtime-origin build option. Schema discovery starts from the project or Session entrypoint. Adding a new schema file still requires restarting the watcher.
+`watchLocalProject` accepts the Session entrypoint/output, optional project root, and `onBuild`; events are `session-runtime` or `database-schema`. There is no customer API entrypoint. The generated Worker is built separately because it has no customer source to watch. Schema discovery starts from the project or Session entrypoint. Adding a new schema file still requires restarting the watcher.
 
 ### CLI and SDK build
 
 1. Supply an App-bound local connection with the same protocol, explicit loopback configuration, event streaming, control support, and database credential routing.
-2. Add the runtime-only project manifest and generated ingress artifact. Update `init`, `doctor`, build/watch, dry-run, deploy, schema discovery, and custom-image examples.
+2. Add the runtime-only authoring manifest and build/upload both generated Edge and native runtime artifacts. Update `init`, `doctor`, build/watch, dry-run, deploy, schema discovery, and custom-image examples.
 3. Adopt CLI build protocol 6, project schema 3, and runtime artifact schema 1 before uploads. Keep support for published 0.x packages explicitly versioned; it is not an authoring compatibility shim in the 1.0 SDK.
 4. Migrate initialization and deployment to the new SDK surface and examples. Generate platform ingress from runtime metadata; do not expect a customer API entrypoint or route table.
 
