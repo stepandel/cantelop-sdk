@@ -17,7 +17,7 @@ type Event = { text: string };
 type Reply = { answer: string };
 type View = { entries: string[]; inbox: string[] };
 
-const app = createApp<Message, Event, Reply, View>({ edgeUrl, accessToken });
+const app = createApp<Message, Event, Reply, View>();
 const workspace = app.workspace({ slug: "customer" });
 const session = workspace.session({ id: "conversation" });
 const message = await session.dispatch({ prompt: "Review the change" });
@@ -35,7 +35,9 @@ The fourth generic is application view state. Dispatch and steer both accept the
 
 References remain lazy. Session IDs remain App-scoped; omitting one generates it immediately. ID/slug Workspace selection is unchanged. Explicit Workspace resolution is memoized per reference, concurrent database calls share its handle, and failures can be retried. Session commands carry the selected Workspace directly; their Edge handlers own provisioning or read-only lookup.
 
-The normal factory accepts HTTPS `edgeUrl` and an App-scoped `accessToken`, disables redirects, and supplies Bearer authentication. HTTP loopback is permitted for local development. An explicit `AppConnection` is retained for tests/local CLI adapters and receives logical Edge requests at `https://edge.cantelop.internal`. Integration credential issuance, rotation/revocation and URL discovery remain platform follow-ups; account deployment credentials are not integration tokens.
+The normal factory is `createApp()`. It discovers App identity and matching integration credentials from injected runtime context, environment configuration or a separate CLI integration profile. `createApp({ slug })` and `{ id }` explicitly select another configured App; authentication remains scoped to the selected identity. Project `cantelop.json` supplies the default App slug when using a local profile. No control-plane login credential is read or exchanged by the SDK. See [the configuration contract](app-configuration.md).
+
+Explicit `{ connection }` and `{ edgeUrl, accessToken }` are advanced/test overrides. HTTPS is required except for numeric/localhost loopback development, and redirects are disabled. A connection receives logical Edge requests at `https://edge.cantelop.internal`; it never receives private platform requests.
 
 ## Common command envelope
 

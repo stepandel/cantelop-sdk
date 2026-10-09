@@ -13,13 +13,13 @@ type Message = { type: "prompt"; prompt: string };
 type Event = { type: "delta"; text: string } | { type: "done" };
 type Reply = { answer: string };
 
-const app = createApp<Message, Event, Reply>({ edgeUrl, accessToken });
+const app = createApp<Message, Event, Reply>();
 const workspace = app.workspace({ slug: "customer-123" });
 // Or: app.workspace({ id: canonicalWorkspaceId });
 const session = workspace.session({ id: "conversation-456" });
 ```
 
-The backend connects to the App's Edge URL using an App-scoped integration token. Credential issuance and endpoint discovery are platform follow-ups. An explicit `AppConnection` remains available for local adapters and tests; it receives logical Edge protocol requests, never private platform requests.
+The SDK resolves the App identity and scoped integration credentials from runtime context, environment configuration, or a CLI-managed integration profile. Use `createApp({ slug: "support-agent" })` or `{ id }` to select another configured App. CLI provisioning remains a coordinated follow-up. Connection overrides remain available for tests; see [automatic App configuration](docs/app-configuration.md).
 
 Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. The Edge API remains deployed; its implementation is owned by the protocol rather than developer-authored routing.
 

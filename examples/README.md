@@ -9,12 +9,12 @@ src/session.ts    Native provider integration
 cantelop.json     Runtime-only project manifest
 ```
 
-Each provider client exports `createAgentApp(options)`. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider SDKs and secrets stay in the runtime. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
+Each provider client exports `createAgentApp()` with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider SDKs and secrets stay in the runtime. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
 
 ```ts
 import { createAgentApp } from "./src/client.js";
 
-const app = createAgentApp({ edgeUrl, accessToken });
+const app = createAgentApp();
 const workspace = app.workspace({ slug: "customer-123" });
 const session = workspace.session({ id: "conversation-456" });
 await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });

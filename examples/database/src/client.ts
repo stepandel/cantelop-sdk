@@ -6,7 +6,7 @@ type TaskMessage = { title: string };
 type TaskReply = { id: string };
 
 /** Configure the App once; Workspaces own database access and Session references. */
-export function createTasksApp(options: CreateAppOptions) {
+export function createTasksApp(options: CreateAppOptions = {}) {
   return createApp<TaskMessage, never, TaskReply>(options);
 }
 

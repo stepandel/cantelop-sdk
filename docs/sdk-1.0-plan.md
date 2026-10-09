@@ -8,6 +8,7 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 - Replace developer API/router exports and customer API compilation with App → Workspace → Session references and generated protocol Edge builds.
 - Preserve Workspace ID/slug addressing, App-scoped Session identity, lazy references, durable Workspace database access, and stop/reactivation lifecycle.
+- Add automatic App configuration from runtime context/environment/CLI integration profiles; retain explicit ID/slug selection and test connection overrides. Keep credentials separate from deployment login and scope them to selected Apps.
 - Define common `{ protocolVersion, id, workspace, session, command }` envelopes and strict discriminated command validation. Workspace-only commands use a null Session.
 - Dispatch and steer carry the same typed message and optional keep-alive. Return message references and expose stable retry IDs. Edge owns routing, normal/priority admission, App-default resolution, and read-only handlers.
 - Replace session-wide abort with message-targeted cancellation. Distinguish queued withdrawal, running cancellation request and existing settled outcomes.
@@ -21,7 +22,7 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 - Adopt project schema 3 and CLI build protocol 6; reject incompatible SDKs before build/upload. Preserve legacy 0.x projects through an explicit compatibility path.
 - Update init, doctor, build/watch, dev, dry-run and deploy to produce/upload both generated Edge and native runtime artifacts. No customer `src/api.ts` is required.
-- Run the same command Worker locally against a numeric loopback bridge, provision local integration credentials/default keep-alive, and publish backend connection details.
+- Run the same command Worker locally against a numeric loopback bridge, provision local integration credentials/default keep-alive, and inject the reserved App configuration into managed callers. Populate the versioned integration profile for independently launched local code; export scoped environment configuration for deployed callers. SDK users need no URL/token arguments.
 - Preserve custom images, native dependencies, managed schema discovery/migrations, workspace mounts and recovery. Qualify all provider/database examples.
 
 **Platform**

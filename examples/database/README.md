@@ -5,7 +5,7 @@
 ```ts
 import { createTasksApp, taskService } from "./src/client.js";
 
-const app = createTasksApp({ edgeUrl, accessToken });
+const app = createTasksApp();
 const workspace = app.workspace({ slug: "customer-123" });
 const tasks = taskService(workspace);
 await tasks.create("Review proposal");
