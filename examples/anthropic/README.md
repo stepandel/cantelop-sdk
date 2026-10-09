@@ -27,4 +27,4 @@ Run `pnpm check:examples` from the SDK root to type-check the backend client and
 
 The actor starts a streaming-input Claude query. While active, ordinary prompts enter the SDK input stream with `later` priority and application steering commands with `now` priority. `cancel` closes the stream and aborts the query. Claude's conversation ID remains runtime state; the mailbox stays responsive because the live query is managed activity. Configure `ANTHROPIC_API_KEY` as a runtime secret.
 
-The client and `defineSessionBehaviour(sessionRuntime, handler)` share `src/definition.ts`. Its versioned runtime ID and typed contracts bind the backend to the deployed agent. `cantelop.json` selects that definition; its `entrypoint` selects `src/session.ts`.
+The default client in `src/client.ts` defines its runtime ID and receive handler. That handler loads the agent implementation from `src/session.ts`. `cantelop.json` selects the client module for deployment; no separate SDK behavior definition is needed.

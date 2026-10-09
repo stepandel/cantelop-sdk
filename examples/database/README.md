@@ -16,4 +16,4 @@ const reply = await session.request({ title: "Agent task" });
 
 The runtime-only manifest requires CLI build protocol 6 and manifest schema 3. The SDK runtime artifact carries the database schema directly, without an API module. Platform/CLI adoption of this prerelease remains a follow-up; do not deploy it with the existing CLI.
 
-The client and `defineSessionBehaviour(sessionRuntime, handler)` share `src/definition.ts`. Its versioned runtime ID and typed contracts bind the backend to the deployed agent. `cantelop.json` selects that definition; its `entrypoint` selects `src/session.ts`.
+The default client in `src/client.ts` defines its runtime ID and receive handler. That handler loads the agent implementation from `src/session.ts`. `cantelop.json` selects the client module for deployment; no separate SDK behavior definition is needed.

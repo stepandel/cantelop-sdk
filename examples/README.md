@@ -1,12 +1,11 @@
 # Agent integration examples
 
-Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime and shared definition and keeps credentials out of browser code.
+Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through the client definition and keeps credentials out of browser code.
 
 The OpenAI, Anthropic, Pi, and OpenCode examples define native agent runtimes and ordinary application backend clients:
 
 ```text
-src/client.ts     App → Workspace → Session integration
-src/definition.ts Shared typed runtime identity and behaviour entrypoint
+src/client.ts     Client definition, runtime handlers and App integration
 src/contracts.ts  Shared message and event types
 src/session.ts    Native provider integration
 cantelop.json     Runtime-only project manifest

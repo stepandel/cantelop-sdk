@@ -1,56 +1,39 @@
-# Shared Session runtime definitions
+# Client and Session runtime definition
 
-Every `CantelopClient` requires a portable runtime definition. The definition carries the versioned runtime ID, behaviour entrypoint and message/event/reply/view types. The same definition binds the client, Sandbox behaviour and generated Edge Worker.
+`CantelopClient` is the sole application definition. Its required `sessionRuntime` contains an ID and a `receive` handler, with optional `onActivate`, `onRecover` and `redelivery`. No separate runtime or behaviour factory is required or exported.
 
 ```ts
-// src/definition.ts
-import { defineSessionRuntime } from "@cantelop/sdk";
+// src/client.ts
+import { CantelopClient } from "@cantelop/sdk";
 import type { Message, Event, Reply, View } from "./contracts.js";
 
-export const sessionRuntime = defineSessionRuntime<Message, Event, Reply, View>({
-  id: "support.v1",
-  entrypoint: "./session.ts",
+export const cantelop = new CantelopClient<Message, Event, Reply, View>({
+  sessionRuntime: {
+    id: "support.v1",
+    receive: async context => (await import("./session.js")).receive(context),
+  },
 });
-export default sessionRuntime;
+export default cantelop;
 ```
 
-`entrypoint` is resolved relative to the definition module during build. It must be a regular module inside that directory (or a child directory), never an absolute path or parent traversal. Keep the definition lightweight: use type-only imports for contracts and do not import agent/provider implementations. Independently deployed callers can import this definition from a shared package.
+The client generics type both the runtime handlers and Workspace/Session operations. The fourth generic supplies application view state; view publication still requires coordinated runtime/platform work. Types do not replace application validation of untrusted payloads. The ID is not a computed schema hash; change it when changing an incompatible public contract.
 
-```ts
-// Application backend
-import { CantelopClient } from "@cantelop/sdk";
-import { sessionRuntime } from "./definition.js";
+App selection, profiles and connection overrides can accompany the runtime. Constructing the client captures an immutable copy of its handlers and ID. It does not call the handlers or provision resources. Application backends import this client and use `cantelop.workspace(...).session(...)`.
 
-const cantelop = new CantelopClient({ sessionRuntime });
-const session = cantelop.workspace({ slug: "customer" }).session();
-```
-
-Client types are inferred from `sessionRuntime`; callers cannot substitute message/event generics on the client independently. App selection, profiles, and connection overrides can accompany the required definition. Constructing the client does not execute the behaviour or provision a resource. The client captures an immutable copy of the definition.
-
-```ts
-// src/session.ts — executes inside the Sandbox
-import { defineSessionBehaviour } from "@cantelop/sdk/session";
-import { sessionRuntime } from "./definition.js";
-
-export default defineSessionBehaviour(sessionRuntime, async context => {
-  // context.message.payload, output.send and reply follow the shared contract.
-});
-```
-
-The behaviour factory requires a definition and a receive handler. TypeScript checks its message/event/reply contract. The definition’s fourth generic supplies application view state; view publication still requires the coordinated runtime/platform work. Types do not replace application validation of untrusted payloads, and the ID is not a computed schema hash. Change the runtime ID when changing an incompatible public contract.
+Provider implementation can live in ordinary application modules. Load it dynamically inside handlers to keep backend imports lightweight. Any static imports and module-level code in the definition execute when that module is imported, including during build inspection. Backend bundlers should preserve these lazy imports or externalize agent modules; native artifact builds include them. Lifecycle hooks belong in the same `sessionRuntime` object and execute only in the Sandbox.
 
 ## Build and connection checks
 
-Project schema 3 now selects the definition module in `session`:
+Project schema 3 selects the default-exported client module:
 
 ```json
-{ "schema_version": 3, "app": "support-agent", "session": "src/definition.ts" }
+{ "schema_version": 3, "app": "support-agent", "session": "src/client.ts" }
 ```
 
-CLI build protocol 6 consumes `buildEdgeApi({ definition, outdir })` and `buildSessionRuntime({ definition, outdir, projectRoot? })`. `definition` is the path to the portable module. Both artifacts include `session_runtime_id`; deploy must reject a pair with different IDs. The build evaluates the portable definition and bundles the behaviour separately. Agent implementation is evaluated in the Sandbox, where its bootstrap checks that the default behaviour export's definition ID matches the artifact before starting the listener. Local watch uses `sessionDefinition` and follows definition/behaviour changes, including a changed behaviour entrypoint.
+CLI build protocol 6 consumes `buildEdgeApi({ definition, outdir })` and `buildSessionRuntime({ definition, outdir, projectRoot? })`. Both receive the client module path. The build imports that definition and reads its runtime ID without invoking handlers. The native artifact bundles the client and its handlers, then passes `cantelop.sessionRuntime` to the native listener. Its bootstrap checks the runtime ID before starting. Local watch follows the client module and handler dependencies.
 
-Every client command includes the reserved `X-Cantelop-Session-Runtime` header. The generated Worker compares it with its compiled runtime ID after authentication and validation, before Workspace provisioning, reads or Sandbox forwarding. Missing/different IDs return `session_runtime_mismatch` (409). Caller identity/auth headers are not forwarded into the private actor protocol. The command envelope and native actor lifecycle are unchanged.
+Both artifacts include `session_runtime_id`; deployment must reject mismatched pairs. Every client command includes the reserved `X-Cantelop-Session-Runtime` header. Edge compares it with its compiled runtime ID after authentication and validation, before provisioning, reads or Sandbox forwarding. Missing/different IDs return `session_runtime_mismatch` (409). Caller identity/auth headers are not forwarded into the private actor protocol. The envelope and actor lifecycle remain unchanged.
 
-The SDK is unpublished, so these changes update the existing schema/build/integration contracts directly: schema 3, CLI build protocol 6, App integration protocol 2 and native actor protocol 2 remain in place. CLI/platform adoption still needs to build from the definition, validate artifact pairing, and deploy the matching generated Worker. No CLI/platform repository changes are included here.
+These unpublished contracts change in place: project schema 3, CLI build protocol 6, App integration protocol 2 and native actor protocol 2 remain. CLI/platform adoption must build from the client module, validate artifact pairing and deploy the generated Worker. This PR changes only the SDK repository.
 
-See [web chat](../examples/web-chat/README.md) for a complete app that owns the client and agent implementation together.
+See [web chat](../examples/web-chat/README.md) for a complete app owning the client and agent implementation.

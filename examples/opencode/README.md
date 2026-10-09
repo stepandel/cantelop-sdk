@@ -35,4 +35,4 @@ Workspace files persist, but conversation history is not restored after Sandbox 
 
 This unattended coding example allows tools by default while denying external-directory access, interactive questions, and doom-loop permission requests. Review the runtime's permission configuration and use trusted Workspaces. The example emits text and errors rather than tool traces or interactive approvals. The application backend owns caller authorization before exposing any client-facing route.
 
-The client and `defineSessionBehaviour(sessionRuntime, handler)` share `src/definition.ts`. Its versioned runtime ID and typed contracts bind the backend to the deployed agent. `cantelop.json` selects that definition; its `entrypoint` selects `src/session.ts`.
+The default client in `src/client.ts` defines its runtime ID and receive handler. That handler loads the agent implementation from `src/session.ts`. `cantelop.json` selects the client module for deployment; no separate SDK behavior definition is needed.

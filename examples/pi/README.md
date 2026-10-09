@@ -27,4 +27,4 @@ Run `pnpm check:examples` from the SDK root to type-check the backend client and
 
 A prompt received while busy enters the application FIFO queue; active application steering enters Pi's native steering queue. `cancel` aborts the run and clears both queues. `PI_PROVIDER` and `PI_MODEL` select the model; the manifest defaults to Anthropic and `claude-sonnet-5`. Selecting another provider also requires changing the credential declaration.
 
-The client and `defineSessionBehaviour(sessionRuntime, handler)` share `src/definition.ts`. Its versioned runtime ID and typed contracts bind the backend to the deployed agent. `cantelop.json` selects that definition; its `entrypoint` selects `src/session.ts`.
+The default client in `src/client.ts` defines its runtime ID and receive handler. That handler loads the agent implementation from `src/session.ts`. `cantelop.json` selects the client module for deployment; no separate SDK behavior definition is needed.

@@ -4,9 +4,8 @@ Instantiate a client bound to one existing App in your backend, then select its 
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
-import { sessionRuntime } from "./definition.js";
+import { cantelop } from "./client.js";
 
-const cantelop = new CantelopClient({ sessionRuntime });
 const session = cantelop.workspace({ slug: "customer" }).session();
 await session.dispatch(message);
 ```
@@ -15,7 +14,7 @@ The client resolves its App’s Edge origin and integration credential. To selec
 
 This alpha implements SDK resolution. CLI credential provisioning and runtime injection still require the coordinated CLI/platform follow-ups. Existing CLI login credentials cannot authenticate this protocol. There is no separate hosting service involved: requests go to the selected App's deployed Edge Worker at `POST {app_url}/commands`.
 
-The required `sessionRuntime` is a portable definition, not executable agent code. Client types come from that definition. App identity/credentials remain automatic; see [runtime definition enforcement](runtime-definitions.md).
+The required `sessionRuntime` contains the runtime ID and executable behavior handlers. Declare message/event/reply/view types on `CantelopClient`; handlers and Session methods share that contract. App identity/credentials remain automatic; see [runtime definition enforcement](runtime-definitions.md).
 
 ## Configuration sources
 

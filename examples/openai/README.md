@@ -27,4 +27,4 @@ Run `pnpm check:examples` from the SDK root to type-check the backend client and
 
 `prompt` and an idle application `steer` start an OpenAI run. Commands received while busy enter a FIFO queue; `cancel` aborts the run and clears that queue. The actor owns an Agent and MemorySession for its warm runtime incarnation. `OPENAI_API_KEY` is runtime-only, and `OPENAI_MODEL` defaults to `gpt-5-mini`.
 
-The client and `defineSessionBehaviour(sessionRuntime, handler)` share `src/definition.ts`. Its versioned runtime ID and typed contracts bind the backend to the deployed agent. `cantelop.json` selects that definition; its `entrypoint` selects `src/session.ts`.
+The default client in `src/client.ts` defines its runtime ID and receive handler. That handler loads the agent implementation from `src/session.ts`. `cantelop.json` selects the client module for deployment; no separate SDK behavior definition is needed.

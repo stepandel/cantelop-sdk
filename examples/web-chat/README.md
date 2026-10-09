@@ -1,6 +1,6 @@
 # Agent chat in a web app
 
-A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate `CantelopClient` into an existing app. This project owns its [runtime definition](src/definition.ts), [OpenAI Session behaviour](src/session.ts), shared contracts, and `cantelop.json`. The backend and Sandbox use the same definition; no customer Edge routes are authored.
+A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate `CantelopClient` into an existing app. This project owns its [client definition](src/cantelop.ts), [OpenAI Session behaviour](src/session.ts), shared contracts, and `cantelop.json`. The backend and Sandbox use the same definition; no customer Edge routes are authored.
 
 ```text
 Browser → POST /api/chat → CantelopClient → App Edge /commands → agent runtime

@@ -7,24 +7,22 @@ This repository currently targets **1.0.0-alpha.0**. The SDK authoring/build bou
 ## Integrate from an application backend
 
 ```ts
-import { defineSessionRuntime } from "@cantelop/sdk";
+// src/client.ts — the application and deployment definition.
+import { CantelopClient } from "@cantelop/sdk";
+import type { Message, Event, Reply } from "./contracts.js";
 
-// src/definition.ts — shared by the backend and Sandbox behaviour.
-type Message = { type: "prompt"; prompt: string };
-type Event = { type: "delta"; text: string } | { type: "done" };
-type Reply = { answer: string };
-
-export const sessionRuntime = defineSessionRuntime<Message, Event, Reply>({
-  id: "support.v1", entrypoint: "./session.ts",
+export const cantelop = new CantelopClient<Message, Event, Reply>({
+  sessionRuntime: {
+    id: "support.v1",
+    receive: async context => (await import("./session.js")).receive(context),
+  },
 });
-export default sessionRuntime;
+export default cantelop;
 ```
 
 ```ts
-import { CantelopClient } from "@cantelop/sdk";
-import { sessionRuntime } from "./definition.js";
+import { cantelop } from "./client.js";
 
-const cantelop = new CantelopClient({ sessionRuntime });
 const workspace = cantelop.workspace({ slug: "customer-123" });
 // Or: cantelop.workspace({ id: canonicalWorkspaceId });
 const session = workspace.session({ id: "conversation-456" });
@@ -78,21 +76,18 @@ Breaking iteration or aborting the subscription only closes its stream. It does 
 ## Define the runtime
 
 ```ts
-import { defineSessionBehaviour } from "@cantelop/sdk/session";
+// src/session.ts — ordinary application code loaded by the receive handler.
+import type { SessionContext } from "@cantelop/sdk/session";
+import type { Message, Event, Reply } from "./contracts.js";
 import { runAgent } from "./agent.js";
-import { sessionRuntime } from "./definition.js";
 
-export default defineSessionBehaviour(sessionRuntime,
-  async ({ message, session, env, output, reply, signal }) => {
-    const answer = await runAgent(message.payload.prompt, {
-      sessionId: session.id,
-      apiKey: env.PROVIDER_API_KEY,
-      signal,
-    });
-    await output.send({ type: "done" });
-    reply({ answer });
-  },
-);
+export async function receive({ message, session, env, output, reply, signal }: SessionContext<Message, Event, Reply>) {
+  const answer = await runAgent(message.payload.prompt, {
+    sessionId: session.id, apiKey: env.PROVIDER_API_KEY, signal,
+  });
+  await output.send({ type: "done" });
+  reply({ answer });
+}
 ```
 
 `runAgent` is application code. Each activation runs one Session runtime in a dedicated Sandbox. Inline handlers serialize subsequent intake. Move long-running work into `context.activity` when the mailbox must remain responsive to commands.
@@ -105,16 +100,16 @@ Applications own durable jobs, checkpoints, and idempotency. `onActivate` restor
 {
   "schema_version": 3,
   "app": "support-agent",
-  "session": "src/definition.ts",
+  "session": "src/client.ts",
   "environment": {
     "PROVIDER_API_KEY": { "secret": true, "required": true }
   }
 }
 ```
 
-The [manifest schema](schemas/app-v3.json) has no `api` entry. A custom image uses `session: { "entrypoint": "src/definition.ts", "dockerfile": "docker/Dockerfile" }`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown; custom images install dependencies and assets outside `/workspace`.
+The [manifest schema](schemas/app-v3.json) has no `api` entry. A custom image uses `session: { "entrypoint": "src/client.ts", "dockerfile": "docker/Dockerfile" }`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown; custom images install dependencies and assets outside `/workspace`.
 
-The SDK build module is reserved for CLI/platform tooling. It builds `session-runtime.mjs` plus `cantelop-runtime.json`, with runtime/integration/build protocol versions and optional managed database schema. `db/schema.ts` is discovered from the project/Session entrypoint, independently of any API module. Runtime and schema changes have separate watch events. `buildEdgeApi({ definition, outdir })` separately generates `worker.mjs` and `cantelop-edge.json` without a customer API entrypoint. The CLI must deploy both artifacts and require their `session_runtime_id` values to match. Client types are inferred from the shared definition; every command carries `X-Cantelop-Session-Runtime`, which Edge checks before private routing. See [runtime definition enforcement](docs/runtime-definitions.md).
+The SDK build module is reserved for CLI/platform tooling. It builds `session-runtime.mjs` plus `cantelop-runtime.json`, with runtime/integration/build protocol versions and optional managed database schema. `db/schema.ts` is discovered from the project/Session entrypoint, independently of any API module. Runtime and schema changes have separate watch events. `buildEdgeApi({ definition, outdir })` separately generates `worker.mjs` and `cantelop-edge.json` without a customer API entrypoint. The CLI must deploy both artifacts and require their `session_runtime_id` values to match. Message, event, reply and view types are declared on the client; every command carries `X-Cantelop-Session-Runtime`, which Edge checks before private routing. See [runtime definition enforcement](docs/runtime-definitions.md).
 
 The platform deploys the generated Edge Worker through the existing dispatcher/outbound trust chain. Compatible CLI support must update initialization, local connections, manifest validation, artifact upload, and deployment before this path can be used in production. Webhook handlers belong in the customer’s own application and call the same SDK primitives.
 
