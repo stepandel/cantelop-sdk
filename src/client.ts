@@ -1,6 +1,7 @@
 import type { App, CreateAppOptions, IntegrationSessionOptions, WorkspaceSelector } from "./integration.js";
 import type { SessionRequestOptions, Workspace } from "./resources.js";
 import { createRemoteApp, readWorkspace, requestJSON } from "./remote-app.js";
+import { streamSessionEvents } from "./stream.js";
 
 /**
  * Creates the backend integration facade over a trusted App-bound connection.
@@ -57,6 +58,7 @@ export function createApp<Message = unknown, Event = unknown, Reply = unknown>(
             keepAliveSeconds: session.keepAliveSeconds,
             dispatch: (message: Message) => session.dispatch(message),
             request: (message: Message, requestOptions?: SessionRequestOptions) => session.request(message, requestOptions),
+            stream: (streamOptions?: import("./integration.js").SessionStreamOptions) => streamSessionEvents<Event>(request => session.events(request), session.id, streamOptions),
             stop: () => session.stop(),
           });
         },

@@ -37,4 +37,5 @@ export { createApp } from "./client.js";
 export type {
   App, AppConnection, CreateAppOptions, IntegrationSessionOptions,
   SessionRef, WorkspaceRef, WorkspaceSelector,
+  SessionEvent, SessionEventCursor, SessionStreamOptions,
 } from "./integration.js";

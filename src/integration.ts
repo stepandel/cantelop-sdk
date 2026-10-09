@@ -42,6 +42,26 @@ export interface SessionRef<Message, Event = unknown, Reply = unknown> {
   readonly keepAliveSeconds: number;
   dispatch(message: Message): Promise<MessageRef>;
   request(message: Message, options?: SessionRequestOptions): Promise<Reply>;
+  /** Explicit resume only; ending this subscription never cancels agent work. */
+  stream(options?: SessionStreamOptions): AsyncIterable<SessionEvent<Event>>;
   /** Releases the Sandbox. This identity remains reusable. */
   stop(): Promise<void>;
+}
+
+export interface SessionEventCursor {
+  readonly streamId: string;
+  readonly sequence: number;
+}
+
+export interface SessionStreamOptions {
+  readonly after?: SessionEventCursor;
+  readonly signal?: AbortSignal;
+}
+
+export interface SessionEvent<Event> {
+  readonly cursor: SessionEventCursor;
+  readonly sessionId: string;
+  readonly messageId: string;
+  readonly createdAt: Date;
+  readonly data: Event;
 }
