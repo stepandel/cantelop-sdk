@@ -1,17 +1,12 @@
-# Developer-owned database schema
+# Workspace database integration
 
-From this directory, install dependencies and run `cantelop dev`. The compatible
-CLI discovers `db/schema.ts`, generates its schema artifact, and automatically
-initializes each Workspace before issuing its application connection. No manual
-SQL or migration review is needed. `cantelop deploy` applies schema changes before
-release activation. The SDK and platform changes must be deployed together.
+`src/client.ts` defines an ordinary backend task service using `app.workspace({ id | slug }).database()`. `src/session.ts` uses the same Workspace database from the native Session runtime. `db/schema.ts` declares the managed application schema.
 
-POST `/tasks` with `{"title":"Review proposal"}`, then GET `/tasks`. Session code
-uses the same schema and Workspace database. Drizzle provides the typed queries;
-Cantelop provides the renewable libSQL connection and migration lifecycle.
+```ts
+const tasks = taskService(connection, { slug: "customer-123" });
+await tasks.create("Review proposal");
+const list = await tasks.list();
+const reply = await tasks.session().request({ title: "Agent task" });
+```
 
-Add a column to `db/schema.ts` to try an automatic local migration. Both API and
-Session code import the schema. Existing records survive rebuilds and restarts.
-
-Use `cantelop database migrations WORKSPACE_ID --json` to inspect hosted application migration history, including the SQL used for application
-changes. The Session inbox stays in memory; application queues can use this same schema.
+The runtime-only manifest requires CLI build protocol 6 and manifest schema 3. The SDK runtime artifact carries the database schema directly, without an API module. Platform/CLI adoption of this prerelease remains a follow-up; do not deploy it with the existing CLI.

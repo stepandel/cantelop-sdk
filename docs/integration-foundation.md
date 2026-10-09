@@ -1,8 +1,8 @@
 # SDK 1.0 integration foundation
 
-The integration foundation adds App → Workspace → Session references and a typed backend event subscription. It also defines the client side of the versioned control and inspection protocol. This is an additive step toward 1.0, not a complete public integration service: credential issuance, public endpoint discovery, runtime controls, and runtime-only CLI deployment still require coordinated platform and CLI changes.
+The integration foundation adds App → Workspace → Session references and a typed backend event subscription. It also defines the client side of the versioned control and inspection protocol. This is a breaking 1.0 SDK replacement, not a complete public integration service: credential issuance, public endpoint discovery, runtime controls, and runtime-only CLI deployment still require coordinated platform and CLI changes.
 
-The package stays on the current 0.x version. Existing API definitions, public exports, manifests, and CLI build protocol 5 remain compatible until the replacement deployment path is ready.
+The package is `1.0.0-alpha.0`. Customer API/router source modules, `defineApi`, API/edge exports, and customer-Worker build/route discovery are removed. CLI build protocol 6, project schema 3, and runtime artifact schema 1 replace the old contract. Older CLI versions must reject this SDK before building/uploading. Existing deployments use the published 0.x SDK until the coordinated rollout is qualified.
 
 ## Backend interface
 
@@ -105,11 +105,17 @@ The shared fixture at `test/fixtures/integration-v1.json` contains representativ
 4. Generate platform-owned ingress and capability metadata, preserving Worker bindings, environment/secrets synchronization, deployment gates, and legacy releases.
 5. Add optional managed webhook ingress after the common integration path is stable. Persist/deduplicate intake before acknowledging a provider; outbound replies remain agent/application behavior.
 
+### Runtime-only SDK artifact
+
+`buildSessionRuntime({ entrypoint, outdir, projectRoot? })` emits the native bundle and `cantelop-runtime.json`. The manifest has `kind: "cantelop-session-runtime"`, `schema_version: 1`, `main_module: "session-runtime.mjs"`, `cli_build_protocol_version: 6`, `runtime_protocol_version: 2`, and `integration_protocol_version: 1`. An optional `database_schema` carries the existing database schema protocol. Capabilities are currently `{ steer: false, abort: false }`; the runtime control follow-up must implement hooks and validated capability metadata before advertising support.
+
+`watchLocalProject` accepts the Session entrypoint/output, optional project root, and `onBuild`; events are `session-runtime` or `database-schema`. There is no API entrypoint/output/runtime-origin build option. Schema discovery starts from the project or Session entrypoint. Adding a new schema file still requires restarting the watcher.
+
 ### CLI and SDK build
 
 1. Supply an App-bound local connection with the same protocol, explicit loopback configuration, event streaming, control support, and database credential routing.
 2. Add the runtime-only project manifest and generated ingress artifact. Update `init`, `doctor`, build/watch, dry-run, deploy, schema discovery, and custom-image examples.
-3. Negotiate the incompatible build/artifact protocol before uploads; retain explicit legacy 0.x compatibility. The foundation keeps protocol 5 unchanged.
-4. Once the full runtime-only path is qualified, remove public Edge API authoring exports and update examples/migration guidance. Do not remove these exports before existing CLI projects have a replacement.
+3. Adopt CLI build protocol 6, project schema 3, and runtime artifact schema 1 before uploads. Keep support for published 0.x packages explicitly versioned; it is not an authoring compatibility shim in the 1.0 SDK.
+4. Migrate initialization and deployment to the new SDK surface and examples. Generate platform ingress from runtime metadata; do not expect a customer API entrypoint or route table.
 
 These follow-ups implement Phases 2–5 of [the 1.0 plan](sdk-1.0-plan.md). Stable 1.0 publication follows cross-repository qualification; this foundation must not be advertised as a hosted service rollout.

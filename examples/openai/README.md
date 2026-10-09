@@ -1,40 +1,24 @@
-# OpenAI Session runtime example
+# OpenAI agent integration
 
-This example has two deployment artifacts:
+`src/session.ts` defines the provider integration in the native Session runtime. `src/client.ts` exports `agentSession()` for calls from an existing application backend. There is no customer Edge API, router, or HTTP request contract.
 
-- `src/api.ts` is Edge middleware and imports no provider SDK.
-- `src/session.ts` defines Session behaviour that runs in a Linux-native VM with
-  the OpenAI Agents SDK.
-
-Cantelop injects the current App when it creates the API. The Edge API manages
-Workspaces and reusable Sessions without an API key; `OPENAI_API_KEY` is
-supplied only to the Session runtime. The manifest requires that secret and declares
-`gpt-5-mini` as the non-secret local default for `OPENAI_MODEL`.
-
-The API exposes `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
-`POST /cancel`.
-Chat requires `workspaceSlug`, `keepAliveSeconds`, and `prompt`, and accepts an
-optional `sessionId`; it creates or reuses that Session. Steer requires
-`sessionId`, `workspaceSlug`, `keepAliveSeconds`, and `prompt` to reuse it. Cancel
-requires the same Session fields without a prompt. All message routes return an
-accepted message reference with HTTP status `202`.
-`GET /events` accepts `sessionId`, `workspaceSlug`, and `keepAliveSeconds` as
-query parameters and streams that Session's events over SSE or the
-`cantelop.events.v1` WebSocket subprotocol. See the [shared example
-guide](../README.md) for client and reconnect examples.
-
-The App has one Session behaviour with an explicit actor protocol. `prompt` and an
-idle `steer` start an OpenAI run. Prompts and steer commands received while a
-run is active enter a FIFO queue, and `cancel` aborts the run and clears that
-queue. The actor owns one OpenAI `Agent` and `MemorySession`; no per-Session
-registry is needed because the native runtime is already bound to one Session.
-The run lives in the Session activity so the mailbox remains available for new
-commands.
-
-`cantelop.json` targets an illustrative App with slug `openai`. Change the slug
-when deploying to a different App.
-
-```bash
-pnpm install
-pnpm check
+```ts
+const session = agentSession(connection, { slug: "customer-123" }, {
+  id: "conversation-456",
+  keepAliveSeconds: 300,
+});
+await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+for await (const event of session.stream()) {
+  if (event.data.type === "text_delta") console.log(event.data.delta);
+}
 ```
+
+Use an App-bound connection supplied by a compatible platform/local CLI adapter. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared in `cantelop.json`; keep provider credentials in the runtime environment.
+
+The runtime still handles its application-defined `prompt`, `steer`, and `cancel` messages. Until named runtime capabilities are implemented, send those custom commands through `dispatch()`. Protocol-level `session.steer()` and `session.abort()` require the coordinated platform/runtime follow-up and must not be silently translated into these messages.
+
+Run `pnpm check:examples` from the SDK root to type-check the backend client and runtime and qualify the runtime-only build artifact.
+
+## Runtime behavior
+
+`prompt` and an idle application `steer` start an OpenAI run. Commands received while busy enter a FIFO queue; `cancel` aborts the run and clears that queue. The actor owns an Agent and MemorySession for its warm runtime incarnation. `OPENAI_API_KEY` is runtime-only, and `OPENAI_MODEL` defaults to `gpt-5-mini`.

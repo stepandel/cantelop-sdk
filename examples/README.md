@@ -1,99 +1,32 @@
-# Provider examples
+# Agent integration examples
 
-The OpenAI, Anthropic, Pi, and OpenCode examples each contain two deployment artifacts:
+The OpenAI, Anthropic, Pi, and OpenCode examples define native agent runtimes and ordinary application backend clients:
 
 ```text
-src/api.ts      Edge HTTP middleware
-src/session.ts  Linux-native Session behaviour
-cantelop.json   Build and deployment manifest
+src/client.ts     App → Workspace → Session integration
+src/contracts.ts  Shared message and event types
+src/session.ts    Native provider integration
+cantelop.json     Runtime-only project manifest
 ```
 
-Each provider directory is a complete, self-contained implementation with its
-own contracts, request validation, and routes. Provider SDKs, credentials, and
-incremental events remain confined to the native Session behaviour entrypoint.
-Cantelop injects the current App into each API definition. Every API exposes
-five routes: `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
-`POST /cancel`. Chat creates or reuses a Session from an optional ID; steer and
-cancel require an existing Session ID. All message routes call the same asynchronous
-`dispatch()` method and return an accepted message reference with HTTP status
-`202`. Each example defines an explicit `SessionMessage` protocol with
-`prompt`, `steer`, and `cancel` commands, plus a `SessionEvent` stream for text
-deltas and completion. A steer received while idle starts a provider turn.
-OpenAI keeps busy-time prompts in a per-Session FIFO because a text `run()`
-cannot accept more input. Anthropic feeds prompts and prioritized steer commands
-into its live `SDKUserMessage` stream. Pi applies active steer directly to its
-Agent and keeps ordinary busy-time prompts in a Cantelop FIFO. OpenCode runs a
-headless server per activity and queues busy-time prompts and
-steer commands. See its [setup guide](./opencode/README.md) for the custom image
-and warm-Sandbox conversation lifetime. All four
-propagate cancel through the Session activity's `AbortSignal`. The Session
-identity is propagated into the native Session runtime. The events route adapts
-the App route to the platform event broker with `session.events(request)`.
-
-Subscribe with SSE by passing the same Session coordinates used by the message
-routes:
+Each client exports `agentSession(connection, workspace, options)`. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider SDKs and secrets stay in the runtime. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
 
 ```ts
-const query = new URLSearchParams({
-  sessionId,
-  workspaceSlug,
-  keepAliveSeconds: String(keepAliveSeconds),
+const session = agentSession(connection, { slug: "customer-123" }, {
+  id: "conversation-456", keepAliveSeconds: 300,
 });
-const events = new EventSource(`/events?${query}`);
-
-events.onmessage = ({ data }) => {
-  const event = JSON.parse(data);
-  if (event.type === "text_delta") render(event.delta);
-  if (event.type === "done") events.close();
-};
+await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+for await (const event of session.stream()) {
+  if (event.data.type === "text_delta") render(event.data.delta);
+}
 ```
 
-Choose the `sessionId` in the client, open the subscription, and then send the
-first `POST /chat` with that ID. This ensures the live subscription exists
-before the Session can publish its first delta.
+Use the same ID to address an existing Session, or omit it to spawn another Session sharing the Workspace. A canonical Workspace ID can replace the slug selector. Output can be replayed explicitly with the last cursor; disconnecting the iterator does not cancel work. Subscribe before dispatching when live subscription ordering matters, or use retained replay to recover earlier output within the broker's retention window.
 
-`EventSource` automatically sends the last SSE event ID (`stream_id:sequence`)
-when it reconnects. To resume a newly created subscription, append
-`stream_id=<stream ID>&after=<last sequence>` to the query. The response envelope
-includes the application event fields plus the trusted `stream_id`, `sequence`,
-`session_id`, `message_id`, and `created_at` fields. A replaced or evicted stream
-reports `event_stream_reset` rather than silently starting a new replay.
+The examples preserve each provider's application-defined `prompt`, `steer`, and `cancel` protocol and managed activity behavior. They can send those custom commands via `dispatch()`. These are distinct from the new named control capability: protocol-level `session.steer()`/`abort()` require coordinated platform/runtime support, which is not advertised by these runtime artifacts yet.
 
-The same route also supports an output-only WebSocket:
+OpenAI queues ordinary work while a run is busy. Anthropic feeds its live input stream. Pi can steer an active Agent. OpenCode uses a headless server and the custom image in its manifest. All propagate managed activity cancellation to provider work. Workspace state is durable; warm runtime/provider memory is not.
 
-```ts
-const socket = new WebSocket(
-  `${location.origin.replace(/^http/, "ws")}/events?${query}`,
-  "cantelop.events.v1",
-);
+This 1.0 prerelease requires CLI build protocol 6 and project manifest schema 3. Runtime-only deployment and App-bound connection setup are platform/CLI follow-ups. The current CLI must reject this prerelease rather than deploy it as a legacy Edge API project.
 
-socket.onmessage = ({ data }) => {
-  const event = JSON.parse(data);
-  if (event.type === "text_delta") render(event.delta);
-  if (event.type === "done") socket.close();
-};
-```
-
-Send `prompt`, `steer`, and `cancel` through their HTTP routes, not through the
-WebSocket. A WebSocket reconnect should include
-`stream_id=<stream ID>&after=<last sequence>` because WebSockets do not provide
-SSE's `Last-Event-ID` header. In a real application,
-authenticate and authorize `/events` before calling `session.events(request)`;
-the examples intentionally omit application-specific auth.
-
-Each manifest targets an illustrative App slug. Create that App or change its
-`app` value before running `cantelop deploy`; generated App IDs are never stored
-in the example source.
-
-Run all API and Session runtime type checks plus deployment bundle smoke checks from
-the repository root:
-
-```bash
-pnpm check:examples
-```
-
-For a credential-free lifecycle example with persisted outcomes, queued follow-up
-messages, cancellation, and a Bun subprocess adapter, see
-[Supervised long-running agents](./supervised-activity/README.md).
-
-[Database schema example](database/README.md) shows typed Drizzle queries and automatic Workspace migrations.
+Run `pnpm check:examples` from the SDK root to type-check backend clients and runtimes and qualify their runtime-only artifacts. The [database example](database/README.md) demonstrates backend service functions and runtime operations over the same managed Workspace database. [Application-owned queue](application-queue/README.md) and [supervised activity](supervised-activity/README.md) examples retain persistence, recovery, and subprocess behavior.

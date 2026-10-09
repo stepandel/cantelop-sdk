@@ -1,6 +1,6 @@
 # Cantelop SDK 1.0 implementation plan
 
-Status: proposed contract and implementation sequence, October 9, 2026.
+Status: implementation sequence, October 9, 2026. The SDK branch now replaces Edge API authoring with a 1.0 prerelease and runtime-only build protocol 6. CLI/platform implementation and cross-repository rollout gates remain outstanding.
 
 SDK 1.0 exposes the existing Cantelop capabilities directly to application backends through App → Workspace → Session. Developers define their Session runtime; Cantelop supplies the ingress, transport, and middleware. Optional webhook triggers use the same Session contract. Delivery guarantees, persistence responsibilities, and Session lifecycle remain unchanged.
 
@@ -131,9 +131,9 @@ Use a versioned operation discriminator outside the application payload to disti
 **SDK build tooling**
 
 - Replace customer-API compilation for 1.0 projects with generation of the opinionated ingress artifact from runtime/capability metadata.
-- Keep build/runtime adapters callable by the CLI but outside the supported application authoring surface. Remove `defineApi`, Router types, and API/edge authoring exports from the 1.0 public surface once replacement tooling is ready.
+- Keep build/runtime adapters callable by the CLI but outside the supported application authoring surface. Remove `defineApi`, Router types, and API/edge authoring exports from the 1.0 SDK. Preserve legacy authoring through separately versioned published 0.x packages and compatible CLI branches.
 - Update schema discovery so `db/schema.ts` works from the manifest/project root without an API entry point. Preserve managed migrations and local database behavior.
-- Increment the CLI build protocol from the current SDK value 5 for the incompatible contract; agree the next value with the CLI implementation. Publish deterministic artifact/capability schemas and matching package qualification.
+- Increment the CLI build protocol from 5 to 6 for the incompatible runtime-only contract; update CLI negotiation accordingly. Publish deterministic artifact/capability schemas and matching package qualification.
 
 **CLI**
 
@@ -187,7 +187,7 @@ Support both application-hosted handlers using the backend SDK and optional Cant
 | --- | --- |
 | SDK client/resources | `src/index.ts`, `src/resources.ts`, `src/remote-app.ts`; add public client and stream implementation modules |
 | SDK runtime controls | `src/session.ts`, `src/session-runtime-server.ts`, `src/runtime-messages.ts`, `src/activity.ts`, `src/mailbox.ts` |
-| SDK authoring/build | `src/api.ts`, `src/edge.ts`, `src/router.ts`, `src/build.ts`, `schemas/app-v2.json`, `package.json`, examples and qualification scripts |
+| SDK authoring/build | `src/build.ts`, `schemas/app-v3.json`, `package.json`, examples and qualification scripts; API/edge/router modules are removed |
 | CLI in the platform repository | `clients/cli/cmd/cantelop/project.go`, `project_init*.go`, `project_deploy.go`, `project_dev*.go`, `doctor.go`, artifact validation/upload code and tests |
 | Platform edge | `edge/workers/dispatcher`, `outbound`, `origin-broker`, and shared edge contracts; add generated integration ingress and credential verification |
 | Platform execution | `fire-fuse/gateway`, `fire-fuse/runtime/httpapi`, dispatcher/admission/runtime provider/persistence paths, and their SDK contract tests |
