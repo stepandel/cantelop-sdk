@@ -1,16 +1,16 @@
 # App configuration
 
-Create the root App in your backend, then select its Workspaces and Sessions:
+Instantiate a client bound to one existing App in your backend, then select its Workspaces and Sessions:
 
 ```ts
-import { createApp } from "@cantelop/sdk";
+import { CantelopClient } from "@cantelop/sdk";
 
-const app = createApp<Message, Event, Reply, View>();
+const app = new CantelopClient<Message, Event, Reply, View>();
 const session = app.workspace({ slug: "customer" }).session();
 await session.dispatch(message);
 ```
 
-The App resolves its own Edge origin and integration credential. To select another configured App, use `createApp({ slug: "support-agent" })` or `createApp({ id: "app_0123456789abcdef0123456789abcdef" })`. Add `profile: "production"` to select a named profile. Workspace ID/slug selectors and Session lifecycle remain unchanged.
+The client resolves its App’s Edge origin and integration credential. To select another configured App, use `new CantelopClient({ slug: "support-agent" })` or `new CantelopClient({ id: "app_0123456789abcdef0123456789abcdef" })`. Add `profile: "production"` to select a named profile. Workspace ID/slug selectors and Session lifecycle remain unchanged.
 
 This alpha implements SDK resolution. CLI credential provisioning and runtime injection still require the coordinated CLI/platform follow-ups. Existing CLI login credentials cannot authenticate this protocol. There is no separate hosting service involved: requests go to the selected App's deployed Edge Worker at `POST {app_url}/commands`.
 
@@ -66,8 +66,8 @@ An App record may include `edgeUrl` for a deployment origin override and `expire
 
 ## Resolution and failures
 
-Constructing an App, Workspace or Session does not make a network request. Runtime/environment values and the working directory are captured when the App is created. Local files are read lazily on the first operation requiring a connection. Concurrent operations share resolution. A failed resolution can retry after local configuration is repaired; successful connections remain fixed for that App instance. Create a new App after changing environment/runtime configuration or rotating a resolved credential.
+Constructing a client, Workspace or Session reference does not make a network request. Runtime/environment values and the working directory are captured when the client is constructed. Local files are read lazily on the first operation requiring a connection. Concurrent operations share resolution. A failed resolution can retry after local configuration is repaired; successful connections remain fixed for that client instance. Create a new client after changing environment/runtime configuration or rotating a resolved credential.
 
 `AppConfigurationError` exposes a redacted `code`: `app_configuration_missing`, `app_configuration_invalid`, `app_not_configured` or `app_credentials_expired`. Configuration failures occur before command submission and are not ambiguous execution failures.
 
-Advanced integrations can still provide `createApp({ edgeUrl, accessToken })` or `createApp({ connection })`. These explicit transports cannot be combined with App identity or profile options. Origins require HTTPS, with HTTP permitted only for localhost or numeric loopback development addresses. The default backend path is `createApp()` or an App selector; transport details stay in configuration.
+Advanced integrations can still provide `new CantelopClient({ edgeUrl, accessToken })` or `new CantelopClient({ connection })`. These explicit transports cannot be combined with App identity or profile options. Origins require HTTPS, with HTTP permitted only for localhost or numeric loopback development addresses. The default backend path is `new CantelopClient()` or an App selector; transport details stay in configuration.

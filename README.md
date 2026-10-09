@@ -7,19 +7,19 @@ This repository currently targets **1.0.0-alpha.0**. The SDK authoring/build bou
 ## Integrate from an application backend
 
 ```ts
-import { createApp } from "@cantelop/sdk";
+import { CantelopClient } from "@cantelop/sdk";
 
 type Message = { type: "prompt"; prompt: string };
 type Event = { type: "delta"; text: string } | { type: "done" };
 type Reply = { answer: string };
 
-const app = createApp<Message, Event, Reply>();
+const app = new CantelopClient<Message, Event, Reply>();
 const workspace = app.workspace({ slug: "customer-123" });
 // Or: app.workspace({ id: canonicalWorkspaceId });
 const session = workspace.session({ id: "conversation-456" });
 ```
 
-The SDK resolves the App identity and scoped integration credentials from runtime context, environment configuration, or a CLI-managed integration profile. Use `createApp({ slug: "support-agent" })` or `{ id }` to select another configured App. CLI provisioning remains a coordinated follow-up. Connection overrides remain available for tests; see [automatic App configuration](docs/app-configuration.md).
+`CantelopClient` binds to one existing App; constructing it does not provision an App. The SDK resolves the App identity and scoped integration credentials from runtime context, environment configuration, or a CLI-managed integration profile. Use `new CantelopClient({ slug: "support-agent" })` or `{ id }` to select another configured App. CLI provisioning remains a coordinated follow-up. Connection overrides remain available for tests; see [automatic App configuration](docs/app-configuration.md).
 
 Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. The Edge API remains deployed; its implementation is owned by the protocol rather than developer-authored routing.
 

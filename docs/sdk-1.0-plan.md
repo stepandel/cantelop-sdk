@@ -6,6 +6,7 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 ## Phase 1 — SDK and protocol-managed Edge foundation
 
+- Expose `new CantelopClient()` as the sole integration constructor, bound to one existing App. Preserve typed Workspace/Session references and remove the `createApp` factory and its facade/options types.
 - Replace developer API/router exports and customer API compilation with App → Workspace → Session references and generated protocol Edge builds.
 - Preserve Workspace ID/slug addressing, App-scoped Session identity, lazy references, durable Workspace database access, and stop/reactivation lifecycle.
 - Add automatic App configuration from runtime context/environment/CLI integration profiles; retain explicit ID/slug selection and test connection overrides. Keep credentials separate from deployment login and scope them to selected Apps.

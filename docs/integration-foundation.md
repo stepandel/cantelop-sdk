@@ -10,14 +10,14 @@ There are two boundaries:
 ## Backend interface
 
 ```ts
-import { createApp } from "@cantelop/sdk";
+import { CantelopClient } from "@cantelop/sdk";
 
 type Message = { prompt: string };
 type Event = { text: string };
 type Reply = { answer: string };
 type View = { entries: string[]; inbox: string[] };
 
-const app = createApp<Message, Event, Reply, View>();
+const app = new CantelopClient<Message, Event, Reply, View>();
 const workspace = app.workspace({ slug: "customer" });
 const session = workspace.session({ id: "conversation" });
 const message = await session.dispatch({ prompt: "Review the change" });
@@ -35,7 +35,7 @@ The fourth generic is application view state. Dispatch and steer both accept the
 
 References remain lazy. Session IDs remain App-scoped; omitting one generates it immediately. ID/slug Workspace selection is unchanged. Explicit Workspace resolution is memoized per reference, concurrent database calls share its handle, and failures can be retried. Session commands carry the selected Workspace directly; their Edge handlers own provisioning or read-only lookup.
 
-The normal factory is `createApp()`. It discovers App identity and matching integration credentials from injected runtime context, environment configuration or a separate CLI integration profile. `createApp({ slug })` and `{ id }` explicitly select another configured App; authentication remains scoped to the selected identity. Project `cantelop.json` supplies the default App slug when using a local profile. No control-plane login credential is read or exchanged by the SDK. See [the configuration contract](app-configuration.md).
+The public constructor is `new CantelopClient()`, bound to one existing App. It replaces `createApp()` and the `App` facade type; constructor configuration uses `CantelopClientOptions`. It discovers App identity and matching integration credentials from injected runtime context, environment configuration or a separate CLI integration profile. `new CantelopClient({ slug })` and `{ id }` explicitly select another configured App; authentication remains scoped to the selected identity. Project `cantelop.json` supplies the default App slug when using a local profile. No control-plane login credential is read or exchanged by the SDK. See [the configuration contract](app-configuration.md).
 
 Explicit `{ connection }` and `{ edgeUrl, accessToken }` are advanced/test overrides. HTTPS is required except for numeric/localhost loopback development, and redirects are disabled. A connection receives logical Edge requests at `https://edge.cantelop.internal`; it never receives private platform requests.
 
