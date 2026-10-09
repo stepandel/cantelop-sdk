@@ -1,0 +1,47 @@
+{
+  "protocol_version": 1,
+  "session_id": "primary",
+  "workspace": { "slug": "customer" },
+  "workspace_id": "wsp_0123456789abcdef0123456789abcdef",
+  "control_id": "msg_0123456789abcdef0123456789abcdef",
+  "steer": {
+    "protocol_version": 1,
+    "id": "msg_0123456789abcdef0123456789abcdef",
+    "type": "steer",
+    "input": { "prompt": "Focus on authentication" }
+  },
+  "abort": {
+    "protocol_version": 1,
+    "id": "msg_0123456789abcdef0123456789abcdef",
+    "type": "abort"
+  },
+  "accepted": {
+    "protocol_version": 1,
+    "id": "msg_0123456789abcdef0123456789abcdef",
+    "status": "accepted",
+    "accepted_at": "2026-10-09T00:00:00Z"
+  },
+  "handled": {
+    "protocol_version": 1,
+    "id": "msg_0123456789abcdef0123456789abcdef",
+    "state": "handled",
+    "accepted_at": "2026-10-09T00:00:00Z",
+    "started_at": "2026-10-09T00:00:01Z",
+    "handled_at": "2026-10-09T00:00:02Z"
+  },
+  "unmaterialized": {
+    "protocol_version": 1,
+    "id": "primary",
+    "state": "unmaterialized",
+    "observed_at": "2026-10-09T00:00:00Z",
+    "capabilities": { "steer": true, "abort": true }
+  },
+  "active": {
+    "protocol_version": 1,
+    "id": "primary",
+    "state": "active",
+    "workspace_id": "wsp_0123456789abcdef0123456789abcdef",
+    "observed_at": "2026-10-09T00:00:00Z",
+    "capabilities": { "steer": true, "abort": true }
+  }
+}

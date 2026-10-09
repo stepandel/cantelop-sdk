@@ -265,7 +265,7 @@ function readMessageRef(
   });
 }
 
-function readMessageStatus(envelope: unknown, expectedMessage: string): MessageStatus {
+export function readMessageStatus(envelope: unknown, expectedMessage: string): MessageStatus {
   if (!isRecord(envelope) || envelope.id !== expectedMessage ||
       typeof envelope.state !== "string") {
     throw new RemoteAppError("invalid_message_status_response", 0);

@@ -1,15 +1,16 @@
-import type { App, CreateAppOptions, IntegrationSessionOptions, WorkspaceSelector } from "./integration.js";
+import type { App, CreateAppOptions, IntegrationSessionOptions, SessionControlOptions, SessionStreamOptions, WorkspaceSelector } from "./integration.js";
 import type { SessionRequestOptions, Workspace } from "./resources.js";
 import { createRemoteApp, readWorkspace, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
+import { controlSession, integrationSessionPath, viewSession } from "./integration-protocol.js";
 
 /**
  * Creates the backend integration facade over a trusted App-bound connection.
  * Public credential/endpoint discovery is provided by the platform, not this factory.
  */
-export function createApp<Message = unknown, Event = unknown, Reply = unknown>(
+export function createApp<Message = unknown, Event = unknown, Reply = unknown, Steering = unknown>(
   options: CreateAppOptions,
-): App<Message, Event, Reply> {
+): App<Message, Event, Reply, Steering> {
   if (!options?.connection || typeof options.connection.fetch !== "function") {
     throw new TypeError("An App-bound connection is required");
   }
@@ -58,8 +59,11 @@ export function createApp<Message = unknown, Event = unknown, Reply = unknown>(
             keepAliveSeconds: session.keepAliveSeconds,
             dispatch: (message: Message) => session.dispatch(message),
             request: (message: Message, requestOptions?: SessionRequestOptions) => session.request(message, requestOptions),
-            stream: (streamOptions?: import("./integration.js").SessionStreamOptions) => streamSessionEvents<Event>(request => session.events(request), session.id, streamOptions),
-            stop: () => session.stop(),
+            stream: (streamOptions?: SessionStreamOptions) => streamSessionEvents<Event>(request => session.events(request), session.id, streamOptions),
+            steer: (input: Steering, controlOptions?: SessionControlOptions) => controlSession(runtimeFetch, session.id, selector, { type: "steer", input }, controlOptions),
+            abort: (controlOptions?: SessionControlOptions) => controlSession(runtimeFetch, session.id, selector, { type: "abort" }, controlOptions),
+            view: (viewOptions?: { readonly signal?: AbortSignal }) => viewSession(runtimeFetch, session.id, selector, viewOptions),
+            async stop() { await requestJSON(runtimeFetch, integrationSessionPath(session.id, selector), { method: "DELETE" }); },
           });
         },
       });

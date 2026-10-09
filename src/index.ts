@@ -38,4 +38,6 @@ export type {
   App, AppConnection, CreateAppOptions, IntegrationSessionOptions,
   SessionRef, WorkspaceRef, WorkspaceSelector,
   SessionEvent, SessionEventCursor, SessionStreamOptions,
+  SessionCapabilities, SessionControlOptions, SessionView,
 } from "./integration.js";
+export { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";
