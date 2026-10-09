@@ -11,7 +11,7 @@ test("Workspace database uses the canonical credential route and recreates a clo
   for (const selector of [{ slug: "customer" }, { id: workspaceId }]) {
     let resolutions = 0;
     let credentials = 0;
-    const ref = new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, connection: { async fetch(request) {
+    const ref = new CantelopClient({ sessionRuntime: { id: "test.v1", receive() {} }, connection: { async fetch(request) {
       const envelope = await request.clone().json();
       if (envelope.command.type === "workspace.database") {
         credentials++;

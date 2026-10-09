@@ -36,7 +36,7 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
 }
 
 /** Capture configuration at construction; resolve files lazily on first operation. */
-export function resolveEdgeConnection(options: CantelopClientOptions): AppConnection {
+export function resolveEdgeConnection(options: CantelopClientOptions<unknown, unknown, unknown>): AppConnection {
   assertClientOptions(options);
   if (options.connection !== undefined) return options.connection;
   if (options.edgeUrl !== undefined) return createEdgeConnection(options);

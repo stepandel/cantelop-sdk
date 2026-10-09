@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 import * as sdk from "../dist/index.js";
+import * as session from "../dist/session.js";
 import * as build from "../dist/build.js";
 
 test("the 1.0 public surface and compiled package remove Edge API authoring", async () => {
   assert.equal(typeof sdk.CantelopClient, "function");
   assert.equal("createApp" in sdk, false);
+  assert.equal("defineSessionRuntime" in sdk, false);
+  assert.equal("defineSessionBehaviour" in session, false);
+  await assert.rejects(access(new URL("../dist/session-runtime-definition.js", import.meta.url)), { code: "ENOENT" });
   assert.equal("defineApi" in sdk, false);
   assert.equal("buildApi" in build, false);
   assert.equal("buildLocalApi" in build, false);

@@ -1,4 +1,3 @@
-import { sessionRuntime } from "./definition.js";
 import type { AppSelector } from "@cantelop/sdk";
 import { CantelopClient, type WorkspaceRef } from "@cantelop/sdk";
 import { drizzle } from "@cantelop/sdk/schema";
@@ -7,9 +6,9 @@ import * as schema from "../db/schema.js";
 import type { TaskMessage, TaskReply } from "./contracts.js";
 
 /** Configure the App once; Workspaces own database access and Session references. */
-export class TasksClient extends CantelopClient<typeof sessionRuntime> {
+export class TasksClient extends CantelopClient<TaskMessage, never, TaskReply> {
   constructor(options: (AppSelector | { id?: never; slug?: never }) & { profile?: string } = {}) {
-    super({ ...options, sessionRuntime });
+    super({ ...options, sessionRuntime: { id: "tasks.v1", receive: async context => (await import("./session.js")).receive(context) } });
   }
 }
 
@@ -28,3 +27,6 @@ export function taskService(workspace: WorkspaceRef<TaskMessage, never, TaskRepl
     },
   };
 }
+
+export const cantelop = new TasksClient();
+export default cantelop;

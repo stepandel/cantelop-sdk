@@ -1,7 +1,5 @@
-import { chatRuntime } from "./definition.js";
 import { Agent, MemorySession, run } from "@openai/agents";
 import {
-  defineSessionBehaviour,
   type SessionContext,
 } from "@cantelop/sdk/session";
 import type { ChatEvent, ChatMessage } from "./contracts.js";
@@ -12,7 +10,7 @@ let agent: Agent | undefined;
 let conversation: MemorySession | undefined;
 const promptQueue: string[] = [];
 
-export default defineSessionBehaviour(chatRuntime, (context) => {
+export function receive(context: Context): void {
   const command = context.message.payload;
 
   if (context.activity.active) {
@@ -21,7 +19,7 @@ export default defineSessionBehaviour(chatRuntime, (context) => {
   }
 
   startPrompt(context, command.prompt);
-});
+}
 
 function startPrompt(context: Context, prompt: string): void {
   if (!context.env.OPENAI_API_KEY) {

@@ -1,4 +1,4 @@
-import type { AnySessionRuntime } from "./session-runtime-definition.js";
+import type { SessionRuntime } from "./session-runtime-contract.js";
 import type { WorkspaceDatabase } from "./database.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 
@@ -25,8 +25,8 @@ export type AppSelector =
   | { readonly id: string; readonly slug?: never }
   | { readonly slug: string; readonly id?: never };
 
-export type CantelopClientOptions<Runtime extends AnySessionRuntime = AnySessionRuntime> = {
-  readonly sessionRuntime: Runtime;
+export type CantelopClientOptions<Message = unknown, Event = never, Reply = never> = {
+  readonly sessionRuntime: SessionRuntime<Message, Event, Reply>;
 } & (
   | ((AppSelector | { readonly id?: never; readonly slug?: never }) & {
       readonly profile?: string;

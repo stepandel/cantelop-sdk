@@ -7,7 +7,6 @@ import {
   serveSessionRuntime,
 } from "../dist/runtime.js";
 import { InMemoryMailbox } from "../dist/mailbox.js";
-import { defineSessionBehaviour } from "../dist/session.js";
 
 const sandboxID = "sbx-" + "1".repeat(32);
 process.env.CANTELOP_SANDBOX_ID = sandboxID;
@@ -16,7 +15,7 @@ async function acknowledge(server, kind, through) {
  const response = await fetch(`${origin(server)}/__cantelop/v2/runtime/${kind}/ack`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({through}) }); assert.equal(response.status,200);
 }
 const messageId = "msg_0123456789abcdef0123456789abcdef";
-const behaviour = handler => defineSessionBehaviour({ id: "test.v1", entrypoint: "./session.ts" }, handler);
+const behaviour = handler => typeof handler === "function" ? { receive: handler } : handler;
 
 test("the native adapter receives the versioned message protocol", async (t) => {
   let received;

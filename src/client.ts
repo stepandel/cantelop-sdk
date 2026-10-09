@@ -1,5 +1,5 @@
-import { assertSessionRuntime } from "./session-runtime-definition.js";
-import type { AnySessionRuntime, RuntimeMessage, RuntimeEvent, RuntimeReply, RuntimeView } from "./session-runtime-definition.js";
+import { assertSessionRuntime } from "./session-runtime-contract.js";
+import type { SessionRuntime } from "./session-runtime-contract.js";
 import { AppConfigurationError } from "./app-config.js";
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
 import type { AppConnection, AppCommandEnvelope, CantelopClientOptions, IntegrationSessionOptions, MessageCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector } from "./integration.js";
@@ -9,24 +9,20 @@ import { streamSessionEvents } from "./stream.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** A backend client bound to one App's protocol-managed Edge API. */
-export class CantelopClient<Runtime extends AnySessionRuntime = AnySessionRuntime> {
+export class CantelopClient<Message = unknown, Event = never, Reply = never, View = never> {
   readonly #connection: AppConnection;
 
-  readonly #sessionRuntime: Runtime;
+  readonly #sessionRuntime: SessionRuntime<Message, Event, Reply>;
 
-  get sessionRuntime(): Runtime { return this.#sessionRuntime; }
+  get sessionRuntime(): SessionRuntime<Message, Event, Reply> { return this.#sessionRuntime; }
 
-  constructor(options: CantelopClientOptions<Runtime>) {
+  constructor(options: CantelopClientOptions<Message, Event, Reply>) {
     assertSessionRuntime(options?.sessionRuntime);
-    this.#sessionRuntime = Object.freeze({ id: options.sessionRuntime.id, entrypoint: options.sessionRuntime.entrypoint }) as Runtime;
+    this.#sessionRuntime = Object.freeze({ ...options.sessionRuntime });
     this.#connection = resolveEdgeConnection(options);
   }
 
-  workspace(input: WorkspaceSelector): WorkspaceRef<RuntimeMessage<Runtime>, RuntimeEvent<Runtime>, RuntimeReply<Runtime>, RuntimeView<Runtime>> {
-    type Message = RuntimeMessage<Runtime>;
-    type Event = RuntimeEvent<Runtime>;
-    type Reply = RuntimeReply<Runtime>;
-    type View = RuntimeView<Runtime>;
+  workspace(input: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View> {
     const connection = this.#connection;
     const runtimeId = this.#sessionRuntime.id;
     const edgeFetch = (request: Request) => {

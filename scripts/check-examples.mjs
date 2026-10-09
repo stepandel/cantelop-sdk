@@ -5,6 +5,7 @@ import path from "node:path";
 import { build } from "esbuild";
 import { buildEdgeApi, buildSessionRuntime } from "../dist/build.js";
 
+const lazyHandlers = { name: "backend-lazy-handlers", setup(build) { build.onResolve({ filter: /.*/ }, args => args.kind === "dynamic-import" ? { path: args.path, external: true } : undefined); } };
 const root = path.resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
 try {
@@ -19,7 +20,7 @@ try {
     await assert.rejects(access(path.join(projectRoot, "src/api.ts")), { code: "ENOENT" });
     const client = await build({
       entryPoints: [path.join(projectRoot, name === "web-chat" ? "src/server.ts" : "src/client.ts")], bundle: true,
-      platform: "node", format: "esm", write: false, metafile: true,
+      platform: "node", format: "esm", write: false, metafile: true, plugins: [lazyHandlers],
     });
     for (const input of Object.keys(client.metafile.inputs)) {
       assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
@@ -41,7 +42,7 @@ try {
   }
   const web = await build({
     entryPoints: [path.join(root, "examples/web-chat/src/server.ts")],
-    bundle: true, platform: "node", format: "esm", write: false, metafile: true,
+    bundle: true, platform: "node", format: "esm", write: false, metafile: true, plugins: [lazyHandlers],
   });
   for (const input of Object.keys(web.metafile.inputs)) {
     assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
@@ -49,7 +50,7 @@ try {
   }
   const browser = await build({
     entryPoints: [path.join(root, "examples/web-chat/public/chat.js")],
-    bundle: true, platform: "browser", format: "esm", write: false, metafile: true,
+    bundle: true, platform: "browser", format: "esm", write: false, metafile: true, plugins: [lazyHandlers],
   });
   assert.equal(Object.keys(browser.metafile.inputs).length, 1);
   process.stdout.write("Qualified backend clients, protocol Edge Workers, and native runtime examples\n");

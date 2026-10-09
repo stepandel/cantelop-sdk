@@ -9,7 +9,7 @@ const temporary = await mkdtemp(join(tmpdir(), "cantelop-database-example-"));
 try {
   const projectRoot = fileURLToPath(new URL("../examples/database", import.meta.url));
   const artifact = await buildSessionRuntime({
-    definition: join(projectRoot, "src/definition.ts"), projectRoot, outdir: temporary,
+    definition: join(projectRoot, "src/client.ts"), projectRoot, outdir: temporary,
   });
   assert.equal(artifact.manifest.schema_version, 1);
   assert.deepEqual(Object.keys(artifact.manifest.database_schema.snapshot.tables), ["tasks"]);

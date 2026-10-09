@@ -1,5 +1,3 @@
-import type { SessionRuntimeDefinition } from "./session-runtime-definition.js";
-import { assertSessionRuntime } from "./session-runtime-definition.js";
 import type { WorkspaceDatabase } from "./database.js";
 import type { SessionIdentity } from "./resources.js";
 
@@ -67,22 +65,12 @@ export type SessionActivationContext<Message, Event = never> = Omit<
 >;
 
 export interface SessionBehaviour<Message, Event = never, Reply = never> {
-  readonly sessionRuntime: SessionRuntimeDefinition<Message, Event, Reply, unknown>;
   /** Opt in only when intake is idempotent across process loss using message.id. */
   readonly redelivery?: boolean;
   onActivate?(context: SessionActivationContext<Message, Event>): Awaitable<void>;
   /** Successful return acknowledges intake. Commit durable work before returning. */
   receive(context: SessionContext<Message, Event, Reply>): Awaitable<void>;
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
-}
-
-export function defineSessionBehaviour<Message, Event = never, Reply = never>(
-  sessionRuntime: SessionRuntimeDefinition<Message, Event, Reply, unknown>,
-  behaviour: Omit<SessionBehaviour<Message, Event, Reply>, "sessionRuntime"> | SessionBehaviour<Message, Event, Reply>["receive"],
-): SessionBehaviour<Message, Event, Reply> {
-  assertSessionRuntime(sessionRuntime);
-  if (typeof behaviour !== "function" && typeof behaviour?.receive !== "function") throw new TypeError("A Session receive handler is required");
-  return Object.freeze({ ...(typeof behaviour === "function" ? { receive: behaviour } : behaviour), sessionRuntime });
 }
 
 export type { SessionIdentity } from "./resources.js";

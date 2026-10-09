@@ -1,4 +1,4 @@
-import { assertRuntimeID } from "./session-runtime-definition.js";
+import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
 

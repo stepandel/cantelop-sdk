@@ -1,5 +1,5 @@
 {
   "schema_version": 3,
   "app": "database-example",
-  "session": "src/definition.ts"
+  "session": "src/client.ts"
 }

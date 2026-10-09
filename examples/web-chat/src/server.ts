@@ -1,9 +1,9 @@
-import { chatRuntime } from "./definition.js";
+import { cantelop } from "./cantelop.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { once } from "node:events";
 import { pathToFileURL } from "node:url";
-import { CantelopClient, AppConfigurationError, RemoteAppError } from "@cantelop/sdk";
+import { AppConfigurationError, RemoteAppError } from "@cantelop/sdk";
 
 const assets = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -12,8 +12,8 @@ const assets = new Map([
 ]);
 
 /** Application-owned HTTP routes; these are not Cantelop Edge handlers. */
-export function createChatServer(cantelop: CantelopClient<typeof chatRuntime>, workspaceSlug = "web-chat-demo") {
-  const workspace = cantelop.workspace({ slug: workspaceSlug });
+export function createChatServer(client: typeof cantelop, workspaceSlug = "web-chat-demo") {
+  const workspace = client.workspace({ slug: workspaceSlug });
   return createServer((request, response) => {
     void handle(request, response).catch(() => {
       if (!response.headersSent) response.writeHead(500);
@@ -102,7 +102,6 @@ async function readInput(request: IncomingMessage) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const cantelop = new CantelopClient({ sessionRuntime: chatRuntime });
   const server = createChatServer(cantelop, process.env.CHAT_WORKSPACE_SLUG ?? "web-chat-demo");
   const port = Number(process.env.PORT ?? 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid PORT");

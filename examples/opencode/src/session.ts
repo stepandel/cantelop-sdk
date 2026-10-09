@@ -1,14 +1,13 @@
-import { sessionRuntime } from "./definition.js";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { createOpencodeServer } from "@opencode-ai/sdk/v2/server";
-import { defineSessionBehaviour, type SessionContext } from "@cantelop/sdk/session";
+import { type SessionContext } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
 
 type Context = SessionContext<SessionMessage, SessionEvent>;
 let conversationId: string | undefined;
 const promptQueue: string[] = [];
 
-export default defineSessionBehaviour(sessionRuntime, (context) => {
+export function receive(context: Context): void {
   const command = context.message.payload;
   if (command.type === "cancel") {
     promptQueue.length = 0;
@@ -138,4 +137,4 @@ export default defineSessionBehaviour(sessionRuntime, (context) => {
       }
     }
   });
-});
+}

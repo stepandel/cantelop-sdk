@@ -8,9 +8,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { access, mkdir, writeFile, realpath, stat } from "node:fs/promises";
+import { access, mkdir, writeFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { assertSessionRuntime } from "./session-runtime-definition.js";
+import { assertRuntimeID } from "./session-runtime-contract.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -219,22 +219,27 @@ export async function buildSessionRuntime(
 }
 
 async function readRuntimeDefinition(filename: string) {
+  const clientModule = fileURLToPath(new URL("./client.js", import.meta.url));
   const result = await build({
-    stdin: { contents: `import definition from ${JSON.stringify(filename)}; globalThis.__cantelopRuntimeDefinition = definition;`, resolveDir: path.dirname(filename) },
-    bundle: true, platform: "node", format: "esm", target: "es2022", write: false, metafile: true, logLevel: "silent",
+    stdin: { contents: `import cantelop from ${JSON.stringify(filename)}; import { CantelopClient } from ${JSON.stringify(clientModule)};
+      if (!(cantelop instanceof CantelopClient)) throw new TypeError("Default export must be a CantelopClient");
+      globalThis.__cantelopRuntimeDefinition = { id: cantelop.sessionRuntime.id };`, resolveDir: path.dirname(filename) },
+    bundle: true, packages: "external", external: [clientModule], platform: "node", format: "esm", target: "es2022", write: false, metafile: true, logLevel: "silent",
+    plugins: [{ name: "cantelop-lazy-agent-imports", setup(builder) {
+      builder.onResolve({ filter: /.*/ }, args => args.kind === "dynamic-import"
+        ? { path: args.path.startsWith(".") ? path.resolve(args.resolveDir, args.path) : args.path, external: true }
+        : undefined);
+    } }],
   });
   const source = result.outputFiles?.[0]?.text;
-  if (!source) throw new Error("Runtime definition produced no module");
+  if (!source) throw new Error("Client definition produced no module");
   const value = await evaluateBuildModule(`${source}\nprocess.stdout.write("\\n${BUILD_ARTIFACT_MARKER}" + JSON.stringify(globalThis.__cantelopRuntimeDefinition) + "\\n", () => process.exit(0));`);
-  assertSessionRuntime(value);
-  const entrypoint = await realpath(path.resolve(path.dirname(filename), value.entrypoint));
-  const root = path.dirname(await realpath(filename));
-  if (!(await stat(entrypoint)).isFile()) throw new TypeError("Runtime behaviour must be a regular file");
-  const relative = path.relative(root, entrypoint);
-  if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) throw new TypeError("Runtime behaviour must stay inside its definition directory");
-  const inputs = await Promise.all(Object.keys(result.metafile?.inputs ?? {}).filter(input => input !== "<stdin>").map(input => realpath(path.resolve(input))));
-  if (inputs.includes(entrypoint)) throw new TypeError("Runtime definitions must not import executable behaviour code");
-  return { definition: value, entrypoint, watchFiles: inputs };
+  if (!value || typeof value !== "object") throw new TypeError("Invalid client definition");
+  const definition = value as { id: unknown };
+  assertRuntimeID(definition.id);
+  const entrypoint = await realpath(filename);
+  const inputs = Object.keys(result.metafile?.inputs ?? {}).filter(input => input !== "<stdin>").map(input => path.resolve(input));
+  return { definition: { id: definition.id }, entrypoint, watchFiles: inputs };
 }
 
 function sessionRuntimeBuildOptions(definitionPath: string, mainModule: string, onDefinition: (value: Awaited<ReturnType<typeof readRuntimeDefinition>>) => void): BuildOptions {
@@ -281,9 +286,9 @@ function sessionRuntimeBootstrap(entrypoint: string, runtimeId: string): string 
     "mark(\"bun_entry\");",
     `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
     `const { default: definition } = await import(${JSON.stringify(entrypoint)});`,
-    `if (definition?.sessionRuntime?.id !== ${JSON.stringify(runtimeId)} || typeof definition.receive !== "function") throw new Error("Session behaviour does not match its runtime definition");`,
+    `if (definition?.sessionRuntime?.id !== ${JSON.stringify(runtimeId)} || typeof definition.sessionRuntime.receive !== "function") throw new Error("Session runtime does not match its client definition");`,
     "mark(\"module_evaluated\");",
-    "const sessionRuntime = serveSessionRuntime(definition);",
+    "const sessionRuntime = serveSessionRuntime(definition.sessionRuntime);",
     "await sessionRuntime.ready;",
   ].join("\n");
 }

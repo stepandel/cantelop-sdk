@@ -1,10 +1,13 @@
-import { sessionRuntime } from "./definition.js";
+import type { SessionMessage, SessionEvent } from "./contracts.js";
 import type { AppSelector } from "@cantelop/sdk";
 import { CantelopClient } from "@cantelop/sdk";
 
 /** Configure once in the backend, then select Workspaces and Sessions from this App. */
-export class AgentClient extends CantelopClient<typeof sessionRuntime> {
+export class AgentClient extends CantelopClient<SessionMessage, SessionEvent> {
   constructor(options: (AppSelector | { id?: never; slug?: never }) & { profile?: string } = {}) {
-    super({ ...options, sessionRuntime });
+    super({ ...options, sessionRuntime: { id: "openai.v1", receive: async context => (await import("./session.js")).receive(context) } });
   }
 }
+
+export const cantelop = new AgentClient();
+export default cantelop;

@@ -1,8 +1,6 @@
-import { sessionRuntime } from "./definition.js";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
-  defineSessionBehaviour,
   type SessionContext,
 } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
@@ -37,7 +35,7 @@ function sessionAgent(
   return agent;
 }
 
-export default defineSessionBehaviour(sessionRuntime, (context) => {
+export function receive(context: Context): void {
   const command = context.message.payload;
 
   if (command.type === "cancel") {
@@ -62,7 +60,7 @@ export default defineSessionBehaviour(sessionRuntime, (context) => {
   }
 
   startPrompt(context, command.prompt);
-});
+}
 
 function startPrompt(context: Context, prompt: string): void {
   const currentAgent = sessionAgent(context);

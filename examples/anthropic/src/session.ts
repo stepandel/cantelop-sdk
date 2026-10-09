@@ -1,10 +1,8 @@
-import { sessionRuntime } from "./definition.js";
 import {
   query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
-  defineSessionBehaviour,
   type SessionContext,
 } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
@@ -14,7 +12,7 @@ type Context = SessionContext<SessionMessage, SessionEvent>;
 let conversationId: string | undefined;
 let input: ClaudeInput | undefined;
 
-export default defineSessionBehaviour(sessionRuntime, (context) => {
+export function receive(context: Context): void {
   const command = context.message.payload;
 
   if (command.type === "cancel") {
@@ -28,7 +26,7 @@ export default defineSessionBehaviour(sessionRuntime, (context) => {
   }
 
   startPrompt(context, command.prompt);
-});
+}
 
 function startPrompt(context: Context, prompt: string): void {
   if (!context.env.ANTHROPIC_API_KEY) {
