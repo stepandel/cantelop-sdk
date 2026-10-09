@@ -15,7 +15,7 @@ for await (const event of session.stream()) {
 
 Use an App-bound connection supplied by a compatible platform/local CLI adapter. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared in `cantelop.json`; keep provider credentials in the runtime environment.
 
-The runtime still handles its application-defined `prompt`, `steer`, and `cancel` messages. Until named runtime capabilities are implemented, send those custom commands through `dispatch()`. Protocol-level `session.steer()` and `session.abort()` require the coordinated platform/runtime follow-up and must not be silently translated into these messages.
+The runtime still handles its application-defined `prompt`, `steer`, and `cancel` messages. Until named runtime capabilities are implemented, send those custom commands through `dispatch()`. Protocol-level `session.steer(message)` submits the same payload with actor priority; `session.cancel(messageId)` targets one submission. Both require the coordinated platform/runtime follow-up; these examples do not advertise those capabilities yet.
 
 OpenCode requires the custom image declared in `cantelop.json`. The Dockerfile installs the headless server; Cantelop owns startup and Workspace mounts. Its server conversation state lasts for the warm Sandbox lifetime.
 

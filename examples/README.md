@@ -23,7 +23,7 @@ for await (const event of session.stream()) {
 
 Use the same ID to address an existing Session, or omit it to spawn another Session sharing the Workspace. A canonical Workspace ID can replace the slug selector. Output can be replayed explicitly with the last cursor; disconnecting the iterator does not cancel work. Subscribe before dispatching when live subscription ordering matters, or use retained replay to recover earlier output within the broker's retention window.
 
-The examples preserve each provider's application-defined `prompt`, `steer`, and `cancel` protocol and managed activity behavior. They can send those custom commands via `dispatch()`. These are distinct from the new named control capability: protocol-level `session.steer()`/`abort()` require coordinated platform/runtime support, which is not advertised by these runtime artifacts yet.
+The examples preserve each provider's application-defined `prompt`, `steer`, and `cancel` protocol and managed activity behavior. They can send those custom commands via `dispatch()`. Protocol-level `session.steer(message)` prioritizes an ordinary message; `session.cancel(messageId)` targets one submission. These require coordinated actor/platform support, which is not advertised by these runtime artifacts yet.
 
 OpenAI queues ordinary work while a run is busy. Anthropic feeds its live input stream. Pi can steer an active Agent. OpenCode uses a headless server and the custom image in its manifest. All propagate managed activity cancellation to provider work. Workspace state is durable; warm runtime/provider memory is not.
 

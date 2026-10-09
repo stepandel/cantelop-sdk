@@ -25,7 +25,7 @@ The backend connects to the App's Edge URL using an App-scoped integration token
 
 Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. The Edge API remains deployed; its implementation is owned by the protocol rather than developer-authored routing.
 
-Workspace and Session references are lazy. Omitting a Session ID generates one immediately. `dispatch()` lazily resolves/provisions a Workspace slug and activates a Sandbox when needed. A canonical Workspace ID never provisions a replacement. Sessions created from one Workspace reference share its resolution.
+Workspace and Session references are lazy. Omitting a Session ID generates one immediately. `dispatch()` lazily resolves/provisions a Workspace slug and activates a Sandbox when needed. A canonical Workspace ID never provisions a replacement. Explicit resolution and database access share the Workspace reference’s cached metadata. Session commands send the selected Workspace to Edge for operation-specific lookup.
 
 ```ts
 const receipt = await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
@@ -36,7 +36,7 @@ const reply = await session.request(
 );
 ```
 
-Acceptance means application intake, not agent completion. `request()` enters the same FIFO mailbox and returns one JSON reply when the handler finishes. Timeout or disconnect ends waiting and does not prove execution stopped. A failed request exposes its Message ID through `RemoteAppError`; reuse that ID for an ambiguous retry. The SDK does not automatically replay writes.
+Acceptance means durable message admission, not agent completion. `request()` enters the normal-priority mailbox and returns one JSON reply when the handler finishes. Timeout or disconnect ends waiting and does not prove execution stopped. A failed request exposes its Message ID through `RemoteAppError`; reuse that ID for an ambiguous retry. The SDK does not automatically replay writes.
 
 ## Session lifecycle and controls
 
@@ -50,7 +50,9 @@ await session.dispatch({ type: "prompt", prompt: "Continue" });
 
 `stop()` releases the current Sandbox and closes streams, potentially interrupting work. It retains current errors for an unmaterialized Session. The integration route includes the Workspace selector for platform ownership/binding checks without provisioning.
 
-The client also defines `steer()`, `abort()`, and `view()` on versioned integration routes. Platform and runtime capability delivery still require the coordinated follow-up. Controls must not be silently mapped into application messages. `abort()` requests cooperative cancellation of active managed work; a receipt does not prove cancellation completion and does not erase application queues. `view()` inspects platform state without provisioning or activating; application business state remains a typed `request()`.
+Dispatch and steer accept the same message type and return an ID/status reference. Dispatch queues normal work; steer prioritizes its message at the next safe scheduling boundary. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
+
+`cancel(messageId)` targets one queued/running message. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Actor priority, cancellation attribution and view publication/storage still require coordinated platform/runtime support; runtime artifacts advertise those capabilities as false.
 
 ## Stream output
 
@@ -104,7 +106,7 @@ The [manifest schema](schemas/app-v3.json) has no `api` entry. A custom image us
 
 The SDK build module is reserved for CLI/platform tooling. It builds `session-runtime.mjs` plus `cantelop-runtime.json`, with runtime/integration/build protocol versions and optional managed database schema. `db/schema.ts` is discovered from the project/Session entrypoint, independently of any API module. Runtime and schema changes have separate watch events. `buildEdgeApi({ outdir })` separately generates `worker.mjs` and `cantelop-edge.json` without a customer API entrypoint. The CLI must deploy both the Edge Worker and the native Session runtime.
 
-The platform deploys the generated Edge Worker through the existing dispatcher/outbound trust chain. Compatible CLI support must update initialization, local connections, manifest validation, artifact upload, and deployment before this path can be used in production. Optional webhook triggers will use the same Workspace/Session contract.
+The platform deploys the generated Edge Worker through the existing dispatcher/outbound trust chain. Compatible CLI support must update initialization, local connections, manifest validation, artifact upload, and deployment before this path can be used in production. Webhook handlers belong in the customer’s own application and call the same SDK primitives.
 
 ## Examples and development
 
@@ -120,3 +122,5 @@ pnpm test:bun
 ```
 
 Package qualification checks the actual npm tarball, removed exports/files, generated Edge and native runtime build artifacts, and a clean consumer's integration types. Publishing remains a separate operation; see [release guidance](docs/releasing.md).
+
+All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope at `POST /__cantelop/app/v2/commands`. The Edge interprets each operation through its own handler; Edge ↔ Sandbox remains the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
