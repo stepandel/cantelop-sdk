@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
   "app": "openai",
-  "session": "src/client.ts",
+  "session": "src/cantelop.ts",
   "environment": {
     "OPENAI_MODEL": {
       "default": "gpt-5-mini"

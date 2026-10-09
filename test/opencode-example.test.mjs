@@ -64,7 +64,7 @@ async function fixture(mode = "success") {
   };
   const clientPath = new URL("../examples/opencode/node_modules/@opencode-ai/sdk/dist/v2/client.js", import.meta.url).pathname;
   const result = await build({
-    entryPoints: [new URL("../examples/opencode/src/session.ts", import.meta.url).pathname],
+    entryPoints: [new URL("../examples/opencode/src/agent.ts", import.meta.url).pathname],
     bundle: true, platform: "node", format: "esm", write: false,
     plugins: [{ name: "opencode-fixture", setup(builder) {
       builder.onResolve({ filter: /^@opencode-ai\/sdk\/v2\/(client|server)$/ }, ({ path }) => ({ path, namespace: "mock" }));

@@ -121,12 +121,12 @@
   "examples": [
     {
       "app": "my-agent",
-      "session": "src/client.ts",
+      "session": "src/cantelop.ts",
       "schema_version": 3
     },
     {
       "app": "my-agent",
-      "session": "src/client.ts",
+      "session": "src/cantelop.ts",
       "environment": {
         "OPENAI_MODEL": {
           "default": "gpt-5-mini"

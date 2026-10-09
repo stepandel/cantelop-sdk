@@ -2,9 +2,7 @@ import {
   query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import {
-  type SessionContext,
-} from "@cantelop/sdk/session";
+import type { SessionContext } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
 
 type Context = SessionContext<SessionMessage, SessionEvent>;

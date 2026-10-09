@@ -1,7 +1,5 @@
 import { Agent, MemorySession, run } from "@openai/agents";
-import {
-  type SessionContext,
-} from "@cantelop/sdk/session";
+import type { SessionContext } from "@cantelop/sdk/session";
 import type { ChatEvent, ChatMessage } from "./contracts.js";
 
 type Context = SessionContext<ChatMessage, ChatEvent>;

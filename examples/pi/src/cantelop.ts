@@ -1,9 +1,9 @@
 import { CantelopClient } from "@cantelop/sdk";
-import type { ChatMessage, ChatEvent } from "./contracts.js";
+import type { SessionMessage, SessionEvent } from "./contracts.js";
 
-export const cantelop = new CantelopClient<ChatMessage, ChatEvent>({
+export const cantelop = new CantelopClient<SessionMessage, SessionEvent>({
   sessionRuntime: {
-    id: "web-chat.v1",
+    id: "pi.v1",
     async receive(context) {
       const { receive } = await import("./agent.js");
       await receive(context);

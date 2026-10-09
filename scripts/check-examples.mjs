@@ -5,7 +5,14 @@ import path from "node:path";
 import { build } from "esbuild";
 import { buildEdgeApi, buildSessionRuntime } from "../dist/build.js";
 
-const lazyHandlers = { name: "backend-lazy-handlers", setup(build) { build.onResolve({ filter: /.*/ }, args => args.kind === "dynamic-import" ? { path: args.path, external: true } : undefined); } };
+const lazyHandlers = {
+  name: "backend-lazy-handlers",
+  setup(build) {
+    build.onResolve({ filter: /.*/ }, args => args.kind === "dynamic-import"
+      ? { path: args.path, external: true }
+      : undefined);
+  },
+};
 const root = path.resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
 try {
@@ -19,7 +26,7 @@ try {
     assert.equal("api" in manifest, false);
     await assert.rejects(access(path.join(projectRoot, "src/api.ts")), { code: "ENOENT" });
     const client = await build({
-      entryPoints: [path.join(projectRoot, name === "web-chat" ? "src/server.ts" : "src/client.ts")], bundle: true,
+      entryPoints: [path.join(projectRoot, name === "web-chat" ? "src/server.ts" : "src/cantelop.ts")], bundle: true,
       platform: "node", format: "esm", write: false, metafile: true, plugins: [lazyHandlers],
     });
     for (const input of Object.keys(client.metafile.inputs)) {
@@ -39,14 +46,6 @@ try {
     assert.equal(artifact.manifest.cli_build_protocol_version, 6);
     assert.equal("routes" in artifact.manifest, false);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
-  }
-  const web = await build({
-    entryPoints: [path.join(root, "examples/web-chat/src/server.ts")],
-    bundle: true, platform: "node", format: "esm", write: false, metafile: true, plugins: [lazyHandlers],
-  });
-  for (const input of Object.keys(web.metafile.inputs)) {
-    assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
-    assert.doesNotMatch(input, /node_modules\/.*(?:@openai\/agents|@anthropic-ai|@earendil-works|@opencode-ai)/);
   }
   const browser = await build({
     entryPoints: [path.join(root, "examples/web-chat/public/chat.js")],

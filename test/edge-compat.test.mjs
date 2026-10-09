@@ -50,13 +50,13 @@ test("only native Session behaviour exposes event output", async () => {
 
 test("provider client entrypoints do not import native dependencies", async () => {
   const files = [
-    "examples/openai/src/client.ts",
+    "examples/openai/src/cantelop.ts",
     "examples/openai/src/contracts.ts",
-    "examples/anthropic/src/client.ts",
+    "examples/anthropic/src/cantelop.ts",
     "examples/anthropic/src/contracts.ts",
-    "examples/pi/src/client.ts",
+    "examples/pi/src/cantelop.ts",
     "examples/pi/src/contracts.ts",
-    "examples/opencode/src/client.ts",
+    "examples/opencode/src/cantelop.ts",
     "examples/opencode/src/contracts.ts",
   ];
 

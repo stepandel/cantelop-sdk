@@ -1,8 +1,6 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import {
-  type SessionContext,
-} from "@cantelop/sdk/session";
+import type { SessionContext } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
 
 type Context = SessionContext<SessionMessage, SessionEvent>;

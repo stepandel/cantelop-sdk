@@ -2,7 +2,7 @@
   "schema_version": 3,
   "app": "opencode",
   "session": {
-    "entrypoint": "src/client.ts",
+    "entrypoint": "src/cantelop.ts",
     "dockerfile": "docker/Dockerfile"
   },
   "environment": {

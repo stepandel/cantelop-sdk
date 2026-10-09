@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
   "app": "pi",
-  "session": "src/client.ts",
+  "session": "src/cantelop.ts",
   "environment": {
     "ANTHROPIC_API_KEY": {
       "secret": true,
