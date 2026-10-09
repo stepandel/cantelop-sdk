@@ -1,12 +1,12 @@
 # Workspace database integration
 
-`src/client.ts` defines an ordinary backend task service using `app.workspace({ id | slug }).database()`. `src/session.ts` uses the same Workspace database from the native Session runtime. `db/schema.ts` declares the managed application schema.
+`src/client.ts` defines an ordinary backend task service using `cantelop.workspace({ id | slug }).database()`. `src/session.ts` uses the same Workspace database from the native Session runtime. `db/schema.ts` declares the managed application schema.
 
 ```ts
 import { TasksClient, taskService } from "./src/client.js";
 
-const app = new TasksClient();
-const workspace = app.workspace({ slug: "customer-123" });
+const cantelop = new TasksClient();
+const workspace = cantelop.workspace({ slug: "customer-123" });
 const tasks = taskService(workspace);
 await tasks.create("Review proposal");
 const list = await tasks.list();

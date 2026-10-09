@@ -5,8 +5,8 @@
 ```ts
 import { AgentClient } from "./src/client.js";
 
-const app = new AgentClient();
-const workspace = app.workspace({ slug: "customer-123" });
+const cantelop = new AgentClient();
+const workspace = cantelop.workspace({ slug: "customer-123" });
 const session = workspace.session({
   id: "conversation-456",
   keepAliveSeconds: 300,

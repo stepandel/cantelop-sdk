@@ -13,9 +13,9 @@ type Message = { type: "prompt"; prompt: string };
 type Event = { type: "delta"; text: string } | { type: "done" };
 type Reply = { answer: string };
 
-const app = new CantelopClient<Message, Event, Reply>();
-const workspace = app.workspace({ slug: "customer-123" });
-// Or: app.workspace({ id: canonicalWorkspaceId });
+const cantelop = new CantelopClient<Message, Event, Reply>();
+const workspace = cantelop.workspace({ slug: "customer-123" });
+// Or: cantelop.workspace({ id: canonicalWorkspaceId });
 const session = workspace.session({ id: "conversation-456" });
 ```
 

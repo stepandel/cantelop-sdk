@@ -17,8 +17,8 @@ type Event = { text: string };
 type Reply = { answer: string };
 type View = { entries: string[]; inbox: string[] };
 
-const app = new CantelopClient<Message, Event, Reply, View>();
-const workspace = app.workspace({ slug: "customer" });
+const cantelop = new CantelopClient<Message, Event, Reply, View>();
+const workspace = cantelop.workspace({ slug: "customer" });
 const session = workspace.session({ id: "conversation" });
 const message = await session.dispatch({ prompt: "Review the change" });
 const steering = await session.steer({ prompt: "Focus on authentication" });

@@ -14,8 +14,8 @@ Each provider client exports the typed `AgentClient` constructor with automatic 
 ```ts
 import { AgentClient } from "./src/client.js";
 
-const app = new AgentClient();
-const workspace = app.workspace({ slug: "customer-123" });
+const cantelop = new AgentClient();
+const workspace = cantelop.workspace({ slug: "customer-123" });
 const session = workspace.session({ id: "conversation-456" });
 await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
 for await (const event of session.stream()) {

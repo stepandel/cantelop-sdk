@@ -5,8 +5,8 @@ Instantiate a client bound to one existing App in your backend, then select its 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
 
-const app = new CantelopClient<Message, Event, Reply, View>();
-const session = app.workspace({ slug: "customer" }).session();
+const cantelop = new CantelopClient<Message, Event, Reply, View>();
+const session = cantelop.workspace({ slug: "customer" }).session();
 await session.dispatch(message);
 ```
 
@@ -29,7 +29,7 @@ Credentials for that selected App are looked up in runtime configuration, `CANTE
 
 Environment-only deployment can supply `CANTELOP_APP_SLUG` and `CANTELOP_INTEGRATION_TOKEN`. The SDK derives `https://{slug}.cantelop.dev`; `CANTELOP_EDGE_URL` can override it. When supplying only `CANTELOP_APP_ID`, supply `CANTELOP_EDGE_URL` as well. If both ID and slug are provided, they must identify the same App. An environment token requires an explicit environment App identity; it does not become a global credential.
 
-`CANTELOP_APP_CONFIG` contains the JSON document described below. Managed runtimes can inject the same document at `globalThis[Symbol.for("dev.cantelop.sdk.app-config.v1")]` before constructing the App. Both mechanisms support backends without filesystem access. Credentials belong in trusted backend configuration; these are server-side integration clients.
+`CANTELOP_APP_CONFIG` contains the JSON document described below. Managed runtimes can inject the same document at `globalThis[Symbol.for("dev.cantelop.sdk.app-config.v1")]` before constructing the client. Both mechanisms support backends without filesystem access. Credentials belong in trusted backend configuration; these are server-side integration clients.
 
 ## Local integration profiles
 
