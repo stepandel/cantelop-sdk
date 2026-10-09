@@ -5,18 +5,17 @@ Start with [the web chat app](web-chat/README.md) for a complete browser → app
 The OpenAI, Anthropic, Pi, and OpenCode examples define native agent runtimes and ordinary application backend clients:
 
 ```text
-src/client.ts     Client definition, runtime handlers and App integration
+src/cantelop.ts   Client configuration and runtime handler
 src/contracts.ts  Shared message and event types
-src/session.ts    Native provider integration
-cantelop.json     Runtime-only project manifest
+src/agent.ts      Provider behavior
+cantelop.json     Deployment configuration
 ```
 
-Each provider client exports the typed `AgentClient` constructor with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider SDKs and secrets stay in the runtime. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
+Each provider example exports one configured `cantelop` instance with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider SDKs and secrets stay in the runtime. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
 
 ```ts
-import { AgentClient } from "./src/client.js";
+import { cantelop } from "./src/cantelop.js";
 
-const cantelop = new AgentClient();
 const workspace = cantelop.workspace({ slug: "customer-123" });
 const session = workspace.session({ id: "conversation-456" });
 await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
@@ -32,5 +31,7 @@ The examples preserve each provider's application-defined `prompt`, `steer`, and
 OpenAI queues ordinary work while a run is busy. Anthropic feeds its live input stream. Pi can steer an active Agent. OpenCode uses a headless server and the custom image in its manifest. All propagate managed activity cancellation to provider work. Workspace state is durable; warm runtime/provider memory is not.
 
 This 1.0 prerelease requires CLI build protocol 6 and project manifest schema 3. Generated Edge/native deployment and App credential provisioning are platform/CLI follow-ups. The current CLI must reject this prerelease rather than deploy it as a legacy Edge API project.
+
+Each deployment example has one `tsconfig.json` covering its application and runtime code.
 
 Run `pnpm check:examples` from the SDK root to type-check backend clients and runtimes and qualify their runtime-only artifacts. The [database example](database/README.md) demonstrates backend service functions and runtime operations over the same managed Workspace database. [Application-owned queue](application-queue/README.md) and [supervised activity](supervised-activity/README.md) examples retain persistence, recovery, and subprocess behavior.

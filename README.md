@@ -7,21 +7,24 @@ This repository currently targets **1.0.0-alpha.0**. The SDK authoring/build bou
 ## Integrate from an application backend
 
 ```ts
-// src/client.ts — the application and deployment definition.
+// src/cantelop.ts — the application and deployment definition.
 import { CantelopClient } from "@cantelop/sdk";
 import type { Message, Event, Reply } from "./contracts.js";
 
 export const cantelop = new CantelopClient<Message, Event, Reply>({
   sessionRuntime: {
     id: "support.v1",
-    receive: async context => (await import("./session.js")).receive(context),
+    async receive(context) {
+      const { receive } = await import("./agent.js");
+      await receive(context);
+    },
   },
 });
 export default cantelop;
 ```
 
 ```ts
-import { cantelop } from "./client.js";
+import { cantelop } from "./cantelop.js";
 
 const workspace = cantelop.workspace({ slug: "customer-123" });
 // Or: cantelop.workspace({ id: canonicalWorkspaceId });
@@ -76,7 +79,7 @@ Breaking iteration or aborting the subscription only closes its stream. It does 
 ## Define the runtime
 
 ```ts
-// src/session.ts — ordinary application code loaded by the receive handler.
+// src/agent.ts — ordinary application code loaded by the receive handler.
 import type { SessionContext } from "@cantelop/sdk/session";
 import type { Message, Event, Reply } from "./contracts.js";
 import { runAgent } from "./agent.js";
@@ -100,14 +103,14 @@ Applications own durable jobs, checkpoints, and idempotency. `onActivate` restor
 {
   "schema_version": 3,
   "app": "support-agent",
-  "session": "src/client.ts",
+  "session": "src/cantelop.ts",
   "environment": {
     "PROVIDER_API_KEY": { "secret": true, "required": true }
   }
 }
 ```
 
-The [manifest schema](schemas/app-v3.json) has no `api` entry. A custom image uses `session: { "entrypoint": "src/client.ts", "dockerfile": "docker/Dockerfile" }`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown; custom images install dependencies and assets outside `/workspace`.
+The [manifest schema](schemas/app-v3.json) has no `api` entry. A custom image uses `session: { "entrypoint": "src/cantelop.ts", "dockerfile": "docker/Dockerfile" }`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown; custom images install dependencies and assets outside `/workspace`.
 
 The SDK build module is reserved for CLI/platform tooling. It builds `session-runtime.mjs` plus `cantelop-runtime.json`, with runtime/integration/build protocol versions and optional managed database schema. `db/schema.ts` is discovered from the project/Session entrypoint, independently of any API module. Runtime and schema changes have separate watch events. `buildEdgeApi({ definition, outdir })` separately generates `worker.mjs` and `cantelop-edge.json` without a customer API entrypoint. The CLI must deploy both artifacts and require their `session_runtime_id` values to match. Message, event, reply and view types are declared on the client; every command carries `X-Cantelop-Session-Runtime`, which Edge checks before private routing. See [runtime definition enforcement](docs/runtime-definitions.md).
 
@@ -115,7 +118,7 @@ The platform deploys the generated Edge Worker through the existing dispatcher/o
 
 ## Examples and development
 
-[Provider examples](examples/README.md) have backend `src/client.ts` and native `src/session.ts`. The [database example](examples/database/README.md) shares application schema across both. [Workspace database documentation](docs/workspace-databases.md) covers renewal and transaction behavior.
+[Provider examples](examples/README.md) have backend `src/cantelop.ts` and native `src/agent.ts`. The [database example](examples/database/README.md) shares application schema across both. [Workspace database documentation](docs/workspace-databases.md) covers renewal and transaction behavior.
 
 ```sh
 pnpm install --frozen-lockfile

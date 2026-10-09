@@ -11,7 +11,7 @@ There are two boundaries:
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
-import { cantelop } from "./client.js";
+import { cantelop } from "./cantelop.js";
 
 // The client declares the runtime handlers and their shared types.
 const workspace = cantelop.workspace({ slug: "customer" });

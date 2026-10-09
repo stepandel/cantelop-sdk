@@ -1,18 +1,24 @@
 # Agent chat in a web app
 
-A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate `CantelopClient` into an existing app. This project owns its [client definition](src/cantelop.ts), [OpenAI Session behaviour](src/session.ts), shared contracts, and `cantelop.json`. The backend and Sandbox use the same definition; no customer Edge routes are authored.
+A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate `CantelopClient` into an existing app. This project owns its [client definition](src/cantelop.ts), [OpenAI Session behaviour](src/agent.ts), shared contracts, and `cantelop.json`. The backend and Sandbox use the same definition; no customer Edge routes are authored.
 
 ```text
 Browser → POST /api/chat → CantelopClient → App Edge /commands → agent runtime
 Browser ← streamed chat text ← session.stream()
 ```
 
+The files follow the application flow:
+
+- `src/cantelop.ts` configures the client and delegates incoming messages to the agent.
+- `src/agent.ts` implements the OpenAI agent.
+- `src/contracts.ts` defines the shared message and output types.
+- `src/server.ts` serves the chat UI and handles browser requests.
+- `public/` contains the browser assets.
+
 The integration is in [src/server.ts](src/server.ts):
 
 ```ts
-import { chatRuntime } from "./definition.js";
-
-const cantelop = new CantelopClient({ sessionRuntime: chatRuntime });
+import { cantelop } from "./cantelop.js";
 const workspace = cantelop.workspace({ slug: "web-chat-demo" });
 const session = workspace.session({ id: conversationId, keepAliveSeconds: 300 });
 const message = await session.dispatch(
@@ -40,7 +46,7 @@ No `.env` loader is installed; export configuration in the process environment o
 
 ## How it works
 
-The backend constructs one client and chooses one Workspace. The browser generates an App-scoped Session ID and retains it in `sessionStorage`, so subsequent turns use the same warm agent conversation. New chat generates a fresh Session ID. The browser transcript is local UI state; it is not a durable history/view implementation and is not restored on reload. This runtime’s MemorySession survives only its warm runtime incarnation.
+The backend imports the configured client and chooses one Workspace. The browser generates an App-scoped Session ID and retains it in `sessionStorage`, so subsequent turns use the same warm agent conversation. New chat generates a fresh Session ID. The browser transcript is local UI state; it is not a durable history/view implementation and is not restored on reload. This runtime’s MemorySession survives only its warm runtime incarnation.
 
 Each POST includes a fresh message ID. The server passes it to dispatch, then returns newline-delimited JSON for admission, text deltas, the final answer or an error. It filters output by the admitted message ID, so replayed output from earlier turns is excluded. The Edge stream must replay retained events from the start when no cursor is supplied, including output emitted between admission and subscription. Cursor expiry/reset and stream failures surface as errors; the example never silently reconnects or submits the prompt again.
 

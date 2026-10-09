@@ -1,19 +1,19 @@
 # Workspace database integration
 
-`src/client.ts` defines an ordinary backend task service using `cantelop.workspace({ id | slug }).database()`. `src/session.ts` uses the same Workspace database from the native Session runtime. `db/schema.ts` declares the managed application schema.
+`src/cantelop.ts` configures the client and its Session handler. `src/tasks.ts` contains plain database functions shared by the application backend and the runtime. `db/schema.ts` declares the managed application schema.
 
 ```ts
-import { TasksClient, taskService } from "./src/client.js";
+import { cantelop } from "./src/cantelop.js";
+import { createTask, listTasks } from "./src/tasks.js";
 
-const cantelop = new TasksClient();
 const workspace = cantelop.workspace({ slug: "customer-123" });
-const tasks = taskService(workspace);
-await tasks.create("Review proposal");
-const list = await tasks.list();
+await createTask(await workspace.database(), "Review proposal");
+const tasks = await listTasks(await workspace.database());
+
 const session = workspace.session({ id: "conversation-456" });
 const reply = await session.request({ title: "Agent task" });
 ```
 
-The runtime-only manifest requires CLI build protocol 6 and manifest schema 3. The SDK runtime artifact carries the database schema directly, without an API module. Platform/CLI adoption of this prerelease remains a follow-up; do not deploy it with the existing CLI.
+The receive handler calls `createTask` against its Workspace database and replies with the task ID. Backend calls and runtime messages use the same schema and function.
 
-The default client in `src/client.ts` defines its runtime ID and receive handler. That handler loads the agent implementation from `src/session.ts`. `cantelop.json` selects the client module for deployment; no separate SDK behavior definition is needed.
+`cantelop.json` selects `src/cantelop.ts` for deployment. The runtime artifact carries the database schema directly. This prerelease requires CLI build protocol 6 and manifest schema 3; CLI/platform adoption remains a follow-up.

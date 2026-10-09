@@ -4,7 +4,7 @@ Instantiate a client bound to one existing App in your backend, then select its 
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
-import { cantelop } from "./client.js";
+import { cantelop } from "./cantelop.js";
 
 const session = cantelop.workspace({ slug: "customer" }).session();
 await session.dispatch(message);

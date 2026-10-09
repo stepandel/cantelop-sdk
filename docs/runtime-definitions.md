@@ -3,14 +3,17 @@
 `CantelopClient` is the sole application definition. Its required `sessionRuntime` contains an ID and a `receive` handler, with optional `onActivate`, `onRecover` and `redelivery`. No separate runtime or behaviour factory is required or exported.
 
 ```ts
-// src/client.ts
+// src/cantelop.ts
 import { CantelopClient } from "@cantelop/sdk";
 import type { Message, Event, Reply, View } from "./contracts.js";
 
 export const cantelop = new CantelopClient<Message, Event, Reply, View>({
   sessionRuntime: {
     id: "support.v1",
-    receive: async context => (await import("./session.js")).receive(context),
+    async receive(context) {
+      const { receive } = await import("./agent.js");
+      await receive(context);
+    },
   },
 });
 export default cantelop;
@@ -27,7 +30,7 @@ Provider implementation can live in ordinary application modules. Load it dynami
 Project schema 3 selects the default-exported client module:
 
 ```json
-{ "schema_version": 3, "app": "support-agent", "session": "src/client.ts" }
+{ "schema_version": 3, "app": "support-agent", "session": "src/cantelop.ts" }
 ```
 
 CLI build protocol 6 consumes `buildEdgeApi({ definition, outdir })` and `buildSessionRuntime({ definition, outdir, projectRoot? })`. Both receive the client module path. The build imports that definition and reads its runtime ID without invoking handlers. The native artifact bundles the client and its handlers, then passes `cantelop.sessionRuntime` to the native listener. Its bootstrap checks the runtime ID before starting. Local watch follows the client module and handler dependencies.
