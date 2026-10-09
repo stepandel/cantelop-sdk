@@ -39,6 +39,19 @@ try {
     assert.equal("routes" in artifact.manifest, false);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
   }
+  const web = await build({
+    entryPoints: [path.join(root, "examples/web-chat/src/server.ts")],
+    bundle: true, platform: "node", format: "esm", write: false, metafile: true,
+  });
+  for (const input of Object.keys(web.metafile.inputs)) {
+    assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
+    assert.doesNotMatch(input, /node_modules\/.*(?:@openai\/agents|@anthropic-ai|@earendil-works|@opencode-ai)/);
+  }
+  const browser = await build({
+    entryPoints: [path.join(root, "examples/web-chat/public/chat.js")],
+    bundle: true, platform: "browser", format: "esm", write: false, metafile: true,
+  });
+  assert.equal(Object.keys(browser.metafile.inputs).length, 1);
   process.stdout.write("Qualified backend clients, protocol Edge Workers, and native runtime examples\n");
 } finally {
   await rm(temporary, { recursive: true, force: true });

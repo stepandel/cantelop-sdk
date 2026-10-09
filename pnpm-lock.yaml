@@ -108,6 +108,19 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  examples/web-chat:
+    dependencies:
+      '@cantelop/sdk':
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
 packages:
 
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.259':
