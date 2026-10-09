@@ -1,8 +1,10 @@
+import { assertRuntimeID } from "./session-runtime-definition.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
 
 /** Internal protocol implementation. No customer API factory or routing hooks. */
 export interface ProtocolEdgeOptions {
+  readonly runtimeId: string;
   readonly fetch?: (request: Request) => Promise<Response>;
   readonly runtimeOrigin?: string;
 }
@@ -11,7 +13,9 @@ class EdgeFailure extends Error {
 }
 
 /** The platform supplies App authentication, defaults and trusted outbound routing. */
-export function createProtocolWorker(options: ProtocolEdgeOptions = {}) {
+export function createProtocolWorker(options: ProtocolEdgeOptions) {
+  assertRuntimeID(options?.runtimeId);
+  const runtimeId = options.runtimeId;
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
   const origin = options.runtimeOrigin ?? "https://runtime.cantelop.internal";
   return Object.freeze({
@@ -24,6 +28,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions = {}) {
         let envelope: AppCommandEnvelope;
         try { envelope = validateCommand(await readJSON(request)); }
         catch (error) { if (error instanceof EdgeFailure) throw error; throw new EdgeFailure("invalid_command", 400); }
+        if (request.headers.get("X-Cantelop-Session-Runtime") !== runtimeId) throw new EdgeFailure("session_runtime_mismatch", 409);
         const { workspace, session, command } = envelope;
         async function invoke(path: string, method: "GET" | "POST" | "DELETE", body?: unknown, stream = false): Promise<Response> {
           // Caller auth/context headers never cross this boundary. Outbound routing binds the App.

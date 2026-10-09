@@ -1,3 +1,4 @@
+import type { AnySessionRuntime } from "./session-runtime-definition.js";
 import type { WorkspaceDatabase } from "./database.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 
@@ -24,7 +25,9 @@ export type AppSelector =
   | { readonly id: string; readonly slug?: never }
   | { readonly slug: string; readonly id?: never };
 
-export type CantelopClientOptions =
+export type CantelopClientOptions<Runtime extends AnySessionRuntime = AnySessionRuntime> = {
+  readonly sessionRuntime: Runtime;
+} & (
   | ((AppSelector | { readonly id?: never; readonly slug?: never }) & {
       readonly profile?: string;
       readonly connection?: never;
@@ -32,7 +35,8 @@ export type CantelopClientOptions =
       readonly accessToken?: never;
     })
   | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never; readonly id?: never; readonly slug?: never; readonly profile?: never }
-  | { readonly edgeUrl: string; readonly accessToken: string; readonly connection?: never; readonly id?: never; readonly slug?: never; readonly profile?: never };
+  | { readonly edgeUrl: string; readonly accessToken: string; readonly connection?: never; readonly id?: never; readonly slug?: never; readonly profile?: never }
+);
 
 export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = unknown> {
   readonly selector: WorkspaceSelector;

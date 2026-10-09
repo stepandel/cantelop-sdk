@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,13 +11,13 @@ const bindings = { CANTELOP_INTEGRATION_TOKEN: 'test-app-token', CANTELOP_DEFAUL
 const workspaceId = 'wsp_' + '1'.repeat(32), messageId = 'msg_' + '2'.repeat(32);
 const envelope = command => ({ protocolVersion: 2, id: messageId, workspace: { slug: 'customer' }, session: { id: 'chat' }, command });
 const request = (body, headers = {}) => new Request('https://agent.example/commands', {
-  method: 'POST', headers: { Authorization: 'Bearer test-app-token', 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
+  method: 'POST', headers: { Authorization: 'Bearer test-app-token', 'Content-Type': 'application/json', 'X-Cantelop-Session-Runtime': 'test.v1', ...headers }, body: JSON.stringify(body),
 });
 const accepted = id => Response.json({ id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
 
 test('protocol Worker fails closed on auth, old routes, invalid commands and oversized input before private routing', async () => {
   let calls = 0;
-  const worker = createProtocolWorker({ fetch: async () => { calls++; return accepted(messageId); } });
+  const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async () => { calls++; return accepted(messageId); } });
   assert.equal((await worker.fetch(request(envelope({ type: 'dispatch', message: 'hi' })), {})).status, 503);
   assert.equal((await worker.fetch(request(envelope({ type: 'dispatch', message: 'hi' }), { Authorization: 'Bearer wrong' }), bindings)).status, 401);
   for (const body of [
@@ -39,7 +39,7 @@ test('protocol Worker fails closed on auth, old routes, invalid commands and ove
 
 test('dispatch and steer use clean admission handlers: canonical Workspace, stable ID, distinct priority, explicit/default keep-alive', async () => {
   const calls = [];
-  const worker = createProtocolWorker({ fetch: async req => {
+  const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async req => {
     calls.push(req.clone());
     if (req.url.endsWith('/workspaces/open')) return Response.json({ id: workspaceId, slug: 'customer' });
     const body = await req.json(); return accepted(body.message.id);
@@ -63,7 +63,7 @@ test('dispatch and steer use clean admission handlers: canonical Workspace, stab
 
 test('cancel, stop, status, view and stream never open Workspaces; their private handlers are selector-bound', async () => {
   const calls = [];
-  const worker = createProtocolWorker({ fetch: async req => {
+  const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async req => {
     calls.push(req.clone());
     if (req.headers.get('Accept') === 'text/event-stream') return new Response('event: error\ndata: {"code":"event_stream_reset"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
     return Response.json({ id: messageId, state: 'requested', messageId });
@@ -86,13 +86,13 @@ test('cancel, stop, status, view and stream never open Workspaces; their private
 
 test('SDK receipts traverse Edge and private admission/status handlers with no direct platform calls', async () => {
   const calls = [];
-  const worker = createProtocolWorker({ fetch: async req => {
+  const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async req => {
     calls.push(req);
     if (req.method === 'POST') return accepted((await req.json()).message.id);
     return Response.json({ id: new URL(req.url).pathname.split('/').at(-1), state: 'unknown' });
   } });
   const publicCalls = [];
-  const app = new CantelopClient({ connection: { fetch(req) {
+  const app = new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, connection: { fetch(req) {
     publicCalls.push(req.url);
     const headers = new Headers(req.headers); headers.set('Authorization', 'Bearer test-app-token');
     return worker.fetch(new Request(req, { headers }), bindings);
@@ -106,14 +106,14 @@ test('SDK receipts traverse Edge and private admission/status handlers with no d
 test('streaming is forwarded without buffering and subscription cancellation reaches only the private read', async () => {
   const controller = new AbortController(); let internal;
   const response = new Response('data: live\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
-  const worker = createProtocolWorker({ fetch: async req => { internal = req; return response; } });
+  const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async req => { internal = req; return response; } });
   const req = new Request(request(envelope({ type: 'stream' })), { signal: controller.signal });
   assert.equal(await worker.fetch(req, bindings), response);
   controller.abort(); assert.equal(internal.signal.aborted, true);
 });
 
 test('private errors and request semantics survive command handling; defaults do not extend unrelated commands', async () => {
-  const worker = createProtocolWorker({ fetch: async req => {
+  const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async req => {
     assert.equal(new URL(req.url).pathname, '/__cantelop/integration/v2/requests');
     assert.equal((await req.json()).timeout_ms, 15000);
     return Response.json({ error: { code: 'capability_unsupported' } }, { status: 409 });
@@ -125,7 +125,10 @@ test('private errors and request semantics survive command handling; defaults do
 test('CLI emits a protocol-owned Worker without an author API entrypoint or credentials', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'cantelop-edge-'));
   try {
-    const artifact = await buildEdgeApi({ outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
+    const definition = path.join(directory, 'definition.mjs');
+    await writeFile(path.join(directory, 'session.ts'), 'export default { sessionRuntime: { id: "test.v1" }, receive() {} };');
+    await writeFile(definition, 'export default { id: "test.v1", entrypoint: "./session.ts" };');
+    const artifact = await buildEdgeApi({ definition, outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
     assert.equal(artifact.manifest.kind, 'cantelop-protocol-edge');
     assert.equal(artifact.manifest.integration_protocol_version, 2);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, 'utf8')), artifact.manifest);
@@ -133,7 +136,7 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
     assert.equal((await worker.fetch(new Request('https://agent.example'), bindings)).status, 401);
     const source = await readFile(artifact.mainModule, 'utf8');
     assert.match(source, /127\.0\.0\.1:8877/); assert.doesNotMatch(source, /defineApi|serveSessionRuntime|node:|test-app-token/);
-    await assert.rejects(buildEdgeApi({ outdir: directory, runtimeOrigin: 'https://outside.example' }), /loopback/);
+    await assert.rejects(buildEdgeApi({ definition, outdir: directory, runtimeOrigin: 'https://outside.example' }), /loopback/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -141,10 +144,10 @@ test('normal backend transport addresses only the App Edge command endpoint and 
   const original = globalThis.fetch; const calls = [];
   globalThis.fetch = async req => { calls.push(req); const body = await req.json(); return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }); };
   try {
-    const session = new CantelopClient({ edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
+    const session = new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
     await session.dispatch('hello');
     assert.equal(calls[0].url, 'https://agent.example/commands');
     assert.equal(calls[0].headers.get('Authorization'), 'Bearer app-token'); assert.equal(calls[0].redirect, 'manual');
-    for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => new CantelopClient({ edgeUrl, accessToken: 'token' }), /App Edge URL/);
+    for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, edgeUrl, accessToken: 'token' }), /App Edge URL/);
   } finally { globalThis.fetch = original; }
 });

@@ -39,7 +39,7 @@
       "description": "Path relative to cantelop.json. It must stay inside the project and name a regular file."
     },
     "session": {
-      "description": "Native Session behaviour entrypoint, as a path or an expanded Session configuration object for native system dependencies.",
+      "description": "Portable Session runtime definition module; its entrypoint selects the executable behaviour.",
       "oneOf": [
         {
           "$ref": "#/$defs/projectFile"
@@ -121,12 +121,12 @@
   "examples": [
     {
       "app": "my-agent",
-      "session": "src/session.ts",
+      "session": "src/definition.ts",
       "schema_version": 3
     },
     {
       "app": "my-agent",
-      "session": "src/session.ts",
+      "session": "src/definition.ts",
       "environment": {
         "OPENAI_MODEL": {
           "default": "gpt-5-mini"

@@ -51,7 +51,7 @@ function selector(value: unknown): AppSelector {
 }
 export function assertClientOptions(value: CantelopClientOptions): void {
   if (!record(value)) throw new TypeError("Invalid App options");
-  const allowed = ["connection", "edgeUrl", "accessToken", "id", "slug", "profile"];
+  const allowed = ["sessionRuntime", "connection", "edgeUrl", "accessToken", "id", "slug", "profile"];
   if (Object.keys(value).some(key => !allowed.includes(key))) throw new TypeError("Invalid App options");
   if (value.connection !== undefined) {
     if (typeof (value.connection as { fetch?: unknown })?.fetch !== "function" || ["edgeUrl", "accessToken", "id", "slug", "profile"].some(key => (value as Record<string, unknown>)[key] !== undefined)) throw new TypeError("An App connection cannot be combined with other configuration");

@@ -1,3 +1,4 @@
+import { sessionRuntime } from "./definition.js";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
@@ -36,7 +37,7 @@ function sessionAgent(
   return agent;
 }
 
-export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) => {
+export default defineSessionBehaviour(sessionRuntime, (context) => {
   const command = context.message.payload;
 
   if (command.type === "cancel") {

@@ -14,3 +14,6 @@ export type {
 } from "./integration.js";
 export { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";
 export { AppConfigurationError } from "./app-config.js";
+
+export { defineSessionRuntime } from "./session-runtime-definition.js";
+export type { SessionRuntimeDefinition } from "./session-runtime-definition.js";

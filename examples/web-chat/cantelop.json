@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "app": "openai",
+  "app": "web-chat",
   "session": "src/definition.ts",
   "environment": {
     "OPENAI_MODEL": {

@@ -1,3 +1,5 @@
+import { assertSessionRuntime } from "./session-runtime-definition.js";
+import type { AnySessionRuntime, RuntimeMessage, RuntimeEvent, RuntimeReply, RuntimeView } from "./session-runtime-definition.js";
 import { AppConfigurationError } from "./app-config.js";
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
 import type { AppConnection, AppCommandEnvelope, CantelopClientOptions, IntegrationSessionOptions, MessageCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector } from "./integration.js";
@@ -7,16 +9,31 @@ import { streamSessionEvents } from "./stream.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** A backend client bound to one App's protocol-managed Edge API. */
-export class CantelopClient<Message = unknown, Event = unknown, Reply = unknown, View = unknown> {
+export class CantelopClient<Runtime extends AnySessionRuntime = AnySessionRuntime> {
   readonly #connection: AppConnection;
 
-  constructor(options: CantelopClientOptions = {}) {
+  readonly #sessionRuntime: Runtime;
+
+  get sessionRuntime(): Runtime { return this.#sessionRuntime; }
+
+  constructor(options: CantelopClientOptions<Runtime>) {
+    assertSessionRuntime(options?.sessionRuntime);
+    this.#sessionRuntime = Object.freeze({ id: options.sessionRuntime.id, entrypoint: options.sessionRuntime.entrypoint }) as Runtime;
     this.#connection = resolveEdgeConnection(options);
   }
 
-  workspace(input: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View> {
+  workspace(input: WorkspaceSelector): WorkspaceRef<RuntimeMessage<Runtime>, RuntimeEvent<Runtime>, RuntimeReply<Runtime>, RuntimeView<Runtime>> {
+    type Message = RuntimeMessage<Runtime>;
+    type Event = RuntimeEvent<Runtime>;
+    type Reply = RuntimeReply<Runtime>;
+    type View = RuntimeView<Runtime>;
     const connection = this.#connection;
-    const edgeFetch = (request: Request) => connection.fetch(edgeRequest(request));
+    const runtimeId = this.#sessionRuntime.id;
+    const edgeFetch = (request: Request) => {
+      const headers = new Headers(request.headers);
+      headers.set("X-Cantelop-Session-Runtime", runtimeId);
+      return connection.fetch(edgeRequest(new Request(request, { headers })));
+    };
     function send(envelope: AppCommandEnvelope, signal?: AbortSignal) {
       signal?.throwIfAborted();
       validateCommand(envelope);

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, RemoteAppError } from '../dist/index.js';
 const fixture = JSON.parse(await readFile(new URL('./fixtures/integration-v2.json', import.meta.url), 'utf8'));
-const session = fetch => new CantelopClient({ connection: { fetch } }).workspace(fixture.workspace).session({ id: fixture.session.id });
+const session = fetch => new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, connection: { fetch } }).workspace(fixture.workspace).session({ id: fixture.session.id });
 
 test('shared fixture defines dispatch and steer admission with the same message shape and identity', async () => {
   assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 2);
@@ -73,7 +73,7 @@ test('view rejects invalid timestamps, revisions, cursor boundaries and identiti
     { ...fixture.view, cursor: undefined }, { ...fixture.view, cursor: { streamId: 'bad', sequence: 0 } },
     { ...fixture.view, cursor: { ...fixture.view.cursor, sequence: -1 } },
   ]) await assert.rejects(session(async () => Response.json(value)).view(), RemoteAppError);
-  const canonical = new CantelopClient({ connection: { fetch: async () => Response.json({ ...fixture.view, workspaceId: 'wsp_' + 'f'.repeat(32) }) } }).workspace({ id: fixture.workspaceId }).session({ id: fixture.session.id });
+  const canonical = new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, connection: { fetch: async () => Response.json({ ...fixture.view, workspaceId: 'wsp_' + 'f'.repeat(32) }) } }).workspace({ id: fixture.workspaceId }).session({ id: fixture.session.id });
   await assert.rejects(canonical.view(), error => error.code === 'workspace_conflict');
 });
 

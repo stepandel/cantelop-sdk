@@ -3,13 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit && node --check public/chat.js",
     "start": "node dist/server.js",
     "dev": "pnpm build && pnpm start"
   },
-  "dependencies": { "@cantelop/sdk": "workspace:*" },
-  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.6.3" }
+  "dependencies": {
+    "@cantelop/sdk": "workspace:*",
+    "@openai/agents": "^0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.3"
+  }
 }

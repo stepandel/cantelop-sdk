@@ -1,3 +1,4 @@
+import { sessionRuntime } from "./definition.js";
 import {
   query,
   type SDKUserMessage,
@@ -13,7 +14,7 @@ type Context = SessionContext<SessionMessage, SessionEvent>;
 let conversationId: string | undefined;
 let input: ClaudeInput | undefined;
 
-export default defineSessionBehaviour<SessionMessage, SessionEvent>((context) => {
+export default defineSessionBehaviour(sessionRuntime, (context) => {
   const command = context.message.payload;
 
   if (command.type === "cancel") {

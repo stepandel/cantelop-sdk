@@ -8,8 +8,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { assertSessionRuntime } from "./session-runtime-definition.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -40,7 +41,7 @@ export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 6;
 export const CANTELOP_LOCAL_DATABASE_PROTOCOL_VERSION = 1;
 
 export interface BuildSessionRuntimeOptions {
-  readonly entrypoint: string;
+  readonly definition: string;
   readonly outdir: string;
   /** Manifest/project root; inferred from the Session entrypoint when omitted. */
   readonly projectRoot?: string;
@@ -53,6 +54,7 @@ export interface SessionRuntimeManifest {
   readonly cli_build_protocol_version: 6;
   readonly runtime_protocol_version: 2;
   readonly integration_protocol_version: 2;
+  readonly session_runtime_id: string;
   /** Advertised only after coordinated actor scheduling, attribution and projection support. */
   readonly capabilities: Readonly<{ priority: false; messageCancellation: false; durableView: false }>;
   readonly database_schema?: ApplicationDatabaseSchema;
@@ -73,7 +75,7 @@ export interface LocalBuildEvent {
 }
 
 export interface WatchLocalProjectOptions {
-  readonly sessionEntrypoint: string;
+  readonly sessionDefinition: string;
   readonly sessionRuntimeOutdir: string;
   readonly projectRoot?: string;
   readonly onBuild: (event: LocalBuildEvent) => void;
@@ -84,6 +86,7 @@ export interface LocalProjectWatcher {
 }
 
 export interface BuildEdgeApiOptions {
+  readonly definition: string;
   readonly outdir: string;
   /** Local CLI only: a numeric loopback Session bridge origin. */
   readonly runtimeOrigin?: string;
@@ -98,6 +101,7 @@ export interface EdgeApiArtifact {
     main_module: "worker.mjs";
     cli_build_protocol_version: 6;
     integration_protocol_version: 2;
+    session_runtime_id: string;
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS";
   }>;
@@ -105,6 +109,7 @@ export interface EdgeApiArtifact {
 
 /** Generates the protocol-owned App Worker; there is no customer API entrypoint. */
 export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeApiArtifact> {
+  const runtime = await readRuntimeDefinition(path.resolve(options.definition));
   const outdir = path.resolve(options.outdir);
   if (options.runtimeOrigin !== undefined) {
     const url = new URL(options.runtimeOrigin);
@@ -117,12 +122,12 @@ export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeAp
   const mainModule = path.join(outdir, "worker.mjs");
   const adapter = fileURLToPath(new URL("./protocol-edge.js", import.meta.url));
   await build({
-    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nexport default createProtocolWorker(${JSON.stringify(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin })});`, resolveDir: outdir },
+    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nexport default createProtocolWorker(${JSON.stringify({ runtimeId: runtime.definition.id, ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }) })});`, resolveDir: outdir },
     bundle: true, platform: "browser", format: "esm", target: "es2022", outfile: mainModule, logLevel: "silent",
   });
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
     schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
-    cli_build_protocol_version: 6, integration_protocol_version: 2,
+    cli_build_protocol_version: 6, integration_protocol_version: 2, session_runtime_id: runtime.definition.id,
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS",
   });
@@ -167,7 +172,7 @@ function evaluateBuildModule(source: string): Promise<unknown> {
   });
 }
 
-async function writeSessionManifest(outdir: string, schemaPath: string): Promise<SessionRuntimeManifest> {
+async function writeSessionManifest(outdir: string, schemaPath: string, runtimeId: string): Promise<SessionRuntimeManifest> {
   const databaseSchema = await buildDatabaseSchema(schemaPath);
   const manifest: SessionRuntimeManifest = Object.freeze({
     schema_version: 1,
@@ -176,6 +181,7 @@ async function writeSessionManifest(outdir: string, schemaPath: string): Promise
     cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
     runtime_protocol_version: 2,
     integration_protocol_version: 2,
+    session_runtime_id: runtimeId,
     capabilities: Object.freeze({ priority: false, messageCancellation: false, durableView: false }),
     ...(databaseSchema === undefined ? {} : { database_schema: databaseSchema }),
   });
@@ -191,7 +197,9 @@ async function writeSessionManifest(outdir: string, schemaPath: string): Promise
 export async function buildSessionRuntime(
   options: BuildSessionRuntimeOptions,
 ): Promise<SessionRuntimeArtifact> {
-  const entrypoint = path.resolve(options.entrypoint);
+  const definitionPath = path.resolve(options.definition);
+  let runtime = await readRuntimeDefinition(definitionPath);
+  const entrypoint = runtime.entrypoint;
   const outdir = path.resolve(options.outdir);
   if (entrypoint === outdir || path.dirname(entrypoint) === outdir) {
     throw new TypeError(
@@ -201,39 +209,51 @@ export async function buildSessionRuntime(
   await mkdir(outdir, { recursive: true });
 
   const mainModule = path.join(outdir, SESSION_RUNTIME_MAIN_MODULE);
-  await build(sessionRuntimeBuildOptions(entrypoint, mainModule));
-  const schemaPath = await projectSchemaPath(entrypoint, options.projectRoot);
-  const manifest = await writeSessionManifest(outdir, schemaPath);
+  await build(sessionRuntimeBuildOptions(definitionPath, mainModule, value => { runtime = value; }));
+  const schemaPath = await projectSchemaPath(runtime.entrypoint, options.projectRoot);
+  const manifest = await writeSessionManifest(outdir, schemaPath, runtime.definition.id);
   return Object.freeze({
     directory: outdir, mainModule,
     manifestFile: path.join(outdir, SESSION_MANIFEST_FILE), manifest,
   });
 }
 
-function sessionRuntimeBuildOptions(entrypoint: string, mainModule: string): BuildOptions {
+async function readRuntimeDefinition(filename: string) {
+  const result = await build({
+    stdin: { contents: `import definition from ${JSON.stringify(filename)}; globalThis.__cantelopRuntimeDefinition = definition;`, resolveDir: path.dirname(filename) },
+    bundle: true, platform: "node", format: "esm", target: "es2022", write: false, metafile: true, logLevel: "silent",
+  });
+  const source = result.outputFiles?.[0]?.text;
+  if (!source) throw new Error("Runtime definition produced no module");
+  const value = await evaluateBuildModule(`${source}\nprocess.stdout.write("\\n${BUILD_ARTIFACT_MARKER}" + JSON.stringify(globalThis.__cantelopRuntimeDefinition) + "\\n", () => process.exit(0));`);
+  assertSessionRuntime(value);
+  const entrypoint = await realpath(path.resolve(path.dirname(filename), value.entrypoint));
+  const root = path.dirname(await realpath(filename));
+  if (!(await stat(entrypoint)).isFile()) throw new TypeError("Runtime behaviour must be a regular file");
+  const relative = path.relative(root, entrypoint);
+  if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) throw new TypeError("Runtime behaviour must stay inside its definition directory");
+  const inputs = await Promise.all(Object.keys(result.metafile?.inputs ?? {}).filter(input => input !== "<stdin>").map(input => realpath(path.resolve(input))));
+  if (inputs.includes(entrypoint)) throw new TypeError("Runtime definitions must not import executable behaviour code");
+  return { definition: value, entrypoint, watchFiles: inputs };
+}
+
+function sessionRuntimeBuildOptions(definitionPath: string, mainModule: string, onDefinition: (value: Awaited<ReturnType<typeof readRuntimeDefinition>>) => void): BuildOptions {
   return {
-    stdin: {
-      contents: [
-        `const key = Symbol.for(${JSON.stringify(SESSION_RUNTIME_STARTUP_STATE_KEY)});`,
-        "const state = { started: process.hrtime.bigint(), seen: new Set() };",
-        "Object.defineProperty(globalThis, key, { value: state, configurable: false });",
-        "const mark = (stage) => {",
-        "  if (state.seen.has(stage)) return;",
-        "  state.seen.add(stage);",
-        "  const now = process.hrtime.bigint();",
-        "  process.stderr.write(`${JSON.stringify({ component: \"cantelop.sdk\", event: \"session_runtime_startup_stage\", stage, elapsed_us: Number((now - state.started) / 1000n) })}\\n`);",
-        "};",
-        "mark(\"bun_entry\");",
-        `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
-        `const { default: definition } = await import(${JSON.stringify(entrypoint)});`,
-        "mark(\"module_evaluated\");",
-        "const sessionRuntime = serveSessionRuntime(definition);",
-        "await sessionRuntime.ready;",
-      ].join("\n"),
-      loader: "ts",
-      resolveDir: path.dirname(entrypoint),
-      sourcefile: "cantelop-session-runtime-bootstrap.ts",
-    },
+    entryPoints: ["cantelop:session-bootstrap"],
+    plugins: [{ name: "cantelop-runtime-definition", setup(builder) {
+      builder.onResolve({ filter: /^cantelop:session-bootstrap$/ }, () => ({ path: "bootstrap", namespace: "cantelop-runtime" }));
+      builder.onLoad({ filter: /.*/, namespace: "cantelop-runtime" }, async () => {
+        const runtime = await readRuntimeDefinition(definitionPath);
+        onDefinition(runtime);
+        const entrypoint = runtime.entrypoint;
+        return {
+          contents: sessionRuntimeBootstrap(entrypoint, runtime.definition.id),
+          loader: "ts",
+          resolveDir: path.dirname(entrypoint),
+          watchFiles: runtime.watchFiles,
+        };
+      });
+    } }],
     bundle: true,
     format: "esm",
     platform: "node",
@@ -247,10 +267,34 @@ function sessionRuntimeBuildOptions(entrypoint: string, mainModule: string): Bui
   };
 }
 
+function sessionRuntimeBootstrap(entrypoint: string, runtimeId: string): string {
+  return [
+    `const key = Symbol.for(${JSON.stringify(SESSION_RUNTIME_STARTUP_STATE_KEY)});`,
+    "const state = { started: process.hrtime.bigint(), seen: new Set() };",
+    "Object.defineProperty(globalThis, key, { value: state, configurable: false });",
+    "const mark = (stage) => {",
+    "  if (state.seen.has(stage)) return;",
+    "  state.seen.add(stage);",
+    "  const now = process.hrtime.bigint();",
+    "  process.stderr.write(`${JSON.stringify({ component: \"cantelop.sdk\", event: \"session_runtime_startup_stage\", stage, elapsed_us: Number((now - state.started) / 1000n) })}\\n`);",
+    "};",
+    "mark(\"bun_entry\");",
+    `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
+    `const { default: definition } = await import(${JSON.stringify(entrypoint)});`,
+    `if (definition?.sessionRuntime?.id !== ${JSON.stringify(runtimeId)} || typeof definition.receive !== "function") throw new Error("Session behaviour does not match its runtime definition");`,
+    "mark(\"module_evaluated\");",
+    "const sessionRuntime = serveSessionRuntime(definition);",
+    "await sessionRuntime.ready;",
+  ].join("\n");
+}
+
 export async function watchLocalProject(
   options: WatchLocalProjectOptions,
 ): Promise<LocalProjectWatcher> {
-  const sessionEntrypoint = path.resolve(options.sessionEntrypoint);
+  const sessionDefinition = path.resolve(options.sessionDefinition);
+  let runtime = await readRuntimeDefinition(sessionDefinition);
+  let buildingRuntime = runtime;
+  const sessionEntrypoint = runtime.entrypoint;
   const sessionRuntimeOutdir = path.resolve(options.sessionRuntimeOutdir);
   await mkdir(sessionRuntimeOutdir, { recursive: true });
   const schemaPath = await projectSchemaPath(sessionEntrypoint, options.projectRoot);
@@ -260,17 +304,18 @@ export async function watchLocalProject(
       contexts.push(await watchedContext("database-schema", {
         entryPoints: [schemaPath], bundle: true, platform: "node", format: "esm", write: false,
         logLevel: "silent",
-      }, options.onBuild, async () => writeSessionManifest(sessionRuntimeOutdir, schemaPath)));
+      }, options.onBuild, async () => writeSessionManifest(sessionRuntimeOutdir, schemaPath, runtime.definition.id)));
     }
     contexts.push(
       await watchedContext(
         "session-runtime",
         sessionRuntimeBuildOptions(
-          sessionEntrypoint,
+          sessionDefinition,
           path.join(sessionRuntimeOutdir, SESSION_RUNTIME_MAIN_MODULE),
+          value => { buildingRuntime = value; },
         ),
         options.onBuild,
-        async () => writeSessionManifest(sessionRuntimeOutdir, schemaPath),
+        async () => { runtime = buildingRuntime; return writeSessionManifest(sessionRuntimeOutdir, schemaPath, runtime.definition.id); },
       ),
     );
   } catch (error) {

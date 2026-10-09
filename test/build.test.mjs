@@ -28,17 +28,17 @@ test("buildSessionRuntime emits one deployable native module", async (t) => {
     [
       'import { greeting } from "./dependency.ts";',
       `import { defineSessionBehaviour } from ${JSON.stringify(new URL("../dist/session.js", import.meta.url).pathname)};`,
-      'export default defineSessionBehaviour(async () => { void greeting; });',
+      'export default defineSessionBehaviour({ id: "test.v1", entrypoint: "./session.ts" }, async () => { void greeting; });',
     ].join("\n"),
   );
 
-  const artifact = await buildSessionRuntime({ entrypoint, outdir });
+  const artifact = await buildSessionRuntime({ definition: await runtimeDefinition(entrypoint), outdir });
   assert.equal(artifact.directory, outdir);
   assert.equal(artifact.mainModule, path.join(outdir, "session-runtime.mjs"));
   assert.equal(artifact.manifestFile, path.join(outdir, "cantelop-runtime.json"));
   assert.deepEqual(artifact.manifest, {
     schema_version: 1, kind: "cantelop-session-runtime", main_module: "session-runtime.mjs",
-    cli_build_protocol_version: 6, runtime_protocol_version: 2, integration_protocol_version: 2,
+    session_runtime_id: "test.v1", cli_build_protocol_version: 6, runtime_protocol_version: 2, integration_protocol_version: 2,
     capabilities: { priority: false, messageCancellation: false, durableView: false },
   });
   assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
@@ -67,13 +67,13 @@ test("a built Session runtime receives messages on the local development port", 
     entrypoint,
     [
       `import { defineSessionBehaviour } from ${JSON.stringify(new URL("../dist/session.js", import.meta.url).pathname)};`,
-      "export default defineSessionBehaviour(async ({ message, env }) => {",
+      "export default defineSessionBehaviour({ id: 'test.v1', entrypoint: './session.ts' }, async ({ message, env }) => {",
       '  if (`${String(message.payload.prompt).toUpperCase()}:${env.MODEL}` !== "HELLO:test-model") throw new Error("unexpected message");',
       "});",
     ].join("\n"),
   );
 
-  const artifact = await buildSessionRuntime({ entrypoint, outdir });
+  const artifact = await buildSessionRuntime({ definition: await runtimeDefinition(entrypoint), outdir });
   const port = await reservePort();
   const child = spawn(process.execPath, [artifact.mainModule], {
     env: {
@@ -114,18 +114,18 @@ test("watchLocalProject incrementally rebuilds changed components", async (t) =>
   t.after(() => rm(directory, { recursive: true, force: true }));
   const sessionEntrypoint = path.join(directory, "session.ts");
   const sessionRuntimeOutdir = path.join(directory, "session-runtime-artifact");
-  await writeFile(sessionEntrypoint, 'export default async () => "runtime-one";\n');
+  await writeFile(sessionEntrypoint, 'export default { sessionRuntime: { id: "test.v1" }, receive: async () => "runtime-one" };\n');
 
   const events = [];
   const watcher = await watchLocalProject({
-    sessionEntrypoint,
+    sessionDefinition: await runtimeDefinition(sessionEntrypoint),
     sessionRuntimeOutdir,
     onBuild: (event) => events.push(event),
   });
   t.after(() => watcher.dispose());
   assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-one/);
 
-  await writeFile(sessionEntrypoint, 'export default async () => "runtime-two";\n');
+  await writeFile(sessionEntrypoint, 'export default { sessionRuntime: { id: "test.v1" }, receive: async () => "runtime-two" };\n');
   await waitFor(() => events.some((event) => event.component === "session-runtime"));
   assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-two/);
 });
@@ -138,17 +138,17 @@ test("runtime-only schema discovery and watching preserve managed database artif
   await mkdir(path.join(projectRoot, "db"));
   await writeFile(path.join(projectRoot, "cantelop.json"), JSON.stringify({ schema_version: 3, app: "agent", session: "src/session.ts" }));
   const entrypoint = path.join(projectRoot, "src/session.ts");
-  await writeFile(entrypoint, 'export default async () => {};\n');
+  await writeFile(entrypoint, 'export default { sessionRuntime: { id: "test.v1" }, receive: async () => {} };\n');
   const schemaFile = path.join(projectRoot, "db/schema.ts");
   const sdkSchema = new URL("../dist/schema.js", import.meta.url).pathname;
   const schemaSource = extra => `import { sqliteTable, text, integer } from ${JSON.stringify(sdkSchema)}; export const tasks = sqliteTable("tasks", { id: text().primaryKey()${extra} });`;
   await writeFile(schemaFile, schemaSource(""));
   const outdir = path.join(directory, "artifact");
   // Root inference starts at the Session entrypoint, without any API file.
-  const artifact = await buildSessionRuntime({ entrypoint, outdir });
+  const artifact = await buildSessionRuntime({ definition: await runtimeDefinition(entrypoint), outdir });
   assert.deepEqual(Object.keys(artifact.manifest.database_schema.snapshot.tables), ["tasks"]);
   const events = [];
-  const watcher = await watchLocalProject({ sessionEntrypoint: entrypoint, sessionRuntimeOutdir: outdir, projectRoot, onBuild: event => events.push(event) });
+  const watcher = await watchLocalProject({ sessionDefinition: await runtimeDefinition(entrypoint), sessionRuntimeOutdir: outdir, projectRoot, onBuild: event => events.push(event) });
   t.after(() => watcher.dispose());
   await writeFile(schemaFile, schemaSource(', done: integer({ mode: "boolean" }).notNull().default(false)'));
   await waitFor(() => events.some(event => event.component === "database-schema" && !event.error));
@@ -223,4 +223,10 @@ async function stopChild(child) {
   const exited = new Promise((resolve) => child.once("exit", resolve));
   child.kill("SIGTERM");
   await exited;
+}
+
+async function runtimeDefinition(entrypoint) {
+  const definition = path.join(path.dirname(entrypoint), "definition.mjs");
+  await writeFile(definition, `export default { id: "test.v1", entrypoint: ${JSON.stringify("./" + path.basename(entrypoint))} };`);
+  return definition;
 }

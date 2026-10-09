@@ -1,25 +1,19 @@
-import { sessionRuntime } from "./definition.js";
+import { chatRuntime } from "./definition.js";
 import { Agent, MemorySession, run } from "@openai/agents";
 import {
   defineSessionBehaviour,
   type SessionContext,
 } from "@cantelop/sdk/session";
-import type { SessionEvent, SessionMessage } from "./contracts.js";
+import type { ChatEvent, ChatMessage } from "./contracts.js";
 
-type Context = SessionContext<SessionMessage, SessionEvent>;
+type Context = SessionContext<ChatMessage, ChatEvent>;
 
 let agent: Agent | undefined;
 let conversation: MemorySession | undefined;
 const promptQueue: string[] = [];
 
-export default defineSessionBehaviour(sessionRuntime, (context) => {
+export default defineSessionBehaviour(chatRuntime, (context) => {
   const command = context.message.payload;
-
-  if (command.type === "cancel") {
-    promptQueue.length = 0;
-    context.activity.cancel();
-    return;
-  }
 
   if (context.activity.active) {
     promptQueue.push(command.prompt);
@@ -35,7 +29,7 @@ function startPrompt(context: Context, prompt: string): void {
   }
 
   agent ??= new Agent({
-    name: "Cantelop OpenAI example",
+    name: "Cantelop web chat",
     instructions: "You are a concise, helpful assistant.",
     model: context.env.OPENAI_MODEL ?? "gpt-5-mini",
   });
