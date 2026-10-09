@@ -83,6 +83,52 @@ export interface LocalProjectWatcher {
   dispose(): Promise<void>;
 }
 
+export interface BuildEdgeApiOptions {
+  readonly outdir: string;
+  /** Local CLI only: a numeric loopback Session bridge origin. */
+  readonly runtimeOrigin?: string;
+}
+export interface EdgeApiArtifact {
+  readonly directory: string;
+  readonly mainModule: string;
+  readonly manifestFile: string;
+  readonly manifest: Readonly<{
+    schema_version: 1;
+    kind: "cantelop-protocol-edge";
+    main_module: "worker.mjs";
+    cli_build_protocol_version: 6;
+    integration_protocol_version: 1;
+    required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
+  }>;
+}
+
+/** Generates the protocol-owned App Worker; there is no customer API entrypoint. */
+export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeApiArtifact> {
+  const outdir = path.resolve(options.outdir);
+  if (options.runtimeOrigin !== undefined) {
+    const url = new URL(options.runtimeOrigin);
+    if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname) ||
+        url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+      throw new TypeError("Local runtime origin must be a numeric HTTP loopback origin");
+    }
+  }
+  await mkdir(outdir, { recursive: true });
+  const mainModule = path.join(outdir, "worker.mjs");
+  const adapter = fileURLToPath(new URL("./protocol-edge.js", import.meta.url));
+  await build({
+    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nexport default createProtocolWorker(${JSON.stringify(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin })});`, resolveDir: outdir },
+    bundle: true, platform: "browser", format: "esm", target: "es2022", outfile: mainModule, logLevel: "silent",
+  });
+  const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
+    schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
+    cli_build_protocol_version: 6, integration_protocol_version: 1,
+    required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
+  });
+  const manifestFile = path.join(outdir, "cantelop-edge.json");
+  await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
+  return Object.freeze({ directory: outdir, mainModule, manifestFile, manifest });
+}
+
 function evaluateBuildModule(source: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-"], {

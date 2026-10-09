@@ -69,6 +69,9 @@ try {
     'assert.equal(typeof defineSessionBehaviour, "function");',
     'assert.deepEqual(Object.keys(runtime).sort(), ["createSessionDatabase", "createSessionRuntimeHandler", "serveSessionRuntime"]);',
     'for (const name of ["api", "edge"]) await assert.rejects(import(`@cantelop/sdk/${name}`), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });',
+    'const edge = await build.buildEdgeApi({ outdir: "./edge" });',
+    'assert.equal(edge.manifest.kind, "cantelop-protocol-edge");',
+    'assert.equal((await import(new URL(edge.mainModule, `file://${process.cwd()}/`))).default.fetch instanceof Function, true);',
     'await build.buildSessionRuntime({ entrypoint: "./session.mjs", outdir: "./artifact" });',
   ].join("\n"));
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });

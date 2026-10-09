@@ -1,3 +1,4 @@
+import { createEdgeConnection, edgeRequest } from "./edge-connection.js";
 import type { App, CreateAppOptions, IntegrationSessionOptions, SessionControlOptions, SessionStreamOptions, WorkspaceSelector } from "./integration.js";
 import type { SessionRequestOptions, Workspace } from "./resources.js";
 import { createRemoteApp, readWorkspace, requestJSON } from "./remote-app.js";
@@ -6,16 +7,15 @@ import { controlSession, integrationSessionPath, viewSession } from "./integrati
 
 /**
  * Creates the backend integration facade over a trusted App-bound connection.
- * Public credential/endpoint discovery is provided by the platform, not this factory.
+ * App Edge credentials/endpoint discovery are provided by the platform.
  */
 export function createApp<Message = unknown, Event = unknown, Reply = unknown, Steering = unknown>(
   options: CreateAppOptions,
 ): App<Message, Event, Reply, Steering> {
-  if (!options?.connection || typeof options.connection.fetch !== "function") {
-    throw new TypeError("An App-bound connection is required");
-  }
-  const connection = options.connection;
-  const runtimeFetch = (request: Request) => connection.fetch(request);
+  const connection = options?.connection ?? createEdgeConnection(options);
+  if (typeof connection.fetch !== "function") throw new TypeError("An App Edge connection is required");
+  // Legacy transport serialization stays private. Only Edge protocol requests leave the SDK.
+  const runtimeFetch = (request: Request) => connection.fetch(edgeRequest(request));
   return Object.freeze({
     workspace(input: WorkspaceSelector) {
       const selector = workspaceSelector(input);

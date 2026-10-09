@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { build } from "esbuild";
-import { buildSessionRuntime } from "../dist/build.js";
+import { buildEdgeApi, buildSessionRuntime } from "../dist/build.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
@@ -30,12 +30,16 @@ try {
       entrypoint: path.join(projectRoot, session), projectRoot,
       outdir: path.join(temporary, name),
     });
+    const edge = await buildEdgeApi({ outdir: path.join(temporary, name, 'edge') });
+    assert.equal(edge.manifest.kind, "cantelop-protocol-edge");
+    assert.equal(edge.manifest.integration_protocol_version, 1);
+    assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);
     assert.equal(artifact.manifest.kind, "cantelop-session-runtime");
     assert.equal(artifact.manifest.cli_build_protocol_version, 6);
     assert.equal("routes" in artifact.manifest, false);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
   }
-  process.stdout.write("Qualified runtime-only provider and database examples\n");
+  process.stdout.write("Qualified backend clients, protocol Edge Workers, and native runtime examples\n");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

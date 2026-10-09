@@ -13,15 +13,15 @@ export interface IntegrationSessionOptions {
 
 /** A trusted, App-bound connection supplied by the platform or local CLI. */
 export interface AppConnection {
-  /** Requests use the private runtime origin; the connection owns routing and authentication. */
+  /** Requests address the App Edge protocol at a logical Edge origin; the connection owns routing and authentication. */
   fetch(request: Request): Promise<Response>;
   /** Reserved for local CLI database connections. */
   readonly localDatabaseOrigin?: string;
 }
 
-export interface CreateAppOptions {
-  readonly connection: AppConnection;
-}
+export type CreateAppOptions =
+  | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never }
+  | { readonly edgeUrl: string; readonly accessToken: string; readonly connection?: never };
 
 export interface App<Message, Event = unknown, Reply = unknown, Steering = unknown> {
   workspace(selector: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, Steering>;
