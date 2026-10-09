@@ -62,11 +62,11 @@
     "@libsql/client": "^0.17.0",
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "0.45.2",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.6.3"
+    "@types/node": "^24.0.0"
   },
   "imports": {
     "#cantelop-app-config": {

@@ -39,7 +39,7 @@
       "description": "Path relative to cantelop.json. It must stay inside the project and name a regular file."
     },
     "session": {
-      "description": "Default-exported CantelopClient module defining Session runtime handlers.",
+      "description": "Default-exported CantelopClient module referencing a Session runtime implementation.",
       "oneOf": [
         {
           "$ref": "#/$defs/projectFile"

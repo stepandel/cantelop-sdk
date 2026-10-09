@@ -26,7 +26,7 @@ test('CLI-injected App config permits no-argument construction, lazy references 
     return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
   };
   try {
-    const app = new CantelopClient({ sessionRuntime: { id: "test.v1", receive() {} } });
+    const app = new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" } });
     const ref = app.workspace({ slug: 'customer' });
     const session = ref.session();
     assert.equal(calls.length, 0);
@@ -34,7 +34,7 @@ test('CLI-injected App config permits no-argument construction, lazy references 
     await session.dispatch('hello');
     assert.equal(calls[0].url, 'https://first-agent.cantelop.dev/commands');
     assert.equal(calls[0].headers.get('Authorization'), 'Bearer first-integration-token');
-    await new CantelopClient({ sessionRuntime: { id: "test.v1", receive() {} }, slug: second.slug }).workspace({ slug: 'customer' }).session().dispatch('hello');
+    await new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, slug: second.slug }).workspace({ slug: 'customer' }).session().dispatch('hello');
     assert.equal(calls[1].url, 'https://second-agent.cantelop.dev/commands');
     assert.equal(calls[1].headers.get('Authorization'), 'Bearer second-integration-token');
   } finally { globalThis.fetch = fetch; if (previous === undefined) Reflect.deleteProperty(globalThis, key); else Reflect.set(globalThis, key, previous); }
@@ -78,7 +78,7 @@ test('invalid, ambiguous and expired configuration fails without credential valu
   await assert.rejects(resolveAppConfiguration({}, context({ CANTELOP_APP_CONFIG: '{"secret":"first-integration-token"}' })), expectCode('app_configuration_invalid'));
   await assert.rejects(resolveAppConfiguration({}, context({}, { injected: parseAppConfiguration(document([{ ...first, expiresAt: '2000-01-01T00:00:00Z' }])) })), expectCode('app_credentials_expired'));
   await assert.rejects(resolveAppConfiguration({}, context()), expectCode('app_configuration_missing'));
-  for (const options of [{ id: first.id, slug: first.slug }, { id: 'bad' }, { slug: 'UPPER' }, { profile: '' }, { connection: { fetch }, slug: first.slug }, { edgeUrl: 'https://example.test' }]) assert.throws(() => new CantelopClient({ ...options, sessionRuntime: { id: "test.v1", receive() {} } }), TypeError);
+  for (const options of [{ id: first.id, slug: first.slug }, { id: 'bad' }, { slug: 'UPPER' }, { profile: '' }, { connection: { fetch }, slug: first.slug }, { edgeUrl: 'https://example.test' }]) assert.throws(() => new CantelopClient({ ...options, sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" } }), TypeError);
 });
 
 test('actual backend discovery uses a private integration file and nearest project independently of CLI login', async () => {
@@ -101,7 +101,7 @@ test('actual backend discovery uses a private integration file and nearest proje
         const body = await request.json();
         return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
       };
-      const app = new CantelopClient({ sessionRuntime: { id: "test.v1", receive() {} } });
+      const app = new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" } });
       const ref = app.workspace({ slug: 'customer' }).session();
       assert.equal(calls, 0);
       await Promise.all([ref.dispatch('one'), ref.dispatch('two')]);
@@ -113,7 +113,7 @@ test('actual backend discovery uses a private integration file and nearest proje
       await chmod(profile, 0o644);
       await run(process.execPath, ['--input-type=module', '-e', `
         import assert from 'node:assert/strict'; import { CantelopClient } from ${JSON.stringify(sdk)};
-        await assert.rejects(new CantelopClient({ sessionRuntime: { id: "test.v1", receive() {} }, id: ${JSON.stringify(first.id)} }).workspace({ slug: 'customer' }).session().dispatch('hi'), error => error.code === 'app_configuration_invalid');
+        await assert.rejects(new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, id: ${JSON.stringify(first.id)} }).workspace({ slug: 'customer' }).session().dispatch('hi'), error => error.code === 'app_configuration_invalid');
       `], { cwd: root, env: { ...env, CANTELOP_INTEGRATION_CONFIG: profile } });
     }
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -131,7 +131,7 @@ test('profile defaults support code outside a Cantelop project and explicit sele
         assert.equal(request.url, 'https://first-agent.cantelop.dev/commands');
         const body = await request.json(); return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
       };
-      await new CantelopClient({ ...OPTIONS, sessionRuntime: { id: "test.v1", receive() {} } }).workspace({ slug: 'customer' }).session().dispatch('hi');`;
+      await new CantelopClient({ ...OPTIONS, sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" } }).workspace({ slug: 'customer' }).session().dispatch('hi');`;
     await run(process.execPath, ['--input-type=module', '-e', source.replace('OPTIONS', '{}')], { cwd: root, env: { ...env, CANTELOP_INTEGRATION_CONFIG: profile } });
     await writeFile(path.join(root, 'cantelop.json'), 'invalid unrelated project');
     await run(process.execPath, ['--input-type=module', '-e', source.replace('OPTIONS', JSON.stringify({ id: first.id }))], { cwd: root, env: { ...env, CANTELOP_INTEGRATION_CONFIG: profile } });

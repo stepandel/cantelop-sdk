@@ -4,10 +4,7 @@ import type { ChatMessage, ChatEvent } from "./contracts.js";
 export const cantelop = new CantelopClient<ChatMessage, ChatEvent>({
   sessionRuntime: {
     id: "web-chat.v1",
-    async receive(context) {
-      const { receive } = await import("./agent.js");
-      await receive(context);
-    },
+    entrypoint: "./agent.ts",
   },
 });
 

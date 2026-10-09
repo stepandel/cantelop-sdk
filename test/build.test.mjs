@@ -27,7 +27,7 @@ test("buildSessionRuntime emits one deployable native module", async (t) => {
     entrypoint,
     [
       'import { greeting } from "./dependency.ts";',
-      'export default { receive: async () => { void greeting; } };',
+      'export async function receive() { void greeting; }',
     ].join("\n"),
   );
 
@@ -65,9 +65,12 @@ test("a built Session runtime receives messages on the local development port", 
   await writeFile(
     entrypoint,
     [
-      "export default { receive: async ({ message, env }) => {",
+      "let activated = false;",
+      "export async function onActivate() { activated = true; }",
+      "export async function receive({ message, env }) {",
+      '  if (!activated) throw new Error("Activation hook was not invoked");',
       '  if (`${String(message.payload.prompt).toUpperCase()}:${env.MODEL}` !== "HELLO:test-model") throw new Error("unexpected message");',
-      "} };",
+      "}",
     ].join("\n"),
   );
 
@@ -112,7 +115,7 @@ test("watchLocalProject incrementally rebuilds changed components", async (t) =>
   t.after(() => rm(directory, { recursive: true, force: true }));
   const sessionEntrypoint = path.join(directory, "session.ts");
   const sessionRuntimeOutdir = path.join(directory, "session-runtime-artifact");
-  await writeFile(sessionEntrypoint, 'export default { receive: async () => "runtime-one" };\n');
+  await writeFile(sessionEntrypoint, 'export async function receive() { console.log("runtime-one"); }\n');
 
   const events = [];
   const watcher = await watchLocalProject({
@@ -123,7 +126,7 @@ test("watchLocalProject incrementally rebuilds changed components", async (t) =>
   t.after(() => watcher.dispose());
   assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-one/);
 
-  await writeFile(sessionEntrypoint, 'export default { receive: async () => "runtime-two" };\n');
+  await writeFile(sessionEntrypoint, 'export async function receive() { console.log("runtime-two"); }\n');
   await waitFor(() => events.some((event) => event.component === "session-runtime"));
   assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-two/);
 });
@@ -136,7 +139,7 @@ test("runtime-only schema discovery and watching preserve managed database artif
   await mkdir(path.join(projectRoot, "db"));
   await writeFile(path.join(projectRoot, "cantelop.json"), JSON.stringify({ schema_version: 3, app: "agent", session: "src/session.ts" }));
   const entrypoint = path.join(projectRoot, "src/session.ts");
-  await writeFile(entrypoint, 'export default { receive: async () => {} };\n');
+  await writeFile(entrypoint, 'export async function receive() {}\n');
   const schemaFile = path.join(projectRoot, "db/schema.ts");
   const sdkSchema = new URL("../dist/schema.js", import.meta.url).pathname;
   const schemaSource = extra => `import { sqliteTable, text, integer } from ${JSON.stringify(sdkSchema)}; export const tasks = sqliteTable("tasks", { id: text().primaryKey()${extra} });`;
@@ -225,6 +228,6 @@ async function stopChild(child) {
 
 async function runtimeDefinition(entrypoint) {
   const definition = path.join(path.dirname(entrypoint), "definition.mjs");
-  await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; export default new CantelopClient({sessionRuntime:{id:"test.v1",receive:async context => (await import(${JSON.stringify("./" + path.basename(entrypoint))})).default.receive(context)}});`);
+  await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; export default new CantelopClient({sessionRuntime:{id:"test.v1",entrypoint:${JSON.stringify("./" + path.basename(entrypoint))}}});`);
   return definition;
 }

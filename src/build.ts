@@ -8,9 +8,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { access, mkdir, writeFile, realpath } from "node:fs/promises";
+import { access, mkdir, writeFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { assertRuntimeID } from "./session-runtime-contract.js";
+import { assertSessionRuntime } from "./session-runtime-contract.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -223,40 +223,113 @@ async function readRuntimeDefinition(filename: string) {
   const result = await build({
     stdin: { contents: `import cantelop from ${JSON.stringify(filename)}; import { CantelopClient } from ${JSON.stringify(clientModule)};
       if (!(cantelop instanceof CantelopClient)) throw new TypeError("Default export must be a CantelopClient");
-      globalThis.__cantelopRuntimeDefinition = { id: cantelop.sessionRuntime.id };`, resolveDir: path.dirname(filename) },
+      globalThis.__cantelopRuntimeDefinition = cantelop.sessionRuntime;`, resolveDir: path.dirname(filename) },
     bundle: true, packages: "external", external: [clientModule], platform: "node", format: "esm", target: "es2022", write: false, metafile: true, logLevel: "silent",
-    plugins: [{ name: "cantelop-lazy-agent-imports", setup(builder) {
-      builder.onResolve({ filter: /.*/ }, args => args.kind === "dynamic-import"
-        ? { path: args.path.startsWith(".") ? path.resolve(args.resolveDir, args.path) : args.path, external: true }
-        : undefined);
-    } }],
   });
   const source = result.outputFiles?.[0]?.text;
   if (!source) throw new Error("Client definition produced no module");
   const value = await evaluateBuildModule(`${source}\nprocess.stdout.write("\\n${BUILD_ARTIFACT_MARKER}" + JSON.stringify(globalThis.__cantelopRuntimeDefinition) + "\\n", () => process.exit(0));`);
-  if (!value || typeof value !== "object") throw new TypeError("Invalid client definition");
-  const definition = value as { id: unknown };
-  assertRuntimeID(definition.id);
-  const entrypoint = await realpath(filename);
+  assertSessionRuntime(value);
+  const runtimePath = path.resolve(path.dirname(filename), value.entrypoint);
+  let entrypoint: string;
+  try {
+    entrypoint = await realpath(runtimePath);
+  } catch {
+    throw new RuntimeContractError(`Session runtime module does not exist: ${value.entrypoint}`, [filename, runtimePath]);
+  }
+  const definitionDirectory = path.dirname(await realpath(filename));
+  const relative = path.relative(definitionDirectory, entrypoint);
+  if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+    throw new TypeError("Session runtime must stay inside its definition directory");
+  }
+  if (!(await stat(entrypoint)).isFile()) throw new TypeError("Session runtime must be a regular module file");
+  const contractFiles = await validateRuntimeModule(filename, entrypoint);
   const inputs = Object.keys(result.metafile?.inputs ?? {}).filter(input => input !== "<stdin>").map(input => path.resolve(input));
-  return { definition: { id: definition.id }, entrypoint, watchFiles: inputs };
+  return { definition: value, entrypoint, watchFiles: [...new Set([...inputs, entrypoint, ...contractFiles])] };
+}
+
+class RuntimeContractError extends TypeError {
+  constructor(message: string, readonly watchFiles: readonly string[]) { super(message); }
+}
+
+/** Validate the module contract without importing provider code or invoking handlers. */
+async function validateRuntimeModule(definition: string, entrypoint: string): Promise<string[]> {
+  const { default: ts } = await import("typescript");
+  const clientModule = fileURLToPath(new URL("./client.js", import.meta.url));
+  const sessionModule = fileURLToPath(new URL("./session.js", import.meta.url));
+  const probe = path.join(path.dirname(definition), "__cantelop_runtime_contract__.mts");
+  const source = `
+    import type cantelop from ${JSON.stringify(definition)};
+    import type { CantelopClient } from ${JSON.stringify(clientModule)};
+    import type { SessionBehaviour } from ${JSON.stringify(sessionModule)};
+    import * as implementation from ${JSON.stringify(entrypoint)};
+    type Expected = typeof cantelop extends CantelopClient<infer M, infer E, infer R, infer V>
+      ? SessionBehaviour<M, E, R> : never;
+    type StrictHandler<T> = T extends (...args: infer A) => infer R ? (...args: A) => R : T;
+    const behaviour: { [K in keyof Expected]: StrictHandler<Expected[K]> } = implementation;
+  `;
+  const configPath = ts.findConfigFile(path.dirname(definition), ts.sys.fileExists);
+  let configured: import("typescript").CompilerOptions = {};
+  if (configPath) {
+    const config = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (config.error) throw new TypeError(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
+    const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath));
+    if (parsed.errors.length) throw new TypeError(ts.flattenDiagnosticMessageText(parsed.errors[0]!.messageText, "\n"));
+    configured = parsed.options;
+  }
+  delete configured.rootDir;
+  delete configured.outDir;
+  const options: import("typescript").CompilerOptions = {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    ...configured,
+    noEmit: true, strict: true, skipLibCheck: true,
+    allowJs: true, checkJs: true, noImplicitAny: configured.noImplicitAny ?? Boolean(configured.strict), allowImportingTsExtensions: true,
+  };
+  const host = ts.createCompilerHost(options);
+  const readSource = host.getSourceFile.bind(host);
+  host.getSourceFile = (filename, languageVersion, onError, shouldCreateNewSourceFile) => filename === probe
+    ? ts.createSourceFile(filename, source, languageVersion, true)
+    : readSource(filename, languageVersion, onError, shouldCreateNewSourceFile);
+  const program = ts.createProgram([probe], options, host);
+  const watchFiles = [...program.getSourceFiles()
+    .filter(file => file.fileName !== probe && !program.isSourceFileFromExternalLibrary(file) && !program.isSourceFileDefaultLibrary(file))
+    .map(file => file.fileName), ...(configPath ? [configPath] : [])];
+  const diagnostics = ts.getPreEmitDiagnostics(program);
+  if (diagnostics.length) {
+    const messages = diagnostics.slice(0, 10).map(diagnostic => {
+      const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+      if (!diagnostic.file || diagnostic.start === undefined) return message;
+      const location = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+      const file = diagnostic.file.fileName === probe ? "Session runtime exports" : path.relative(path.dirname(definition), diagnostic.file.fileName);
+      return `${file}:${location.line + 1}:${location.character + 1}: ${message}`;
+    });
+    throw new RuntimeContractError(`Invalid Session runtime module:\n${messages.join("\n")}`, watchFiles);
+  }
+  return watchFiles;
 }
 
 function sessionRuntimeBuildOptions(definitionPath: string, mainModule: string, onDefinition: (value: Awaited<ReturnType<typeof readRuntimeDefinition>>) => void): BuildOptions {
+  let watchFiles: readonly string[] = [definitionPath];
   return {
     entryPoints: ["cantelop:session-bootstrap"],
     plugins: [{ name: "cantelop-runtime-definition", setup(builder) {
       builder.onResolve({ filter: /^cantelop:session-bootstrap$/ }, () => ({ path: "bootstrap", namespace: "cantelop-runtime" }));
       builder.onLoad({ filter: /.*/, namespace: "cantelop-runtime" }, async () => {
-        const runtime = await readRuntimeDefinition(definitionPath);
-        onDefinition(runtime);
-        const entrypoint = runtime.entrypoint;
-        return {
-          contents: sessionRuntimeBootstrap(entrypoint, runtime.definition.id),
-          loader: "ts",
-          resolveDir: path.dirname(entrypoint),
-          watchFiles: runtime.watchFiles,
-        };
+        try {
+          const runtime = await readRuntimeDefinition(definitionPath);
+          watchFiles = runtime.watchFiles;
+          onDefinition(runtime);
+          return {
+            contents: sessionRuntimeBootstrap(runtime.entrypoint),
+            loader: "ts",
+            resolveDir: path.dirname(runtime.entrypoint),
+            watchFiles: [...watchFiles],
+          };
+        } catch (error) {
+          if (error instanceof RuntimeContractError) watchFiles = [...new Set([...watchFiles, ...error.watchFiles])];
+          return { errors: [{ text: error instanceof Error ? error.message : String(error) }], watchFiles: [...watchFiles] };
+        }
       });
     } }],
     bundle: true,
@@ -272,7 +345,7 @@ function sessionRuntimeBuildOptions(definitionPath: string, mainModule: string, 
   };
 }
 
-function sessionRuntimeBootstrap(entrypoint: string, runtimeId: string): string {
+function sessionRuntimeBootstrap(entrypoint: string): string {
   return [
     `const key = Symbol.for(${JSON.stringify(SESSION_RUNTIME_STARTUP_STATE_KEY)});`,
     "const state = { started: process.hrtime.bigint(), seen: new Set() };",
@@ -285,10 +358,10 @@ function sessionRuntimeBootstrap(entrypoint: string, runtimeId: string): string 
     "};",
     "mark(\"bun_entry\");",
     `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
-    `const { default: definition } = await import(${JSON.stringify(entrypoint)});`,
-    `if (definition?.sessionRuntime?.id !== ${JSON.stringify(runtimeId)} || typeof definition.sessionRuntime.receive !== "function") throw new Error("Session runtime does not match its client definition");`,
+    `const behaviour = await import(${JSON.stringify(entrypoint)});`,
+    'if (typeof behaviour.receive !== "function") throw new Error("Session runtime must export receive");',
     "mark(\"module_evaluated\");",
-    "const sessionRuntime = serveSessionRuntime(definition.sessionRuntime);",
+    "const sessionRuntime = serveSessionRuntime(behaviour);",
     "await sessionRuntime.ready;",
   ].join("\n");
 }

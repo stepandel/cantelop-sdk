@@ -12,11 +12,11 @@ import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, ass
 export class CantelopClient<Message = unknown, Event = never, Reply = never, View = never> {
   readonly #connection: AppConnection;
 
-  readonly #sessionRuntime: SessionRuntime<Message, Event, Reply>;
+  readonly #sessionRuntime: SessionRuntime;
 
-  get sessionRuntime(): SessionRuntime<Message, Event, Reply> { return this.#sessionRuntime; }
+  get sessionRuntime(): SessionRuntime { return this.#sessionRuntime; }
 
-  constructor(options: CantelopClientOptions<Message, Event, Reply>) {
+  constructor(options: CantelopClientOptions) {
     assertSessionRuntime(options?.sessionRuntime);
     this.#sessionRuntime = Object.freeze({ ...options.sessionRuntime });
     this.#connection = resolveEdgeConnection(options);

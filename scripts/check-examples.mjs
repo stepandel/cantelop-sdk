@@ -5,14 +5,6 @@ import path from "node:path";
 import { build } from "esbuild";
 import { buildEdgeApi, buildSessionRuntime } from "../dist/build.js";
 
-const lazyHandlers = {
-  name: "backend-lazy-handlers",
-  setup(build) {
-    build.onResolve({ filter: /.*/ }, args => args.kind === "dynamic-import"
-      ? { path: args.path, external: true }
-      : undefined);
-  },
-};
 const root = path.resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
 try {
@@ -27,7 +19,7 @@ try {
     await assert.rejects(access(path.join(projectRoot, "src/api.ts")), { code: "ENOENT" });
     const client = await build({
       entryPoints: [path.join(projectRoot, name === "web-chat" ? "src/server.ts" : "src/cantelop.ts")], bundle: true,
-      platform: "node", format: "esm", write: false, metafile: true, plugins: [lazyHandlers],
+      platform: "node", format: "esm", write: false, metafile: true,
     });
     for (const input of Object.keys(client.metafile.inputs)) {
       assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
@@ -43,13 +35,14 @@ try {
     assert.equal(edge.manifest.integration_protocol_version, 2);
     assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);
     assert.equal(artifact.manifest.kind, "cantelop-session-runtime");
+    assert.doesNotMatch(await readFile(artifact.mainModule, "utf8"), /class CantelopClient/);
     assert.equal(artifact.manifest.cli_build_protocol_version, 6);
     assert.equal("routes" in artifact.manifest, false);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
   }
   const browser = await build({
     entryPoints: [path.join(root, "examples/web-chat/public/chat.js")],
-    bundle: true, platform: "browser", format: "esm", write: false, metafile: true, plugins: [lazyHandlers],
+    bundle: true, platform: "browser", format: "esm", write: false, metafile: true,
   });
   assert.equal(Object.keys(browser.metafile.inputs).length, 1);
   process.stdout.write("Qualified backend clients, protocol Edge Workers, and native runtime examples\n");

@@ -49,7 +49,7 @@ function selector(value: unknown): AppSelector {
   if (typeof value.slug === "string" && APP_SLUG.test(value.slug)) return { slug: value.slug };
   return invalid();
 }
-export function assertClientOptions(value: CantelopClientOptions<unknown, unknown, unknown>): void {
+export function assertClientOptions(value: CantelopClientOptions): void {
   if (!record(value)) throw new TypeError("Invalid App options");
   const allowed = ["sessionRuntime", "connection", "edgeUrl", "accessToken", "id", "slug", "profile"];
   if (Object.keys(value).some(key => !allowed.includes(key))) throw new TypeError("Invalid App options");

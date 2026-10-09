@@ -55,7 +55,7 @@ try {
   );
   await writeFile(path.join(consumer, "definition.mjs"), [
     'import { CantelopClient } from "@cantelop/sdk";',
-    'export default new CantelopClient({sessionRuntime:{id:"package.v1",receive:async context => (await import("./session.mjs")).receive(context)}});',
+    'export default new CantelopClient({sessionRuntime:{id:"package.v1",entrypoint:"./session.mjs"}});',
   ].join("\n"));
   await writeFile(path.join(consumer, "session.mjs"), [
     'import * as sessionSDK from "@cantelop/sdk/session";',
@@ -85,12 +85,7 @@ try {
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   await writeFile(path.join(consumer, "integration.ts"), [
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type AppCommandEnvelope, type SessionEventCursor } from "@cantelop/sdk";',
-    'const definition = new CantelopClient<{ prompt: string }, { text: string }, { answer: string }, { entries: string[] }>({ sessionRuntime: { id: "package.v1", receive: async ({ message, output, reply }) => { const prompt: string = message.payload.prompt; await output.send({ text: prompt }); reply({ answer: prompt }); } } });',
-    'const sessionRuntime = definition.sessionRuntime;',
-    '// @ts-expect-error Output follows client event type.',
-    'new CantelopClient<string, {text:string}>({sessionRuntime:{id:"test",receive: ({output}) => output.send({wrong:true})}});',
-    '// @ts-expect-error Reply follows client reply type.',
-    'new CantelopClient<string, never, {answer:string}>({sessionRuntime:{id:"test",receive: ({reply}) => reply({wrong:true})}});',
+    'const sessionRuntime = { id: "package.v1", entrypoint: "./session.mjs" };',
     'const connection: AppConnection = { fetch: async () => new Response(null) };',
     'const app = new CantelopClient<{ prompt: string }, { text: string }, { answer: string }, { entries: string[] }>({ sessionRuntime, connection });',
     'new CantelopClient({ sessionRuntime });',
@@ -98,8 +93,8 @@ try {
     'new CantelopClient();',
     '// @ts-expect-error App identity alone does not define a runtime contract.',
     'new CantelopClient({ slug: "support-agent" });',
-    '// @ts-expect-error Plain metadata has no typed runtime contract.',
-    'new CantelopClient({ sessionRuntime: { id: "package.v1", entrypoint: "./session.mjs" } });',
+    '// @ts-expect-error A module reference is required.',
+    'new CantelopClient({ sessionRuntime: { id: "package.v1", receive() {} } });',
     '// @ts-expect-error The client must be constructed with new.',
     'CantelopClient();',
     '// @ts-expect-error The factory options type was removed.',
@@ -110,13 +105,7 @@ try {
     'new CantelopClient({ sessionRuntime, id: "app_0123456789abcdef0123456789abcdef", profile: "production" });',
     '// @ts-expect-error App selectors require exactly one ID or slug.',
     'new CantelopClient({ sessionRuntime, id: "app_0123456789abcdef0123456789abcdef", slug: "support-agent" });',
-    'const inferred = new CantelopClient({ sessionRuntime });',
-    'const inferredReply: { answer: string } = await inferred.workspace({ slug: "customer" }).session().request({ prompt: "hello" });',
-    '// @ts-expect-error Client payload follows its typed handler contract.',
-    'inferred.workspace({ slug: "customer" }).session().dispatch({ text: "wrong" });',
-    '// @ts-expect-error Handlers cannot be paired with an unrelated message type.',
-    'new CantelopClient<{ unrelated: boolean }>({ sessionRuntime });',
-        'const workspace = app.workspace({ slug: "customer" });',
+    'const workspace = app.workspace({ slug: "customer" });',
     'const session = workspace.session({ keepAliveSeconds: 300 });',
     'const receipt = await session.dispatch({ prompt: "hello" });',
     'await receipt.status();',
@@ -157,7 +146,7 @@ try {
     'import { writeFile } from "node:fs/promises";',
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "@cantelop/sdk";',
     'assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 2);',
-    'const sessionRuntime = { id: "package.v1", receive() {} };',
+    'const sessionRuntime = { id: "package.v1", entrypoint: "./session.mjs" };',
     'let calls = 0;',
     'const app = new CantelopClient({ sessionRuntime, connection: { async fetch(request) {',
     '  calls++;',
