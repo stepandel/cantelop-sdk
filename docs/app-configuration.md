@@ -4,15 +4,18 @@ Instantiate a client bound to one existing App in your backend, then select its 
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
+import { sessionRuntime } from "./definition.js";
 
-const cantelop = new CantelopClient<Message, Event, Reply, View>();
+const cantelop = new CantelopClient({ sessionRuntime });
 const session = cantelop.workspace({ slug: "customer" }).session();
 await session.dispatch(message);
 ```
 
-The client resolves its App’s Edge origin and integration credential. To select another configured App, use `new CantelopClient({ slug: "support-agent" })` or `new CantelopClient({ id: "app_0123456789abcdef0123456789abcdef" })`. Add `profile: "production"` to select a named profile. Workspace ID/slug selectors and Session lifecycle remain unchanged.
+The client resolves its App’s Edge origin and integration credential. To select another configured App, use `new CantelopClient({ sessionRuntime, slug: "support-agent" })` or `new CantelopClient({ sessionRuntime, id: "app_0123456789abcdef0123456789abcdef" })`. Add `profile: "production"` to select a named profile. Workspace ID/slug selectors and Session lifecycle remain unchanged.
 
 This alpha implements SDK resolution. CLI credential provisioning and runtime injection still require the coordinated CLI/platform follow-ups. Existing CLI login credentials cannot authenticate this protocol. There is no separate hosting service involved: requests go to the selected App's deployed Edge Worker at `POST {app_url}/commands`.
+
+The required `sessionRuntime` is a portable definition, not executable agent code. Client types come from that definition. App identity/credentials remain automatic; see [runtime definition enforcement](runtime-definitions.md).
 
 ## Configuration sources
 
@@ -70,4 +73,4 @@ Constructing a client, Workspace or Session reference does not make a network re
 
 `AppConfigurationError` exposes a redacted `code`: `app_configuration_missing`, `app_configuration_invalid`, `app_not_configured` or `app_credentials_expired`. Configuration failures occur before command submission and are not ambiguous execution failures.
 
-Advanced integrations can still provide `new CantelopClient({ edgeUrl, accessToken })` or `new CantelopClient({ connection })`. These explicit transports cannot be combined with App identity or profile options. Origins require HTTPS, with HTTP permitted only for localhost or numeric loopback development addresses. The default backend path is `new CantelopClient()` or an App selector; transport details stay in configuration.
+Advanced integrations can still provide `new CantelopClient({ sessionRuntime, edgeUrl, accessToken })` or `new CantelopClient({ sessionRuntime, connection })`. These explicit transports cannot be combined with App identity or profile options. Origins require HTTPS, with HTTP permitted only for localhost or numeric loopback development addresses. The default backend path is `new CantelopClient({ sessionRuntime })`, optionally with an App selector; transport details stay in configuration.

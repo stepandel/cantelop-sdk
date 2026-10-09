@@ -34,3 +34,5 @@ Each managed activity starts a localhost-only headless server, connects to its e
 Workspace files persist, but conversation history is not restored after Sandbox replacement. OpenCode's live database remains in managed ephemeral home. `keepAliveSeconds: 0` can lose continuity between requests; durable conversation restore needs a separate persistence design.
 
 This unattended coding example allows tools by default while denying external-directory access, interactive questions, and doom-loop permission requests. Review the runtime's permission configuration and use trusted Workspaces. The example emits text and errors rather than tool traces or interactive approvals. The application backend owns caller authorization before exposing any client-facing route.
+
+The client and `defineSessionBehaviour(sessionRuntime, handler)` share `src/definition.ts`. Its versioned runtime ID and typed contracts bind the backend to the deployed agent. `cantelop.json` selects that definition; its `entrypoint` selects `src/session.ts`.

@@ -11,13 +11,10 @@ There are two boundaries:
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
+import { sessionRuntime } from "./definition.js";
 
-type Message = { prompt: string };
-type Event = { text: string };
-type Reply = { answer: string };
-type View = { entries: string[]; inbox: string[] };
-
-const cantelop = new CantelopClient<Message, Event, Reply, View>();
+// The imported definition declares message, event, reply and view types.
+const cantelop = new CantelopClient({ sessionRuntime });
 const workspace = cantelop.workspace({ slug: "customer" });
 const session = workspace.session({ id: "conversation" });
 const message = await session.dispatch({ prompt: "Review the change" });
@@ -31,13 +28,15 @@ for await (const event of session.stream({ after: view.cursor })) {
 await session.stop();
 ```
 
-The fourth generic is application view state. Dispatch and steer both accept the first generic and return `MessageRef` with ID, accepted timestamp and status lookup. The former separate steering generic and session-wide `abort()` are removed.
+Message, event, reply and view types are inferred from the required shared runtime definition. Its fourth generic is application view state. Dispatch and steer both accept the definition’s message type and return `MessageRef` with ID, accepted timestamp and status lookup. The former separate steering generic and session-wide `abort()` are removed.
 
 References remain lazy. Session IDs remain App-scoped; omitting one generates it immediately. ID/slug Workspace selection is unchanged. Explicit Workspace resolution is memoized per reference, concurrent database calls share its handle, and failures can be retried. Session commands carry the selected Workspace directly; their Edge handlers own provisioning or read-only lookup.
 
-The public constructor is `new CantelopClient()`, bound to one existing App. It replaces `createApp()` and the `App` facade type; constructor configuration uses `CantelopClientOptions`. It discovers App identity and matching integration credentials from injected runtime context, environment configuration or a separate CLI integration profile. `new CantelopClient({ slug })` and `{ id }` explicitly select another configured App; authentication remains scoped to the selected identity. Project `cantelop.json` supplies the default App slug when using a local profile. No control-plane login credential is read or exchanged by the SDK. See [the configuration contract](app-configuration.md).
+The public constructor is `new CantelopClient({ sessionRuntime })`, bound to one existing App. It replaces `createApp()` and the `App` facade type; constructor configuration uses `CantelopClientOptions`. It discovers App identity and matching integration credentials from injected runtime context, environment configuration or a separate CLI integration profile. `new CantelopClient({ sessionRuntime, slug })` and `{ id }` explicitly select another configured App; authentication remains scoped to the selected identity. Project `cantelop.json` supplies the default App slug when using a local profile. No control-plane login credential is read or exchanged by the SDK. See [the configuration contract](app-configuration.md).
 
 Explicit `{ connection }` and `{ edgeUrl, accessToken }` are advanced/test overrides. HTTPS is required except for numeric/localhost loopback development, and redirects are disabled. A connection receives logical Edge requests at `https://edge.cantelop.internal`; it never receives private platform requests.
+
+Both artifacts embed the definition’s runtime ID. The client sends it in `X-Cantelop-Session-Runtime` on every command, including reads and streams. Edge returns `session_runtime_mismatch` (409) before provisioning or forwarding when the ID is missing/different. The Sandbox bootstrap checks the behaviour’s definition ID before listening. See [runtime definition enforcement](runtime-definitions.md).
 
 ## Common command envelope
 
@@ -115,9 +114,9 @@ POST streaming returns SSE with existing `{ stream_id, sequence, session_id, mes
 
 ## Generated artifacts and rollout
 
-CLI build protocol 6 generates `worker.mjs` plus `cantelop-edge.json` with `buildEdgeApi({ outdir, runtimeOrigin? })`, and `session-runtime.mjs` plus `cantelop-runtime.json` with `buildSessionRuntime({ entrypoint, outdir, projectRoot? })`. Both advertise integration protocol 2; the native actor runtime protocol remains 2. The Worker requires `CANTELOP_INTEGRATION_TOKEN`; optional keep-alive requires the configured App default binding. Local bridge overrides must be numeric HTTP loopback origins.
+CLI build protocol 6 generates `worker.mjs` plus `cantelop-edge.json` with `buildEdgeApi({ definition, outdir, runtimeOrigin? })`, and `session-runtime.mjs` plus `cantelop-runtime.json` with `buildSessionRuntime({ definition, outdir, projectRoot? })`. Both advertise integration protocol 2; the native actor runtime protocol remains 2. The Worker requires `CANTELOP_INTEGRATION_TOKEN`; optional keep-alive requires the configured App default binding. Local bridge overrides must be numeric HTTP loopback origins.
 
-Project schema 3 has no customer API entrypoint. The CLI must build/upload both artifacts, retain dispatcher/outbound routing and Worker environment/secrets synchronization, and update init, doctor, dev, watch, dry-run and deploy. Existing CLIs must reject this prerelease before upload; published 0.x SDKs remain the legacy deployment path. Schema discovery/watch starts at the project or Session entrypoint and adding an absent schema file requires a watcher restart.
+Project schema 3 selects the portable definition module in `session`. The definition supplies the behaviour entrypoint. It has no customer API entrypoint. The CLI must build/upload both artifacts, retain dispatcher/outbound routing and Worker environment/secrets synchronization, and update init, doctor, dev, watch, dry-run and deploy. Existing CLIs must reject this prerelease before upload; the SDK is unpublished and its definition/build contract is updated directly. Schema discovery/watch starts at the project or Session entrypoint and adding an absent schema file requires a watcher restart.
 
 The platform must implement private integration-v2 admission/read/cancellation routes, credentials/defaults, actor capability negotiation and durable view storage before production rollout. Existing Node/Bun runtime behavior is preserved in this foundation rather than advertising unsupported new capabilities.
 

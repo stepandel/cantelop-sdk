@@ -1,6 +1,6 @@
 # Agent chat in a web app
 
-A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate `CantelopClient` into an existing app. This example calls the agent App defined by [the OpenAI runtime example](../openai/README.md). It does not deploy a second agent or define Cantelop Edge routes.
+A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate `CantelopClient` into an existing app. This project owns its [runtime definition](src/definition.ts), [OpenAI Session behaviour](src/session.ts), shared contracts, and `cantelop.json`. The backend and Sandbox use the same definition; no customer Edge routes are authored.
 
 ```text
 Browser → POST /api/chat → CantelopClient → App Edge /commands → agent runtime
@@ -10,7 +10,9 @@ Browser ← streamed chat text ← session.stream()
 The integration is in [src/server.ts](src/server.ts):
 
 ```ts
-const cantelop = new CantelopClient<ChatMessage, ChatEvent>();
+import { chatRuntime } from "./definition.js";
+
+const cantelop = new CantelopClient({ sessionRuntime: chatRuntime });
 const workspace = cantelop.workspace({ slug: "web-chat-demo" });
 const session = workspace.session({ id: conversationId, keepAliveSeconds: 300 });
 const message = await session.dispatch(
@@ -29,7 +31,7 @@ for await (const event of session.stream({ signal })) {
 This SDK alpha requires the coordinated CLI/platform rollout: schema 3, build protocol 6, App integration credentials, integration-v2 commands and retained event replay. Current production CLI/platform deployments cannot run this protocol yet. The web server and UI run locally now; live agent responses require a compatible App Edge deployment. The automated tests qualify the HTTP → real SDK → controlled Edge response flow, rather than a live deployment.
 
 1. From the SDK root, run `pnpm install` and `pnpm build`.
-2. Deploy/configure the OpenAI example App with a compatible CLI/platform and supply `OPENAI_API_KEY` in its runtime environment.
+2. Deploy/configure this web-chat App with a compatible CLI/platform and supply `OPENAI_API_KEY` in its runtime environment.
 3. Configure this backend with that App's integration profile or App-scoped environment configuration. See [App configuration](../../docs/app-configuration.md). For environment configuration, supply `CANTELOP_APP_SLUG` and `CANTELOP_INTEGRATION_TOKEN`; use `CANTELOP_EDGE_URL` for a local Edge origin override. These are backend configuration, never browser variables.
 4. Run `pnpm --filter @cantelop/example-web-chat dev`.
 5. Open `http://127.0.0.1:3000` and send a message. `PORT` changes the web server port; `CHAT_WORKSPACE_SLUG` changes its server-owned Workspace (default `web-chat-demo`).
@@ -38,7 +40,7 @@ No `.env` loader is installed; export configuration in the process environment o
 
 ## How it works
 
-The backend constructs one client and chooses one Workspace. The browser generates an App-scoped Session ID and retains it in `sessionStorage`, so subsequent turns use the same warm agent conversation. New chat generates a fresh Session ID. The browser transcript is local UI state; it is not a durable history/view implementation and is not restored on reload. The OpenAI runtime's MemorySession survives only its warm runtime incarnation.
+The backend constructs one client and chooses one Workspace. The browser generates an App-scoped Session ID and retains it in `sessionStorage`, so subsequent turns use the same warm agent conversation. New chat generates a fresh Session ID. The browser transcript is local UI state; it is not a durable history/view implementation and is not restored on reload. This runtime’s MemorySession survives only its warm runtime incarnation.
 
 Each POST includes a fresh message ID. The server passes it to dispatch, then returns newline-delimited JSON for admission, text deltas, the final answer or an error. It filters output by the admitted message ID, so replayed output from earlier turns is excluded. The Edge stream must replay retained events from the start when no cursor is supplied, including output emitted between admission and subscription. Cursor expiry/reset and stream failures surface as errors; the example never silently reconnects or submits the prompt again.
 
