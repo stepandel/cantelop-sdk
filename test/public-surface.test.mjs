@@ -5,7 +5,8 @@ import * as sdk from "../dist/index.js";
 import * as build from "../dist/build.js";
 
 test("the 1.0 public surface and compiled package remove Edge API authoring", async () => {
-  assert.equal(typeof sdk.createApp, "function");
+  assert.equal(typeof sdk.CantelopClient, "function");
+  assert.equal("createApp" in sdk, false);
   assert.equal("defineApi" in sdk, false);
   assert.equal("buildApi" in build, false);
   assert.equal("buildLocalApi" in build, false);

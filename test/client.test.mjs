@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createApp, RemoteAppError } from '../dist/index.js';
+import { CantelopClient, RemoteAppError } from '../dist/index.js';
 const workspaceId = 'wsp_' + '1'.repeat(32);
 const workspace = { id: workspaceId, app_id: 'app_' + '2'.repeat(32), slug: 'customer', hostname: 'customer--agent.app.cantelop.dev', created_at: '2026-10-09T00:00:00Z', updated_at: '2026-10-09T00:00:00Z' };
 const accepted = body => Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
@@ -14,7 +14,7 @@ test('references remain lazy, immutable and capture selectors/options; submissio
     const body = await request.json(); calls.push(body); return accepted(body);
   } };
   const selector = { slug: 'customer' }, options = { id: 'chat', keepAliveSeconds: 300 };
-  const ref = createApp({ connection }).workspace(selector);
+  const ref = new CantelopClient({ connection }).workspace(selector);
   const session = ref.session(options);
   selector.slug = 'changed'; options.id = 'changed'; options.keepAliveSeconds = 1;
   assert.equal(calls.length, 0);
@@ -30,7 +30,7 @@ test('references remain lazy, immutable and capture selectors/options; submissio
 
 test('omitted keep-alive reaches Edge without a fabricated default and session IDs are independent', async () => {
   const calls = [];
-  const ref = createApp({ connection: { async fetch(request) { const body = await request.json(); calls.push(body); return accepted(body); } } }).workspace({ id: workspaceId });
+  const ref = new CantelopClient({ connection: { async fetch(request) { const body = await request.json(); calls.push(body); return accepted(body); } } }).workspace({ id: workspaceId });
   const first = ref.session(), second = ref.session();
   assert.notEqual(first.id, second.id);
   assert.equal(first.keepAliveSeconds, undefined);
@@ -40,7 +40,7 @@ test('omitted keep-alive reaches Edge without a fabricated default and session I
 
 test('Workspace resolution shares concurrent requests, retries failures and rejects mismatches', async () => {
   let calls = 0;
-  const ref = createApp({ connection: { async fetch(request) {
+  const ref = new CantelopClient({ connection: { async fetch(request) {
     assert.equal((await request.json()).command.type, 'workspace.resolve');
     if (++calls === 1) return Response.json({ error: { code: 'unavailable' } }, { status: 503 });
     return Response.json(workspace);
@@ -48,13 +48,13 @@ test('Workspace resolution shares concurrent requests, retries failures and reje
   await assert.rejects(ref.resolve(), error => error.code === 'unavailable');
   const [a, b] = await Promise.all([ref.resolve(), ref.resolve()]);
   assert.equal(a, b); assert.equal(calls, 2);
-  const wrong = createApp({ connection: { fetch: async () => Response.json({ ...workspace, slug: 'wrong' }) } }).workspace({ slug: 'customer' });
+  const wrong = new CantelopClient({ connection: { fetch: async () => Response.json({ ...workspace, slug: 'wrong' }) } }).workspace({ slug: 'customer' });
   await assert.rejects(wrong.resolve(), /different Workspace/);
 });
 
 test('request retry identity and stop/reactivation use commands without provisioning', async () => {
   const calls = [], id = 'msg_' + '3'.repeat(32);
-  const session = createApp({ connection: { async fetch(request) {
+  const session = new CantelopClient({ connection: { async fetch(request) {
     const body = await request.json(); calls.push(body);
     if (body.command.type === 'stop') return Response.json({ protocolVersion: 2, id: body.id });
     if (body.command.type === 'request') return Response.json({ protocolVersion: 2, id: body.id, reply: { answer: 'done' } });
@@ -68,7 +68,7 @@ test('request retry identity and stop/reactivation use commands without provisio
 
 test('selectors, identities, keep-alive and malformed messages fail before networking', async () => {
   let calls = 0;
-  const app = createApp({ connection: { fetch() { calls++; throw new Error('unexpected'); } } });
+  const app = new CantelopClient({ connection: { fetch() { calls++; throw new Error('unexpected'); } } });
   for (const value of [null, {}, { id: workspaceId, slug: 'customer' }, { id: 'bad' }, { slug: 'UPPER' }]) assert.throws(() => app.workspace(value), TypeError);
   const ref = app.workspace({ slug: 'customer' });
   for (const keepAliveSeconds of [-1, NaN, 604801]) assert.throws(() => ref.session({ keepAliveSeconds }), TypeError);
@@ -86,10 +86,10 @@ test('selectors, identities, keep-alive and malformed messages fail before netwo
 test('dispatch and steer expose stable retry identities for ambiguous admission and validate receipts', async () => {
   for (const type of ['dispatch', 'steer']) {
     let calls = 0;
-    const ref = createApp({ connection: { fetch() { calls++; throw new TypeError('fetch failed'); } } }).workspace({ slug: 'customer' }).session();
+    const ref = new CantelopClient({ connection: { fetch() { calls++; throw new TypeError('fetch failed'); } } }).workspace({ slug: 'customer' }).session();
     await assert.rejects(ref[type]('hello'), error => error instanceof RemoteAppError && error.code === 'command_outcome_unknown' && /^msg_[0-9a-f]{32}$/.test(error.messageId));
     assert.equal(calls, 1);
-    const invalid = createApp({ connection: { fetch: async () => Response.json({ protocolVersion: 2, id: 'wrong', status: 'accepted' }) } }).workspace({ id: workspaceId }).session();
+    const invalid = new CantelopClient({ connection: { fetch: async () => Response.json({ protocolVersion: 2, id: 'wrong', status: 'accepted' }) } }).workspace({ id: workspaceId }).session();
     await assert.rejects(invalid[type]('hello'), error => error.code === 'invalid_message_response' && !!error.messageId);
   }
 });

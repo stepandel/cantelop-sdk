@@ -1,5 +1,5 @@
-import { AppConfigurationError, resolveAppConfiguration, assertAppOptions, captureConfigurationContext } from "./app-config.js";
-import type { AppConnection, CreateAppOptions } from "./integration.js";
+import { AppConfigurationError, resolveAppConfiguration, assertClientOptions, captureConfigurationContext } from "./app-config.js";
+import type { AppConnection, CantelopClientOptions } from "./integration.js";
 
 export const EDGE_ORIGIN = "https://edge.cantelop.internal";
 
@@ -36,8 +36,8 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
 }
 
 /** Capture configuration at construction; resolve files lazily on first operation. */
-export function resolveEdgeConnection(options: CreateAppOptions): AppConnection {
-  assertAppOptions(options);
+export function resolveEdgeConnection(options: CantelopClientOptions): AppConnection {
+  assertClientOptions(options);
   if (options.connection !== undefined) return options.connection;
   if (options.edgeUrl !== undefined) return createEdgeConnection(options);
   const context = captureConfigurationContext();

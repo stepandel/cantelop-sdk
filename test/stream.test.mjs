@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createApp, RemoteAppError } from "../dist/index.js";
+import { CantelopClient, RemoteAppError } from "../dist/index.js";
 
 const streamId = "0123456789abcdef0123456789abcdef";
 const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
@@ -13,7 +13,7 @@ function frame(value = document(), newline = "\n") {
   return `id: ${value.stream_id}:${value.sequence}${newline}data: ${JSON.stringify(value)}${newline}${newline}`;
 }
 function makeSession(fetch) {
-  return createApp({ connection: { fetch } }).workspace({ id: workspaceId }).session({ id: "primary", keepAliveSeconds: 0 });
+  return new CantelopClient({ connection: { fetch } }).workspace({ id: workspaceId }).session({ id: "primary", keepAliveSeconds: 0 });
 }
 function response(chunks, onCancel = () => {}) {
   return new Response(new ReadableStream({

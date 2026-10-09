@@ -1,4 +1,4 @@
-import type { AppSelector, CreateAppOptions } from "./integration.js";
+import type { AppSelector, CantelopClientOptions } from "./integration.js";
 
 /** Reserved CLI/runtime injection point. Never includes control-plane login credentials. */
 export const APP_CONFIGURATION_CONTEXT_KEY = "dev.cantelop.sdk.app-config.v1";
@@ -49,7 +49,7 @@ function selector(value: unknown): AppSelector {
   if (typeof value.slug === "string" && APP_SLUG.test(value.slug)) return { slug: value.slug };
   return invalid();
 }
-export function assertAppOptions(value: CreateAppOptions): void {
+export function assertClientOptions(value: CantelopClientOptions): void {
   if (!record(value)) throw new TypeError("Invalid App options");
   const allowed = ["connection", "edgeUrl", "accessToken", "id", "slug", "profile"];
   if (Object.keys(value).some(key => !allowed.includes(key))) throw new TypeError("Invalid App options");

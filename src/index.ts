@@ -4,9 +4,9 @@ export type {
   SessionIdentity, SessionRequestOptions, Workspace, UnknownMessageStatus,
 } from "./resources.js";
 export { RemoteAppError } from "./remote-app.js";
-export { createApp } from "./client.js";
+export { CantelopClient } from "./client.js";
 export type {
-  App, AppConnection, AppSelector, CreateAppOptions, IntegrationSessionOptions,
+  AppConnection, AppSelector, CantelopClientOptions, IntegrationSessionOptions,
   SessionRef, WorkspaceRef, WorkspaceSelector,
   SessionEvent, SessionEventCursor, SessionStreamOptions,
   SessionCommandOptions, SessionSubmissionOptions, MessageCancellation, SessionView,

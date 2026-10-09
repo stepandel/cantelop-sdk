@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createApp } from "../dist/index.js";
+import { CantelopClient } from "../dist/index.js";
 
 const workspaceId = "wsp_0123456789abcdef0123456789abcdef";
 const workspace = {
@@ -11,7 +11,7 @@ test("Workspace database uses the canonical credential route and recreates a clo
   for (const selector of [{ slug: "customer" }, { id: workspaceId }]) {
     let resolutions = 0;
     let credentials = 0;
-    const ref = createApp({ connection: { async fetch(request) {
+    const ref = new CantelopClient({ connection: { async fetch(request) {
       const envelope = await request.clone().json();
       if (envelope.command.type === "workspace.database") {
         credentials++;

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createProtocolWorker } from '../dist/protocol-edge.js';
-import { createApp } from '../dist/index.js';
+import { CantelopClient } from '../dist/index.js';
 import { buildEdgeApi } from '../dist/build.js';
 const bindings = { CANTELOP_INTEGRATION_TOKEN: 'test-app-token', CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS: '120' };
 const workspaceId = 'wsp_' + '1'.repeat(32), messageId = 'msg_' + '2'.repeat(32);
@@ -92,7 +92,7 @@ test('SDK receipts traverse Edge and private admission/status handlers with no d
     return Response.json({ id: new URL(req.url).pathname.split('/').at(-1), state: 'unknown' });
   } });
   const publicCalls = [];
-  const app = createApp({ connection: { fetch(req) {
+  const app = new CantelopClient({ connection: { fetch(req) {
     publicCalls.push(req.url);
     const headers = new Headers(req.headers); headers.set('Authorization', 'Bearer test-app-token');
     return worker.fetch(new Request(req, { headers }), bindings);
@@ -141,10 +141,10 @@ test('normal backend transport addresses only the App Edge command endpoint and 
   const original = globalThis.fetch; const calls = [];
   globalThis.fetch = async req => { calls.push(req); const body = await req.json(); return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }); };
   try {
-    const session = createApp({ edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
+    const session = new CantelopClient({ edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
     await session.dispatch('hello');
     assert.equal(calls[0].url, 'https://agent.example/commands');
     assert.equal(calls[0].headers.get('Authorization'), 'Bearer app-token'); assert.equal(calls[0].redirect, 'manual');
-    for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => createApp({ edgeUrl, accessToken: 'token' }), /App Edge URL/);
+    for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => new CantelopClient({ edgeUrl, accessToken: 'token' }), /App Edge URL/);
   } finally { globalThis.fetch = original; }
 });

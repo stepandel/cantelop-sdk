@@ -5,7 +5,7 @@ import { build } from "esbuild";
 test("backend integration bundles without build tooling or native Session runtime", async () => {
   const result = await build({
     stdin: {
-      contents: 'import { createApp } from "@cantelop/sdk"; export const app = createApp({ connection: { fetch: request => fetch(request) } });',
+      contents: 'import { CantelopClient } from "@cantelop/sdk"; export const app = new CantelopClient({ connection: { fetch: request => fetch(request) } });',
       resolveDir: process.cwd(), loader: "js",
     },
     bundle: true, platform: "node", format: "esm", write: false, metafile: true,
@@ -18,7 +18,7 @@ test("backend integration bundles without build tooling or native Session runtim
 
 test("automatic App configuration bundles for worker hosts without Node profile dependencies", async () => {
   const result = await build({
-    stdin: { contents: 'import { createApp } from "@cantelop/sdk"; export const app = createApp();', resolveDir: process.cwd(), loader: "js" },
+    stdin: { contents: 'import { CantelopClient } from "@cantelop/sdk"; export const app = new CantelopClient();', resolveDir: process.cwd(), loader: "js" },
     bundle: true, platform: "browser", format: "esm", write: false, metafile: true,
   });
   assert.equal(Object.keys(result.metafile.inputs).some(input => /app-config-node\.js$/.test(input)), false);
