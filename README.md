@@ -5,6 +5,12 @@ Workspaces. This TypeScript SDK lets you define an agent's HTTP API and Session
 runtime, send messages to the agent, and stream its responses. You control the
 agent logic; Cantelop manages routing and Sandbox lifecycle.
 
+An additive [SDK 1.0 integration foundation](docs/integration-foundation.md)
+introduces `createApp({ connection }).workspace({ id | slug }).session(...)`
+and typed event streaming. The new control/inspection routes and authenticated
+connection setup require coordinated platform and CLI follow-ups. Existing
+Edge API projects remain supported during this transition.
+
 ## Prerequisites
 
 ### To use the SDK

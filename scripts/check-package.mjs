@@ -23,6 +23,9 @@ try {
   const paths = pack.files.map(({ path: file }) => file);
   assert.ok(paths.includes("dist/build.js"));
   assert.ok(paths.includes("dist/api.d.ts"));
+  assert.ok(paths.includes("dist/client.js"));
+  assert.ok(paths.includes("dist/integration.d.ts"));
+  assert.ok(paths.includes("dist/stream.js"));
   assert.ok(paths.includes("dist/runtime.js"));
   assert.ok(paths.includes("dist/session.js"));
   assert.ok(paths.includes("README.md"));
@@ -77,6 +80,58 @@ try {
     ].join("\n"),
   );
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
+  await writeFile(path.join(consumer, "integration.ts"), [
+    'import { createApp, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type SessionEventCursor } from "@cantelop/sdk";',
+    'const connection: AppConnection = { fetch: async () => new Response(null) };',
+    'const app = createApp<{ prompt: string }, { text: string }, { answer: string }, { prompt: string }>({ connection });',
+    'const workspace = app.workspace({ slug: "customer" });',
+    'const session = workspace.session({ keepAliveSeconds: 300 });',
+    'const receipt = await session.dispatch({ prompt: "hello" });',
+    'await receipt.status();',
+    'const reply: { answer: string } = await session.request({ prompt: "hello" });',
+    'await session.steer({ prompt: "focus" });',
+    'await session.abort();',
+    'const view = await session.view();',
+    'const observedAt: Date = view.observedAt;',
+    'for await (const event of session.stream()) {',
+    '  const cursor: SessionEventCursor = event.cursor;',
+    '  const text: string = event.data.text;',
+    '  // @ts-expect-error Event payload must retain its declared type.',
+    '  const bad: number = event.data.text;',
+    '}',
+    '// @ts-expect-error Selectors require exactly one ID or slug.',
+    'app.workspace({ id: "wsp_0123456789abcdef0123456789abcdef", slug: "customer" });',
+    '// @ts-expect-error Keep-alive configuration remains explicit.',
+    'workspace.session({});',
+    '// @ts-expect-error Steering has its own input type.',
+    'session.steer({ text: "wrong" });',
+    '// @ts-expect-error Dispatch has its own input type.',
+    'session.dispatch({ text: "wrong" });',
+    'void [reply, observedAt, CANTELOP_INTEGRATION_PROTOCOL_VERSION];',
+  ].join("\n"));
+  await runCommand(process.execPath, [
+    path.join(root, "node_modules/typescript/bin/tsc"), "--noEmit", "--strict",
+    "--module", "NodeNext", "--moduleResolution", "NodeNext", "--target", "ES2022",
+    "--lib", "ES2022,DOM", "--skipLibCheck", "integration.ts",
+  ], { cwd: consumer, maxBuffer: 1024 * 1024 });
+  await writeFile(path.join(consumer, "integration.mjs"), [
+    'import assert from "node:assert/strict";',
+    'import { createApp, CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "@cantelop/sdk";',
+    'assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 1);',
+    'let calls = 0;',
+    'const app = createApp({ connection: { async fetch(request) {',
+    '  calls++;',
+    '  const body = await request.json();',
+    '  assert.equal(body.session.workspace_id, "wsp_0123456789abcdef0123456789abcdef");',
+    '  return Response.json({ id: body.message.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });',
+    '} } });',
+    'const session = app.workspace({ id: "wsp_0123456789abcdef0123456789abcdef" }).session({ keepAliveSeconds: 0 });',
+    'assert.equal(calls, 0);',
+    'assert.equal((await session.dispatch({ prompt: "hello" })).state, "accepted");',
+    'assert.equal(calls, 1);',
+    'for (const method of ["dispatch", "request", "stream", "view", "steer", "abort", "stop"]) assert.equal(typeof session[method], "function");',
+  ].join("\n"));
+  await runCommand(process.execPath, ["integration.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   const artifactManifest = JSON.parse(await readFile(path.join(consumer, "artifact", "cantelop-api.json"), "utf8"));
   assert.equal(artifactManifest.kind, "cantelop-edge-api");
   assert.equal(artifactManifest.schema_version, 3);
