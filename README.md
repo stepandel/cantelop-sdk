@@ -13,12 +13,10 @@ type Message = { type: "prompt"; prompt: string };
 type Event = { type: "delta"; text: string } | { type: "done" };
 type Reply = { answer: string };
 
-export function createAgent(edgeUrl: string, accessToken: string) {
-  const app = createApp<Message, Event, Reply>({ edgeUrl, accessToken });
-  const workspace = app.workspace({ slug: "customer-123" });
-  // Or: app.workspace({ id: canonicalWorkspaceId });
-  return workspace.session({ id: "conversation-456", keepAliveSeconds: 300 });
-}
+const app = createApp<Message, Event, Reply>({ edgeUrl, accessToken });
+const workspace = app.workspace({ slug: "customer-123" });
+// Or: app.workspace({ id: canonicalWorkspaceId });
+const session = workspace.session({ id: "conversation-456" });
 ```
 
 The backend connects to the App's Edge URL using an App-scoped integration token. Credential issuance and endpoint discovery are platform follow-ups. An explicit `AppConnection` remains available for local adapters and tests; it receives logical Edge protocol requests, never private platform requests.

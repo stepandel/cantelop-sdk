@@ -1,9 +1,13 @@
 # Anthropic agent integration
 
-`src/session.ts` defines the provider integration in the native Session runtime. `src/client.ts` exports `agentSession()` for calls from an existing application backend. There is no customer Edge API, router, or HTTP request contract.
+`src/session.ts` defines the provider integration in the native Session runtime. `src/client.ts` exports `createAgentApp()` as the root for calls from an existing application backend. There is no customer Edge API, router, or HTTP request contract.
 
 ```ts
-const session = agentSession(connection, { slug: "customer-123" }, {
+import { createAgentApp } from "./src/client.js";
+
+const app = createAgentApp({ edgeUrl, accessToken });
+const workspace = app.workspace({ slug: "customer-123" });
+const session = workspace.session({
   id: "conversation-456",
   keepAliveSeconds: 300,
 });
@@ -13,7 +17,7 @@ for await (const event of session.stream()) {
 }
 ```
 
-Use an App-bound connection supplied by a compatible platform/local CLI adapter. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared in `cantelop.json`; keep provider credentials in the runtime environment.
+Configure the App once with its deployed Cantelop URL and integration token. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared in `cantelop.json`; keep provider credentials in the runtime environment.
 
 The runtime still handles its application-defined `prompt`, `steer`, and `cancel` messages. Until named runtime capabilities are implemented, send those custom commands through `dispatch()`. Protocol-level `session.steer(message)` submits the same payload with actor priority; `session.cancel(messageId)` targets one submission. Both require the coordinated platform/runtime follow-up; these examples do not advertise those capabilities yet.
 

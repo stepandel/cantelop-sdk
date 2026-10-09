@@ -1,13 +1,7 @@
-import { createApp, type AppConnection, type IntegrationSessionOptions, type WorkspaceSelector } from "@cantelop/sdk";
+import { createApp, type CreateAppOptions } from "@cantelop/sdk";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
 
-/** Call from the application's backend with its App-bound connection. */
-export function agentSession(
-  connection: AppConnection,
-  workspace: WorkspaceSelector,
-  options: IntegrationSessionOptions,
-) {
-  return createApp<SessionMessage, SessionEvent>({ connection })
-    .workspace(workspace)
-    .session(options);
+/** Configure once in the backend, then select Workspaces and Sessions from this App. */
+export function createAgentApp(options: CreateAppOptions) {
+  return createApp<SessionMessage, SessionEvent>(options);
 }
