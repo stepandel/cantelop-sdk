@@ -1,7 +1,7 @@
 {
   "name": "@cantelop/sdk",
-  "version": "0.17.0",
-  "description": "Provider-neutral API and Session runtime SDK for Cantelop applications",
+  "version": "1.0.0-alpha.0",
+  "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -23,14 +23,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./api": {
-      "types": "./dist/api.d.ts",
-      "import": "./dist/api.js"
-    },
-    "./edge": {
-      "types": "./dist/edge.d.ts",
-      "import": "./dist/edge.js"
     },
     "./build": {
       "types": "./dist/build.d.ts",

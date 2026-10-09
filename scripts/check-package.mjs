@@ -22,7 +22,10 @@ try {
   assert.ok(pack.size > 0);
   const paths = pack.files.map(({ path: file }) => file);
   assert.ok(paths.includes("dist/build.js"));
-  assert.ok(paths.includes("dist/api.d.ts"));
+  for (const removed of ["api", "edge", "router"]) {
+    assert.equal(paths.some(file => file.startsWith(`dist/${removed}.`)), false);
+    assert.equal(`./${removed}` in manifest.exports, false);
+  }
   assert.ok(paths.includes("dist/client.js"));
   assert.ok(paths.includes("dist/integration.d.ts"));
   assert.ok(paths.includes("dist/stream.js"));
@@ -47,38 +50,27 @@ try {
     ["install", "--ignore-scripts", "--no-audit", "--no-fund", path.join(temporary, pack.filename)],
     { cwd: consumer, maxBuffer: 1024 * 1024 },
   );
-  await writeFile(
-    path.join(consumer, "api.mjs"),
-    [
-      'import { defineApi } from "@cantelop/sdk/api";',
-      "export default defineApi(({ router }) => {",
-      '  router.route("GET", "/health", () => Response.json({ status: "ok" }));',
-      "});",
-    ].join("\n"),
-  );
-  await writeFile(
-    path.join(consumer, "qualify.mjs"),
-    [
-      'import assert from "node:assert/strict";',
-      'import { CANTELOP_CLI_BUILD_PROTOCOL_VERSION, buildApi, buildSessionRuntime, buildLocalApi, watchLocalProject } from "@cantelop/sdk/build";',
-      'import { defineApi } from "@cantelop/sdk/api";',
-      'import { createApiWorker } from "@cantelop/sdk/edge";',
-      'import { serveSessionRuntime } from "@cantelop/sdk/runtime";',
-      'import * as runtime from "@cantelop/sdk/runtime";',
-      'import { defineSessionBehaviour } from "@cantelop/sdk/session";',
-      "assert.equal(typeof buildApi, \"function\");",
-      "assert.equal(typeof buildSessionRuntime, \"function\");",
-      "assert.equal(typeof buildLocalApi, \"function\");",
-      "assert.equal(typeof watchLocalProject, \"function\");",
-      "assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 5);",
-      "assert.equal(typeof defineApi, \"function\");",
-      "assert.equal(typeof createApiWorker, \"function\");",
-      "assert.equal(typeof defineSessionBehaviour, \"function\");",
-      "assert.equal(typeof serveSessionRuntime, \"function\");",
-      'assert.deepEqual(Object.keys(runtime).sort(), ["createSessionDatabase", "createSessionRuntimeHandler", "serveSessionRuntime"]);',
-      'await buildApi({ entrypoint: "./api.mjs", outdir: "./artifact" });',
-    ].join("\n"),
-  );
+  await writeFile(path.join(consumer, "session.mjs"), [
+    'import { defineSessionBehaviour } from "@cantelop/sdk/session";',
+    'export default defineSessionBehaviour(async () => {});',
+  ].join("\n"));
+  await writeFile(path.join(consumer, "qualify.mjs"), [
+    'import assert from "node:assert/strict";',
+    'import * as sdk from "@cantelop/sdk";',
+    'import * as build from "@cantelop/sdk/build";',
+    'import { defineSessionBehaviour } from "@cantelop/sdk/session";',
+    'import * as runtime from "@cantelop/sdk/runtime";',
+    'assert.equal(build.CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 6);',
+    'assert.equal(typeof build.watchLocalProject, "function");',
+    'assert.equal("buildApi" in build, false);',
+    'assert.equal("buildLocalApi" in build, false);',
+    'assert.equal("defineApi" in sdk, false);',
+    'assert.equal(typeof sdk.createApp, "function");',
+    'assert.equal(typeof defineSessionBehaviour, "function");',
+    'assert.deepEqual(Object.keys(runtime).sort(), ["createSessionDatabase", "createSessionRuntimeHandler", "serveSessionRuntime"]);',
+    'for (const name of ["api", "edge"]) await assert.rejects(import(`@cantelop/sdk/${name}`), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });',
+    'await build.buildSessionRuntime({ entrypoint: "./session.mjs", outdir: "./artifact" });',
+  ].join("\n"));
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   await writeFile(path.join(consumer, "integration.ts"), [
     'import { createApp, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type SessionEventCursor } from "@cantelop/sdk";',
@@ -132,10 +124,11 @@ try {
     'for (const method of ["dispatch", "request", "stream", "view", "steer", "abort", "stop"]) assert.equal(typeof session[method], "function");',
   ].join("\n"));
   await runCommand(process.execPath, ["integration.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
-  const artifactManifest = JSON.parse(await readFile(path.join(consumer, "artifact", "cantelop-api.json"), "utf8"));
-  assert.equal(artifactManifest.kind, "cantelop-edge-api");
-  assert.equal(artifactManifest.schema_version, 3);
-  assert.ok(Array.isArray(artifactManifest.routes));
+  const artifactManifest = JSON.parse(await readFile(path.join(consumer, "artifact", "cantelop-runtime.json"), "utf8"));
+  assert.equal(artifactManifest.kind, "cantelop-session-runtime");
+  assert.equal(artifactManifest.schema_version, 1);
+  assert.equal("routes" in artifactManifest, false);
+  assert.equal(artifactManifest.cli_build_protocol_version, 6);
   process.stdout.write(`Qualified ${pack.filename} (${paths.length} files)\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });

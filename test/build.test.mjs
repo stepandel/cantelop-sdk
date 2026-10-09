@@ -1,169 +1,19 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
-  buildApi,
   buildSessionRuntime,
-  buildLocalApi,
   watchLocalProject,
 } from "../dist/build.js";
 
-test("the build module declares its CLI compatibility protocol", () => {
-  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 5);
-  assert.equal(typeof buildLocalApi, "function");
+test("the runtime-only build module declares an incompatible CLI protocol", () => {
+  assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 6);
   assert.equal(typeof watchLocalProject, "function");
-});
-
-test("buildApi emits a self-contained standard Worker and manifest", async (t) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-build-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const entrypoint = path.join(directory, "api.ts");
-  const outdir = path.join(directory, "artifact");
-  const sdkApi = new URL("../dist/api.js", import.meta.url).pathname;
-  await writeFile(
-    entrypoint,
-    [
-      `import { defineApi } from ${JSON.stringify(sdkApi)};`,
-      "export default defineApi(({ router }) => {",
-      '  console.log("registering routes");',
-      '  router.route("POST", "/chat", () => new Response(null, { status: 202 }));',
-      '  router.route("GET", "/health", () => Response.json({ status: "ok" }));',
-      '  router.route("GET", "/chat/", () => new Response(null));',
-      "});",
-    ].join("\n"),
-  );
-
-  const artifact = await buildApi({ entrypoint, outdir });
-  assert.equal(artifact.mainModule, path.join(outdir, "worker.mjs"));
-  assert.equal(artifact.routeDiscoveryError, undefined);
-  assert.deepEqual(artifact.manifest, {
-    schema_version: 3,
-    kind: "cantelop-edge-api",
-    main_module: "worker.mjs",
-    routes: [
-      { method: "GET", path: "/chat" },
-      { method: "POST", path: "/chat" },
-      { method: "GET", path: "/health" },
-    ],
-  });
-  assert.deepEqual(
-    JSON.parse(await readFile(artifact.manifestFile, "utf8")),
-    artifact.manifest,
-  );
-
-  const workerSource = await readFile(artifact.mainModule, "utf8");
-  assert.match(workerSource, /runtime\.cantelop\.internal/);
-  assert.match(workerSource, /fetch\(request\)/);
-  assert.doesNotMatch(workerSource, /@cantelop\/sdk/);
-  assert.doesNotMatch(workerSource, /node:/);
-});
-
-test("buildApi keeps an artifact deployable when its routes cannot be discovered", async (t) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-build-routes-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const sdkApi = new URL("../dist/api.js", import.meta.url).pathname;
-  const cases = {
-    "requires-env": [
-      "export default defineApi(({ env, router }) => {",
-      '  if (!env.API_KEY) throw new Error("API_KEY is required");',
-      '  router.route("GET", "/health", () => new Response(null));',
-      "});",
-    ],
-    "uses-app": [
-      "export default defineApi(({ app, router }) => {",
-      '  app.sessions.open({ id: "eager", workspaceId: "wsp_0123456789abcdef0123456789abcdef" });',
-      '  router.route("GET", "/health", () => new Response(null));',
-      "});",
-    ],
-    "unlistable-path": [
-      "export default defineApi(({ router }) => {",
-      '  router.route("GET", "/with space", () => new Response(null));',
-      "});",
-    ],
-  };
-  const expected = {
-    "requires-env": /API_KEY is required/,
-    "uses-app": /not available during route discovery/,
-    "unlistable-path": /cannot be listed/,
-  };
-  for (const [name, lines] of Object.entries(cases)) {
-    const entrypoint = path.join(directory, `${name}.ts`);
-    const outdir = path.join(directory, `${name}-artifact`);
-    await writeFile(entrypoint, [`import { defineApi } from ${JSON.stringify(sdkApi)};`, ...lines].join("\n"));
-
-    const artifact = await buildApi({ entrypoint, outdir });
-    assert.equal(artifact.manifest.routes, null, name);
-    assert.match(artifact.routeDiscoveryError, expected[name], name);
-    assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
-    assert.ok((await readFile(artifact.mainModule, "utf8")).length > 0);
-  }
-});
-
-test("buildLocalApi redirects only Cantelop runtime calls to a loopback bridge", async (t) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-local-build-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const entrypoint = path.join(directory, "api.ts");
-  const outdir = path.join(directory, "artifact");
-  const sdkApi = new URL("../dist/api.js", import.meta.url).pathname;
-  await writeFile(
-    entrypoint,
-    [
-      `import { defineApi } from ${JSON.stringify(sdkApi)};`,
-      "export default defineApi(({ app, router }) => {",
-      '  router.route("POST", "/dispatch", async () => {',
-      '    const session = app.sessions.open({ id: "local:thread", workspaceId: "wsp_0123456789abcdef0123456789abcdef", keepAliveSeconds: 30 });',
-      '    return Response.json({ sessionId: session.id, message: await session.dispatch({ prompt: "hello" }) }, { status: 202 });',
-      "  });",
-      "});",
-    ].join("\n"),
-  );
-
-  const artifact = await buildLocalApi({
-    entrypoint,
-    outdir,
-    runtimeOrigin: "http://127.0.0.1:43123",
-  });
-  const originalFetch = globalThis.fetch;
-  let forwarded;
-  globalThis.fetch = async (request) => {
-    forwarded = request;
-    const body = await request.clone().json();
-    return Response.json({ id: body.message.id, status: "accepted", accepted_at: "2026-08-17T12:00:00Z" }, { status: 202 });
-  };
-  t.after(() => { globalThis.fetch = originalFetch; });
-
-  const worker = (await import(`${new URL(artifact.mainModule, "file:").href}?local`)).default;
-  const response = await worker.fetch(new Request("http://127.0.0.1:8787/dispatch", {
-    method: "POST",
-  }));
-
-  assert.equal(response.status, 202);
-  assert.deepEqual(await response.json(), {
-    sessionId: "local:thread",
-    message: {
-      id: (await forwarded.clone().json()).message.id,
-      state: "accepted",
-      acceptedAt: "2026-08-17T12:00:00.000Z",
-    },
-  });
-  assert.equal(forwarded.url,
-    "http://127.0.0.1:43123/__cantelop/v1/messages");
-});
-
-test("buildLocalApi rejects non-loopback runtime origins", async () => {
-  await assert.rejects(
-    buildLocalApi({
-      entrypoint: "./api.ts",
-      outdir: "./artifact",
-      runtimeOrigin: "https://runtime.example.com",
-    }),
-    /numeric HTTP loopback origin/,
-  );
 });
 
 test("buildSessionRuntime emits one deployable native module", async (t) => {
@@ -185,6 +35,14 @@ test("buildSessionRuntime emits one deployable native module", async (t) => {
   const artifact = await buildSessionRuntime({ entrypoint, outdir });
   assert.equal(artifact.directory, outdir);
   assert.equal(artifact.mainModule, path.join(outdir, "session-runtime.mjs"));
+  assert.equal(artifact.manifestFile, path.join(outdir, "cantelop-runtime.json"));
+  assert.deepEqual(artifact.manifest, {
+    schema_version: 1, kind: "cantelop-session-runtime", main_module: "session-runtime.mjs",
+    cli_build_protocol_version: 6, runtime_protocol_version: 2, integration_protocol_version: 1,
+    capabilities: { steer: false, abort: false },
+  });
+  assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
+  await assert.rejects(access(path.join(outdir, "worker.mjs")), { code: "ENOENT" });
 
   const source = await readFile(artifact.mainModule, "utf8");
   assert.match(source, /ready/);
@@ -254,33 +112,55 @@ test("a built Session runtime receives messages on the local development port", 
 test("watchLocalProject incrementally rebuilds changed components", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-watch-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const apiEntrypoint = path.join(directory, "api.ts");
   const sessionEntrypoint = path.join(directory, "session.ts");
-  const apiOutdir = path.join(directory, "api-artifact");
   const sessionRuntimeOutdir = path.join(directory, "session-runtime-artifact");
-  const sdkApi = new URL("../dist/api.js", import.meta.url).pathname;
-  await writeFile(
-    apiEntrypoint,
-    `import { defineApi } from ${JSON.stringify(sdkApi)}; export default defineApi(({ router }) => router.route("GET", "/", () => Response.json({ value: "one" })));`,
-  );
   await writeFile(sessionEntrypoint, 'export default async () => "runtime-one";\n');
 
   const events = [];
   const watcher = await watchLocalProject({
-    apiEntrypoint,
-    apiOutdir,
     sessionEntrypoint,
     sessionRuntimeOutdir,
-    runtimeOrigin: "http://127.0.0.1:43123",
     onBuild: (event) => events.push(event),
   });
   t.after(() => watcher.dispose());
-  assert.match(await readFile(path.join(apiOutdir, "worker.mjs"), "utf8"), /one/);
   assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-one/);
 
   await writeFile(sessionEntrypoint, 'export default async () => "runtime-two";\n');
   await waitFor(() => events.some((event) => event.component === "session-runtime"));
   assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-two/);
+});
+
+test("runtime-only schema discovery and watching preserve managed database artifacts", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-runtime-schema-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const projectRoot = path.join(directory, "project");
+  await mkdir(path.join(projectRoot, "src"), { recursive: true });
+  await mkdir(path.join(projectRoot, "db"));
+  await writeFile(path.join(projectRoot, "cantelop.json"), JSON.stringify({ schema_version: 3, app: "agent", session: "src/session.ts" }));
+  const entrypoint = path.join(projectRoot, "src/session.ts");
+  await writeFile(entrypoint, 'export default async () => {};\n');
+  const schemaFile = path.join(projectRoot, "db/schema.ts");
+  const sdkSchema = new URL("../dist/schema.js", import.meta.url).pathname;
+  const schemaSource = extra => `import { sqliteTable, text, integer } from ${JSON.stringify(sdkSchema)}; export const tasks = sqliteTable("tasks", { id: text().primaryKey()${extra} });`;
+  await writeFile(schemaFile, schemaSource(""));
+  const outdir = path.join(directory, "artifact");
+  // Root inference starts at the Session entrypoint, without any API file.
+  const artifact = await buildSessionRuntime({ entrypoint, outdir });
+  assert.deepEqual(Object.keys(artifact.manifest.database_schema.snapshot.tables), ["tasks"]);
+  const events = [];
+  const watcher = await watchLocalProject({ sessionEntrypoint: entrypoint, sessionRuntimeOutdir: outdir, projectRoot, onBuild: event => events.push(event) });
+  t.after(() => watcher.dispose());
+  await writeFile(schemaFile, schemaSource(', done: integer({ mode: "boolean" }).notNull().default(false)'));
+  await waitFor(() => events.some(event => event.component === "database-schema" && !event.error));
+  const updated = JSON.parse(await readFile(artifact.manifestFile, "utf8"));
+  assert.ok(updated.database_schema.snapshot.tables.tasks.columns.done);
+  assert.notEqual(updated.database_schema.digest, artifact.manifest.database_schema.digest);
+  // Bad schemas report failure while retaining the last valid deployment metadata.
+  const previous = await readFile(artifact.manifestFile, "utf8");
+  events.length = 0;
+  await writeFile(schemaFile, 'export const syntaxError = ;');
+  await waitFor(() => events.some(event => event.component === "database-schema" && event.error));
+  assert.equal(await readFile(artifact.manifestFile, "utf8"), previous);
 });
 
 async function waitFor(predicate) {
