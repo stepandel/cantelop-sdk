@@ -8,7 +8,7 @@ export type WorkspaceSelector =
 
 export interface IntegrationSessionOptions {
   readonly id?: string;
-  readonly keepAliveSeconds: number;
+  readonly keepAliveSeconds?: number;
 }
 
 /** A trusted, App-bound connection supplied by the platform or local CLI. */
@@ -23,55 +23,80 @@ export type CreateAppOptions =
   | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never }
   | { readonly edgeUrl: string; readonly accessToken: string; readonly connection?: never };
 
-export interface App<Message, Event = unknown, Reply = unknown, Steering = unknown> {
-  workspace(selector: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, Steering>;
+export interface App<Message, Event = unknown, Reply = unknown, View = unknown> {
+  workspace(selector: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View>;
 }
 
-export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, Steering = unknown> {
+export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = unknown> {
   readonly selector: WorkspaceSelector;
   /** Resolves/provisions a slug, or retrieves an existing canonical ID. */
   resolve(): Promise<Workspace>;
   database(): Promise<WorkspaceDatabase>;
   /** A lazy reference; omitting id generates a fresh App-scoped identity. */
-  session(options: IntegrationSessionOptions): SessionRef<Message, Event, Reply, Steering>;
+  session(options?: IntegrationSessionOptions): SessionRef<Message, Event, Reply, View>;
 }
 
-export interface SessionRef<Message, Event = unknown, Reply = unknown, Steering = unknown> {
+export interface SessionRef<Message, Event = unknown, Reply = unknown, View = unknown> {
   readonly id: string;
   readonly workspace: WorkspaceSelector;
-  readonly keepAliveSeconds: number;
-  dispatch(message: Message): Promise<MessageRef>;
+  readonly keepAliveSeconds?: number;
+  dispatch(message: Message, options?: SessionSubmissionOptions): Promise<MessageRef>;
   request(message: Message, options?: SessionRequestOptions): Promise<Reply>;
   /** Explicit resume only; ending this subscription never cancels agent work. */
   stream(options?: SessionStreamOptions): AsyncIterable<SessionEvent<Event>>;
-  /** Ordered control intake; requires platform/runtime steering capability. */
-  steer(input: Steering, options?: SessionControlOptions): Promise<MessageRef>;
+  /** Priority message admission; preserves order within each priority. */
+  steer(message: Message, options?: SessionSubmissionOptions): Promise<MessageRef>;
   /** Cooperative cancellation; acceptance is not cancellation completion. */
-  abort(options?: SessionControlOptions): Promise<MessageRef>;
-  /** Read-only platform snapshot; never provisions or activates. */
-  view(options?: { readonly signal?: AbortSignal }): Promise<SessionView>;
+  cancel(messageId: string, options?: SessionCommandOptions): Promise<MessageCancellation>;
+  /** Last committed application projection; never provisions or activates. */
+  view(options?: { readonly signal?: AbortSignal }): Promise<SessionView<View>>;
   /** Releases the Sandbox. This identity remains reusable. */
   stop(): Promise<void>;
 }
 
-export interface SessionControlOptions {
-  /** Reuse this identity to retry an ambiguous control safely. */
+export interface SessionCommandOptions {
+  /** Reuse this identity to retry an ambiguous command safely. */
   readonly id?: string;
   readonly signal?: AbortSignal;
 }
 
-export interface SessionCapabilities {
-  readonly steer: boolean;
-  readonly abort: boolean;
+export interface SessionSubmissionOptions extends SessionCommandOptions {
+  /** Overrides the reference default; omission delegates to the configured App default. */
+  readonly keepAliveSeconds?: number;
 }
 
-export interface SessionView {
-  readonly id: string;
-  readonly state: "unmaterialized" | "active" | "idle";
-  readonly workspaceId?: string;
-  readonly observedAt: Date;
-  readonly capabilities: SessionCapabilities;
+export interface MessageCancellation {
+  readonly messageId: string;
+  /** requested means cooperative cancellation was admitted, not completed. */
+  readonly state: "requested" | "cancelled" | "settled";
+  readonly status?: import("./resources.js").MessageStatus;
 }
+
+export interface SessionView<View = unknown> {
+  readonly revision: string;
+  readonly updatedAt: Date;
+  readonly state: View;
+  /** Atomic event boundary for subscribing after this snapshot. */
+  readonly cursor: SessionEventCursor;
+}
+
+/** Public App ↔ Edge command protocol. Edge ↔ Sandbox remains the actor protocol. */
+export type SessionCommand<Message = unknown> =
+  | { readonly type: "dispatch" | "steer"; readonly message: Message; readonly keepAliveSeconds?: number }
+  | { readonly type: "request"; readonly message: Message; readonly keepAliveSeconds?: number; readonly timeoutMs: number }
+  | { readonly type: "cancel" | "status"; readonly messageId: string }
+  | { readonly type: "stop" | "view" }
+  | { readonly type: "stream"; readonly after?: SessionEventCursor };
+
+export type AppCommandEnvelope<Message = unknown> = {
+  readonly protocolVersion: 2;
+  /** Submission identity for dispatch/steer/request; command identity otherwise. */
+  readonly id: string;
+  readonly workspace: WorkspaceSelector;
+} & (
+  | { readonly session: { readonly id: string }; readonly command: SessionCommand<Message> }
+  | { readonly session: null; readonly command: { readonly type: "workspace.resolve" | "workspace.database" } }
+);
 
 export interface SessionEventCursor {
   readonly streamId: string;

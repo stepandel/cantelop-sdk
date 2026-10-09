@@ -52,9 +52,9 @@ export interface SessionRuntimeManifest {
   readonly main_module: "session-runtime.mjs";
   readonly cli_build_protocol_version: 6;
   readonly runtime_protocol_version: 2;
-  readonly integration_protocol_version: 1;
-  /** Named runtime hooks are introduced in the coordinated controls follow-up. */
-  readonly capabilities: Readonly<{ steer: false; abort: false }>;
+  readonly integration_protocol_version: 2;
+  /** Advertised only after coordinated actor scheduling, attribution and projection support. */
+  readonly capabilities: Readonly<{ priority: false; messageCancellation: false; durableView: false }>;
   readonly database_schema?: ApplicationDatabaseSchema;
 }
 
@@ -97,8 +97,9 @@ export interface EdgeApiArtifact {
     kind: "cantelop-protocol-edge";
     main_module: "worker.mjs";
     cli_build_protocol_version: 6;
-    integration_protocol_version: 1;
+    integration_protocol_version: 2;
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
+    default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS";
   }>;
 }
 
@@ -121,8 +122,9 @@ export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeAp
   });
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
     schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
-    cli_build_protocol_version: 6, integration_protocol_version: 1,
+    cli_build_protocol_version: 6, integration_protocol_version: 2,
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
+    default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS",
   });
   const manifestFile = path.join(outdir, "cantelop-edge.json");
   await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
@@ -173,8 +175,8 @@ async function writeSessionManifest(outdir: string, schemaPath: string): Promise
     main_module: SESSION_RUNTIME_MAIN_MODULE,
     cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
     runtime_protocol_version: 2,
-    integration_protocol_version: 1,
-    capabilities: Object.freeze({ steer: false, abort: false }),
+    integration_protocol_version: 2,
+    capabilities: Object.freeze({ priority: false, messageCancellation: false, durableView: false }),
     ...(databaseSchema === undefined ? {} : { database_schema: databaseSchema }),
   });
   await writeFile(path.join(outdir, SESSION_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8" });

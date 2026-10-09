@@ -32,7 +32,7 @@ try {
     });
     const edge = await buildEdgeApi({ outdir: path.join(temporary, name, 'edge') });
     assert.equal(edge.manifest.kind, "cantelop-protocol-edge");
-    assert.equal(edge.manifest.integration_protocol_version, 1);
+    assert.equal(edge.manifest.integration_protocol_version, 2);
     assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);
     assert.equal(artifact.manifest.kind, "cantelop-session-runtime");
     assert.equal(artifact.manifest.cli_build_protocol_version, 6);

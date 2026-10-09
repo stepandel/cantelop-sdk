@@ -33,7 +33,7 @@ test("SSE parses byte-split UTF-8 and CRLF with typed payload and metadata", asy
     createdAt: new Date("2026-10-09T00:00:00Z"), data: { text: "café 🍈" },
   });
   assert.equal(request.headers.get("Accept"), "text/event-stream");
-  assert.equal(new URL(request.url).searchParams.get("workspace_id"), workspaceId);
+  assert.deepEqual((await request.clone().json()).workspace, { id: workspaceId });
   assert.equal(Object.isFrozen(event), true);
 });
 
@@ -45,11 +45,9 @@ test("multiline data, CR-only separators and heartbeat comments are supported", 
 
 test("explicit cursor resume forwards stream identity and sequence without reconnecting", async () => {
   let count = 0;
-  const session = makeSession(request => {
+  const session = makeSession(async request => {
     count++;
-    const url = new URL(request.url);
-    assert.equal(url.searchParams.get("stream_id"), streamId);
-    assert.equal(url.searchParams.get("after"), "1");
+    assert.deepEqual((await request.json()).command, { type: "stream", after: { streamId, sequence: 1 } });
     return response([frame(document(2))]);
   });
   assert.equal((await collect(session.stream({ after: { streamId, sequence: 1 } })))[0].cursor.sequence, 2);

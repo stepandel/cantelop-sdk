@@ -1,15 +1,12 @@
 import type { AppConnection } from "./integration.js";
 
 export const EDGE_ORIGIN = "https://edge.cantelop.internal";
-export const EDGE_PREFIX = "/__cantelop/app/v1";
 
-/** Converts private serializers into the App Edge wire protocol. */
+
+/** Assigns the logical Edge origin to requests before they leave the SDK. */
 export function edgeRequest(request: Request): Request {
   const url = new URL(request.url);
   url.host = new URL(EDGE_ORIGIN).host;
-  if (url.pathname.startsWith("/__cantelop/v1/")) {
-    url.pathname = EDGE_PREFIX + url.pathname.slice("/__cantelop/v1".length);
-  }
   return new Request(url, request);
 }
 

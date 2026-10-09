@@ -1,78 +1,67 @@
-import type { SessionControlOptions, SessionView, WorkspaceSelector } from "./integration.js";
-import type { MessageRef } from "./resources.js";
-import { RemoteAppError, readMessageStatus, requestJSON } from "./remote-app.js";
+import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 
-/** SDK foundation contract. Platform rollout is required for these routes. */
-export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 1;
-const PREFIX = "/__cantelop/integration/v1";
-
-export function integrationSessionPath(id: string, workspace: WorkspaceSelector, suffix = ""): string {
-  const query = new URLSearchParams(workspace.id === undefined ? { workspace_slug: workspace.slug } : { workspace_id: workspace.id });
-  return `${PREFIX}/sessions/${encodeURIComponent(id)}${suffix}?${query}`;
-}
-
-export async function viewSession(
-  fetch: (request: Request) => Promise<Response>,
-  id: string,
-  workspace: WorkspaceSelector,
-  options: { readonly signal?: AbortSignal } = {},
-): Promise<SessionView> {
-  options.signal?.throwIfAborted();
-  const value = await requestJSON(fetch, integrationSessionPath(id, workspace), {
-    method: "GET", ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
-  if (!isRecord(value) || value.protocol_version !== CANTELOP_INTEGRATION_PROTOCOL_VERSION || value.id !== id ||
-      typeof value.state !== "string" || !["unmaterialized", "active", "idle"].includes(value.state) ||
-      typeof value.observed_at !== "string" || !isRecord(value.capabilities) ||
-      typeof value.capabilities.steer !== "boolean" || typeof value.capabilities.abort !== "boolean") throw invalid("invalid_session_view");
-  const observedAt = new Date(value.observed_at);
-  if (!Number.isFinite(observedAt.valueOf())) throw invalid("invalid_session_view");
-  if (value.workspace_id !== undefined && (typeof value.workspace_id !== "string" || !/^wsp_[0-9a-f]{32}$/.test(value.workspace_id))) throw invalid("invalid_session_view");
-  if (value.state !== "unmaterialized" && value.workspace_id === undefined) throw invalid("invalid_session_view");
-  if (workspace.id !== undefined && value.workspace_id !== undefined && workspace.id !== value.workspace_id) throw invalid("workspace_conflict");
-  return Object.freeze({
-    id, state: value.state as SessionView["state"], observedAt,
-    ...(value.workspace_id === undefined ? {} : { workspaceId: value.workspace_id as string }),
-    capabilities: Object.freeze({ steer: value.capabilities.steer, abort: value.capabilities.abort }),
-  });
-}
-
-export async function controlSession(
-  fetch: (request: Request) => Promise<Response>,
-  sessionId: string,
-  workspace: WorkspaceSelector,
-  control: { readonly type: "steer"; readonly input: unknown } | { readonly type: "abort" },
-  options: SessionControlOptions = {},
-): Promise<MessageRef> {
-  const id = options.id ?? `msg_${crypto.randomUUID().replaceAll("-", "")}`;
+export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
+export const APP_COMMAND_PATH = "/__cantelop/app/v2/commands";
+export const MAX_COMMAND_BYTES = 1024 * 1024;
+export const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`;
+export function assertMessageID(id: unknown): asserts id is string {
   if (typeof id !== "string" || !/^msg_[0-9a-f]{32}$/.test(id)) throw new TypeError("Invalid Cantelop Message ID");
-  if (control.type === "steer" && JSON.stringify(control.input) === undefined) throw new TypeError("Steering input must be JSON-compatible");
-  options.signal?.throwIfAborted();
-  let value: unknown;
-  try {
-    value = await requestJSON(fetch, integrationSessionPath(sessionId, workspace, "/controls"), {
-      method: "POST", body: { protocol_version: CANTELOP_INTEGRATION_PROTOCOL_VERSION, id, ...control },
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-  } catch (error) {
-    if (options.signal?.aborted) throw error;
-    if (error instanceof RemoteAppError) throw new RemoteAppError(error.code, error.status, id, { cause: error });
-    throw new RemoteAppError("control_outcome_unknown", 0, id, { cause: error });
-  }
-  if (!isRecord(value) || value.protocol_version !== CANTELOP_INTEGRATION_PROTOCOL_VERSION || value.id !== id || value.status !== "accepted" || typeof value.accepted_at !== "string") {
-    throw new RemoteAppError("invalid_control_response", 0, id);
-  }
-  const acceptedAt = new Date(value.accepted_at);
-  if (!Number.isFinite(acceptedAt.valueOf())) throw new RemoteAppError("invalid_control_response", 0, id);
-  return Object.freeze({
-    id, state: "accepted", acceptedAt,
-    async status() {
-      const value = await requestJSON(fetch, integrationSessionPath(sessionId, workspace, `/controls/${id}`), { method: "GET" });
-      if (!isRecord(value) || value.protocol_version !== CANTELOP_INTEGRATION_PROTOCOL_VERSION) throw invalid("invalid_control_status_response");
-      return readMessageStatus(value, id);
-    },
-  });
 }
-
-function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }
-function invalid(code: string): RemoteAppError { return new RemoteAppError(code, 0); }
+export function assertKeepAlive(value: unknown): void {
+  if (value !== undefined && (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 604800)) {
+    throw new TypeError("keepAliveSeconds must be an integer between 0 and 604800");
+  }
+}
+export function workspaceSelector(value: unknown): WorkspaceSelector {
+  if (!record(value) || (value.id === undefined) === (value.slug === undefined)) throw new TypeError("A Workspace requires exactly one ID or slug");
+  if (value.id !== undefined) {
+    if (typeof value.id !== "string" || !/^wsp_[0-9a-f]{32}$/.test(value.id)) throw new TypeError("Invalid Cantelop Workspace ID");
+    return Object.freeze({ id: value.id });
+  }
+  if (typeof value.slug !== "string" || !/^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value.slug)) throw new TypeError("Invalid Cantelop Workspace slug");
+  return Object.freeze({ slug: value.slug });
+}
+export function assertSessionID(id: unknown): asserts id is string {
+  if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) throw new TypeError("Invalid Cantelop Session ID");
+}
+export function assertCursor(value: unknown): void {
+  if (!record(value) || typeof value.streamId !== "string" || !/^[0-9a-f]{32}$/.test(value.streamId) ||
+      !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 0 || Object.keys(value).some(key => !["streamId", "sequence"].includes(key))) throw new TypeError("Invalid event cursor");
+}
+export function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+/** Validate untrusted Edge input before any private routing or provisioning. */
+export function validateCommand(value: unknown): AppCommandEnvelope {
+  if (!record(value) || value.protocolVersion !== 2 || Object.keys(value).some(key => !["protocolVersion", "id", "workspace", "session", "command"].includes(key))) throw new TypeError("Invalid command envelope");
+  assertMessageID(value.id);
+  const workspace = workspaceSelector(value.workspace);
+  if (Object.keys(value.workspace as object).length !== 1) throw new TypeError("Invalid Workspace selector");
+  if (!record(value.command) || typeof value.command.type !== "string") throw new TypeError("Invalid command");
+  const command = value.command;
+  let keys: string[];
+  if (command.type === "workspace.resolve" || command.type === "workspace.database") {
+    if (value.session !== null) throw new TypeError("Workspace command requires a null Session");
+    keys = ["type"];
+  } else {
+    if (!record(value.session) || Object.keys(value.session).length !== 1) throw new TypeError("Invalid Session");
+    assertSessionID(value.session.id);
+    switch (command.type) {
+      case "dispatch": case "steer": case "request":
+        if (!("message" in command) || command.message === undefined) throw new TypeError("A message is required");
+        assertKeepAlive(command.keepAliveSeconds);
+        keys = ["type", "message", "keepAliveSeconds"];
+        if (command.type === "request") {
+          if (!Number.isSafeInteger(command.timeoutMs) || (command.timeoutMs as number) < 1 || (command.timeoutMs as number) > 300000) throw new TypeError("Invalid timeoutMs");
+          keys.push("timeoutMs");
+        }
+        break;
+      case "cancel": case "status": assertMessageID(command.messageId); keys = ["type", "messageId"]; break;
+      case "view": case "stop": keys = ["type"]; break;
+      case "stream": if (command.after !== undefined) assertCursor(command.after); keys = ["type", "after"]; break;
+      default: throw new TypeError("Unknown command");
+    }
+  }
+  if (Object.keys(command).some(key => !keys.includes(key))) throw new TypeError("Invalid command fields");
+  return { ...value, workspace } as AppCommandEnvelope;
+}

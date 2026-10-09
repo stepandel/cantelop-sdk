@@ -38,8 +38,8 @@ test("buildSessionRuntime emits one deployable native module", async (t) => {
   assert.equal(artifact.manifestFile, path.join(outdir, "cantelop-runtime.json"));
   assert.deepEqual(artifact.manifest, {
     schema_version: 1, kind: "cantelop-session-runtime", main_module: "session-runtime.mjs",
-    cli_build_protocol_version: 6, runtime_protocol_version: 2, integration_protocol_version: 1,
-    capabilities: { steer: false, abort: false },
+    cli_build_protocol_version: 6, runtime_protocol_version: 2, integration_protocol_version: 2,
+    capabilities: { priority: false, messageCancellation: false, durableView: false },
   });
   assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
   await assert.rejects(access(path.join(outdir, "worker.mjs")), { code: "ENOENT" });

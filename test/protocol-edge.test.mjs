@@ -7,108 +7,144 @@ import { pathToFileURL } from 'node:url';
 import { createProtocolWorker } from '../dist/protocol-edge.js';
 import { createApp } from '../dist/index.js';
 import { buildEdgeApi } from '../dist/build.js';
+const bindings = { CANTELOP_INTEGRATION_TOKEN: 'test-app-token', CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS: '120' };
+const workspaceId = 'wsp_' + '1'.repeat(32), messageId = 'msg_' + '2'.repeat(32);
+const envelope = command => ({ protocolVersion: 2, id: messageId, workspace: { slug: 'customer' }, session: { id: 'chat' }, command });
+const request = (body, headers = {}) => new Request('https://agent.example/__cantelop/app/v2/commands', {
+  method: 'POST', headers: { Authorization: 'Bearer test-app-token', 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
+});
+const accepted = id => Response.json({ id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
 
-const bindings = { CANTELOP_INTEGRATION_TOKEN: 'test-app-token' };
-const workspaceId = 'wsp_' + '1'.repeat(32);
-const messageId = 'msg_' + '2'.repeat(32);
-
-test('generated protocol Worker requires authentication and restricts private platform routing', async () => {
-  const calls = [];
-  const worker = createProtocolWorker({ fetch: async request => { calls.push(request); return Response.json({ ok: true }); } });
-  const request = (route, method = 'GET', token = 'test-app-token') => new Request('https://agent.example' + route, {
-    method, headers: { Authorization: `Bearer ${token}`, 'CANTELOP_APP_ID': 'forged', 'X-Cantelop-App-Id': 'forged' },
-  });
-  assert.equal((await worker.fetch(request('/__cantelop/app/v1/messages', 'POST'), {})).status, 503);
-  assert.equal((await worker.fetch(request('/__cantelop/app/v1/messages', 'POST', 'wrong'), bindings)).status, 401);
-  for (const route of ['/__cantelop/v1/messages', '/admin', '/__cantelop/app/v1/admin', '/__cantelop/integration/v1/admin']) {
-    assert.equal((await worker.fetch(request(route, 'POST'), bindings)).status, 404);
+test('protocol Worker fails closed on auth, old routes, invalid commands and oversized input before private routing', async () => {
+  let calls = 0;
+  const worker = createProtocolWorker({ fetch: async () => { calls++; return accepted(messageId); } });
+  assert.equal((await worker.fetch(request(envelope({ type: 'dispatch', message: 'hi' })), {})).status, 503);
+  assert.equal((await worker.fetch(request(envelope({ type: 'dispatch', message: 'hi' }), { Authorization: 'Bearer wrong' }), bindings)).status, 401);
+  for (const body of [
+    { ...envelope({ type: 'dispatch', message: 'hi' }), protocolVersion: 1 },
+    envelope({ type: 'abort' }), envelope({ type: 'steer', input: 'hi' }),
+    envelope({ type: 'dispatch', message: 'hi', keepAliveSeconds: -1 }),
+    envelope({ type: 'cancel', messageId: 'bad' }),
+    { ...envelope({ type: 'view' }), session: { id: '../admin' } },
+    { ...envelope({ type: 'view' }), workspace: { id: workspaceId, slug: 'customer' } },
+    envelope({ type: 'view', url: 'https://outside.example' }),
+    envelope({ type: 'stream', after: { streamId: 'a'.repeat(32), sequence: -1 } }),
+  ]) assert.equal((await worker.fetch(request(body), bindings)).status, 400);
+  assert.equal((await worker.fetch(request(envelope({ type: 'dispatch', message: 'x'.repeat(1024 * 1024) })), bindings)).status, 413);
+  for (const route of ['/__cantelop/v1/messages', '/__cantelop/app/v1/messages', '/__cantelop/integration/v1/sessions/chat']) {
+    assert.equal((await worker.fetch(new Request('https://agent.example' + route, { headers: { Authorization: 'Bearer test-app-token' } }), bindings)).status, 404);
   }
-  assert.equal(calls.length, 0);
-  assert.equal((await worker.fetch(request('/__cantelop/app/v1/messages', 'POST'), bindings)).status, 200);
-  assert.equal(calls[0].url, 'https://runtime.cantelop.internal/__cantelop/v1/messages');
-  assert.deepEqual([...calls[0].headers], []);
+  assert.equal(calls, 0);
 });
 
-test('backend facade reaches private dispatch and receipts only through the protocol Worker', async () => {
+test('dispatch and steer use clean admission handlers: canonical Workspace, stable ID, distinct priority, explicit/default keep-alive', async () => {
   const calls = [];
-  const worker = createProtocolWorker({ fetch: async request => {
-    calls.push(request);
-    if (request.method === 'POST') {
-      const body = await request.json();
-      return Response.json({ id: body.message.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
-    }
-    return Response.json({ id: new URL(request.url).pathname.split('/').at(-1), state: 'unknown' });
+  const worker = createProtocolWorker({ fetch: async req => {
+    calls.push(req.clone());
+    if (req.url.endsWith('/workspaces/open')) return Response.json({ id: workspaceId, slug: 'customer' });
+    const body = await req.json(); return accepted(body.message.id);
   } });
-  const edgeCalls = [];
-  const app = createApp({ connection: { fetch(request) {
-    edgeCalls.push(request.url);
-    const headers = new Headers(request.headers);
-    headers.set('Authorization', 'Bearer test-app-token');
-    return worker.fetch(new Request(request, { headers }), bindings);
+  for (const type of ['dispatch', 'steer']) {
+    const response = await worker.fetch(request(envelope({ type, message: { text: 'hi' } }), { 'CANTELOP_APP_ID': 'forged', 'X-Cantelop-App-Id': 'forged' }), bindings);
+    assert.equal(response.status, 202); assert.equal((await response.json()).protocolVersion, 2);
+    const admission = calls.at(-1);
+    assert.equal(new URL(admission.url).pathname, '/__cantelop/integration/v2/messages');
+    assert.deepEqual(await admission.json(), { session: { id: 'chat', workspace_id: workspaceId, keep_alive_seconds: 120 }, message: { id: messageId, payload: { text: 'hi' } }, priority: type === 'steer' ? 'priority' : 'normal' });
+    assert.equal(admission.headers.get('Authorization'), null);
+    assert.equal(admission.headers.get('X-Cantelop-App-Id'), null);
+  }
+  const explicit = { ...envelope({ type: 'dispatch', message: 'hi', keepAliveSeconds: 0 }), workspace: { id: workspaceId } };
+  await worker.fetch(request(explicit), { CANTELOP_INTEGRATION_TOKEN: 'test-app-token' });
+  assert.equal((await calls.at(-1).json()).session.keep_alive_seconds, 0);
+  const count = calls.length;
+  assert.equal((await worker.fetch(request(envelope({ type: 'dispatch', message: 'hi' })), { CANTELOP_INTEGRATION_TOKEN: 'test-app-token' })).status, 503);
+  assert.equal(calls.length, count);
+});
+
+test('cancel, stop, status, view and stream never open Workspaces; their private handlers are selector-bound', async () => {
+  const calls = [];
+  const worker = createProtocolWorker({ fetch: async req => {
+    calls.push(req.clone());
+    if (req.headers.get('Accept') === 'text/event-stream') return new Response('event: error\ndata: {"code":"event_stream_reset"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+    return Response.json({ id: messageId, state: 'requested', messageId });
+  } });
+  for (const command of [
+    { type: 'cancel', messageId }, { type: 'stop' }, { type: 'status', messageId }, { type: 'view' },
+    { type: 'stream', after: { streamId: 'a'.repeat(32), sequence: 7 } },
+  ]) await worker.fetch(request(envelope(command)), bindings);
+  assert.deepEqual(calls.map(req => req.method), ['POST', 'DELETE', 'GET', 'GET', 'GET']);
+  assert.deepEqual(calls.map(req => new URL(req.url).pathname), [
+    `/__cantelop/integration/v2/sessions/chat/messages/${messageId}/cancel`,
+    '/__cantelop/integration/v2/sessions/chat',
+    `/__cantelop/integration/v2/sessions/chat/messages/${messageId}`,
+    '/__cantelop/integration/v2/sessions/chat/view', '/__cantelop/integration/v2/sessions/chat/events',
+  ]);
+  assert.ok(calls.every(req => new URL(req.url).searchParams.get('workspace_slug') === 'customer'));
+  assert.deepEqual(await calls[0].json(), { id: messageId });
+  assert.equal(new URL(calls[4].url).searchParams.get('after'), '7');
+});
+
+test('SDK receipts traverse Edge and private admission/status handlers with no direct platform calls', async () => {
+  const calls = [];
+  const worker = createProtocolWorker({ fetch: async req => {
+    calls.push(req);
+    if (req.method === 'POST') return accepted((await req.json()).message.id);
+    return Response.json({ id: new URL(req.url).pathname.split('/').at(-1), state: 'unknown' });
+  } });
+  const publicCalls = [];
+  const app = createApp({ connection: { fetch(req) {
+    publicCalls.push(req.url);
+    const headers = new Headers(req.headers); headers.set('Authorization', 'Bearer test-app-token');
+    return worker.fetch(new Request(req, { headers }), bindings);
   } } });
-  const receipt = await app.workspace({ id: workspaceId }).session({ id: 'chat', keepAliveSeconds: 60 }).dispatch({ prompt: 'hello' });
-  await receipt.status();
-  assert.ok(edgeCalls.every(url => url.startsWith('https://edge.cantelop.internal/__cantelop/app/v1/')));
-  assert.ok(calls.every(request => request.url.startsWith('https://runtime.cantelop.internal/__cantelop/v1/')));
+  const ref = app.workspace({ id: workspaceId }).session({ id: 'chat' });
+  for (const type of ['dispatch', 'steer']) assert.equal((await (await ref[type]('hello')).status()).state, 'unknown');
+  assert.ok(publicCalls.every(url => url === 'https://edge.cantelop.internal/__cantelop/app/v2/commands'));
+  assert.ok(calls.every(req => req.url.startsWith('https://runtime.cantelop.internal/__cantelop/integration/v2/')));
 });
 
-test('Edge forwarding preserves streams, cancellation, control bodies, and error responses', async () => {
-  const controller = new AbortController();
-  let internal;
-  const response = new Response('event: error\ndata: {"code":"stream_expired"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
-  const worker = createProtocolWorker({ fetch: async request => { internal = request; return response; } });
-  const request = new Request(`https://agent.example/__cantelop/app/v1/sessions/chat/events?workspace_id=${workspaceId}&after=7`, {
-    headers: { Authorization: 'Bearer test-app-token', Accept: 'text/event-stream', 'Last-Event-ID': 'cursor' }, signal: controller.signal,
-  });
-  assert.equal(await worker.fetch(request, bindings), response);
-  assert.equal(internal.headers.get('Last-Event-ID'), 'cursor');
-  assert.equal(new URL(internal.url).searchParams.get('after'), '7');
-  controller.abort();
-  assert.equal(internal.signal.aborted, true);
-  const controls = createProtocolWorker({ fetch: async request => {
-    assert.equal(new URL(request.url).pathname, '/__cantelop/integration/v1/sessions/chat/controls');
-    assert.deepEqual(await request.json(), { protocol_version: 1, type: 'abort', id: messageId });
-    return Response.json({ code: 'unsupported_capability' }, { status: 409 });
+test('streaming is forwarded without buffering and subscription cancellation reaches only the private read', async () => {
+  const controller = new AbortController(); let internal;
+  const response = new Response('data: live\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+  const worker = createProtocolWorker({ fetch: async req => { internal = req; return response; } });
+  const req = new Request(request(envelope({ type: 'stream' })), { signal: controller.signal });
+  assert.equal(await worker.fetch(req, bindings), response);
+  controller.abort(); assert.equal(internal.signal.aborted, true);
+});
+
+test('private errors and request semantics survive command handling; defaults do not extend unrelated commands', async () => {
+  const worker = createProtocolWorker({ fetch: async req => {
+    assert.equal(new URL(req.url).pathname, '/__cantelop/integration/v2/requests');
+    assert.equal((await req.json()).timeout_ms, 15000);
+    return Response.json({ error: { code: 'capability_unsupported' } }, { status: 409 });
   } });
-  const result = await controls.fetch(new Request('https://agent.example/__cantelop/integration/v1/sessions/chat/controls', {
-    method: 'POST', headers: { Authorization: 'Bearer test-app-token', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ protocol_version: 1, type: 'abort', id: messageId }),
-  }), bindings);
-  assert.equal(result.status, 409);
+  const result = await worker.fetch(request({ ...envelope({ type: 'request', message: 'hi', timeoutMs: 15000 }), workspace: { id: workspaceId } }), bindings);
+  assert.equal(result.status, 409); assert.equal((await result.json()).error.code, 'capability_unsupported');
 });
 
-test('CLI builds a protocol-owned Worker without a developer API entrypoint', async () => {
+test('CLI emits a protocol-owned Worker without an author API entrypoint or credentials', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'cantelop-edge-'));
   try {
     const artifact = await buildEdgeApi({ outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
     assert.equal(artifact.manifest.kind, 'cantelop-protocol-edge');
-    assert.deepEqual(artifact.manifest.required_bindings, ['CANTELOP_INTEGRATION_TOKEN']);
+    assert.equal(artifact.manifest.integration_protocol_version, 2);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, 'utf8')), artifact.manifest);
     const worker = (await import(pathToFileURL(artifact.mainModule).href)).default;
     assert.equal((await worker.fetch(new Request('https://agent.example'), bindings)).status, 401);
     const source = await readFile(artifact.mainModule, 'utf8');
-    assert.match(source, /127\.0\.0\.1:8877/);
-    assert.doesNotMatch(source, /defineApi|serveSessionRuntime|node:|runtime-secret/);
+    assert.match(source, /127\.0\.0\.1:8877/); assert.doesNotMatch(source, /defineApi|serveSessionRuntime|node:|test-app-token/);
     await assert.rejects(buildEdgeApi({ outdir: directory, runtimeOrigin: 'https://outside.example' }), /loopback/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('normal backend connection sends credentials to the App Edge URL and disallows unsafe origins', async () => {
-  const original = globalThis.fetch;
-  const calls = [];
-  globalThis.fetch = async request => {
-    calls.push(request);
-    const body = await request.json();
-    return Response.json({ id: body.message.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
-  };
+test('normal backend transport addresses only the App Edge command endpoint and never follows redirects', async () => {
+  const original = globalThis.fetch; const calls = [];
+  globalThis.fetch = async req => { calls.push(req); const body = await req.json(); return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }); };
   try {
-    const app = createApp({ edgeUrl: 'https://agent.example', accessToken: 'app-token' });
-    await app.workspace({ id: workspaceId }).session({ id: 'chat', keepAliveSeconds: 60 }).dispatch({ prompt: 'hello' });
-    assert.equal(calls[0].url, 'https://agent.example/__cantelop/app/v1/messages');
-    assert.equal(calls[0].headers.get('Authorization'), 'Bearer app-token');
-    assert.equal(calls[0].redirect, 'manual');
-    for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) {
-      assert.throws(() => createApp({ edgeUrl, accessToken: 'token' }), /App Edge URL/);
-    }
+    const session = createApp({ edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
+    await session.dispatch('hello');
+    assert.equal(calls[0].url, 'https://agent.example/__cantelop/app/v2/commands');
+    assert.equal(calls[0].headers.get('Authorization'), 'Bearer app-token'); assert.equal(calls[0].redirect, 'manual');
+    for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => createApp({ edgeUrl, accessToken: 'token' }), /App Edge URL/);
   } finally { globalThis.fetch = original; }
 });

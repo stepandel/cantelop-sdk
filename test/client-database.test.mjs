@@ -12,9 +12,11 @@ test("Workspace database uses the canonical credential route and recreates a clo
     let resolutions = 0;
     let credentials = 0;
     const ref = createApp({ connection: { async fetch(request) {
-      if (request.url.endsWith("/database/credentials")) {
+      const envelope = await request.clone().json();
+      if (envelope.command.type === "workspace.database") {
         credentials++;
-        assert.deepEqual(await request.json(), { workspace_id: workspaceId });
+        assert.deepEqual(envelope.workspace, { id: workspaceId });
+        assert.equal(envelope.session, null);
         return Response.json({ url: "libsql://workspace-cantelop.turso.io", authToken: "test-only", expiresAt: new Date(Date.now() + 900000).toISOString() });
       }
       resolutions++;
