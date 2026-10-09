@@ -5,9 +5,9 @@ Start with [the web chat app](web-chat/README.md) for a complete browser → app
 The OpenAI, Anthropic, Pi, and OpenCode examples define native agent runtimes and ordinary application backend clients:
 
 ```text
-src/cantelop.ts   Client configuration and runtime handler
+src/cantelop.ts   Client configuration and runtime reference
 src/contracts.ts  Shared message and event types
-src/agent.ts      Provider behavior
+src/agent.ts      Exported runtime handlers and provider behavior
 cantelop.json     Deployment configuration
 ```
 

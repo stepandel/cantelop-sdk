@@ -14,10 +14,7 @@ import type { Message, Event, Reply } from "./contracts.js";
 export const cantelop = new CantelopClient<Message, Event, Reply>({
   sessionRuntime: {
     id: "support.v1",
-    async receive(context) {
-      const { receive } = await import("./agent.js");
-      await receive(context);
-    },
+    entrypoint: "./agent.ts",
   },
 });
 export default cantelop;
@@ -79,7 +76,7 @@ Breaking iteration or aborting the subscription only closes its stream. It does 
 ## Define the runtime
 
 ```ts
-// src/agent.ts — ordinary application code loaded by the receive handler.
+// src/agent.ts — the runtime module referenced by the client.
 import type { SessionContext } from "@cantelop/sdk/session";
 import type { Message, Event, Reply } from "./contracts.js";
 import { runAgent } from "./agent.js";
@@ -93,9 +90,9 @@ export async function receive({ message, session, env, output, reply, signal }: 
 }
 ```
 
-`runAgent` is application code. Each activation runs one Session runtime in a dedicated Sandbox. Inline handlers serialize subsequent intake. Move long-running work into `context.activity` when the mailbox must remain responsive to commands.
+`runAgent` is application code. The runtime module exports `receive` and optional `onActivate`, `onRecover` and `redelivery`; the build validates these exports against the client’s contract without executing agent code. The Sandbox bundle includes this implementation and the SDK listener, with no API client. Each activation runs one Session runtime in a dedicated Sandbox. Inline handlers serialize subsequent intake. Move long-running work into `context.activity` when the mailbox must remain responsive to commands.
 
-Applications own durable jobs, checkpoints, and idempotency. `onActivate` restores state once per incarnation; `onRecover` opts into replacement-Sandbox recovery. Redelivery remains opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies retain their JSON and size limits.
+Applications own durable jobs, checkpoints, and idempotency. The optional `onActivate` export restores state once per incarnation; the optional `onRecover` export opts into replacement-Sandbox recovery. Redelivery remains opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies retain their JSON and size limits.
 
 ## Runtime-only project
 

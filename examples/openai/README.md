@@ -1,6 +1,6 @@
 # OpenAI agent integration
 
-`src/cantelop.ts` configures a `CantelopClient` and its runtime handler. Application code imports the `cantelop` instance to select Workspaces and Sessions. `src/agent.ts` contains the provider behavior, loaded when the Sandbox receives a message.
+`src/cantelop.ts` configures a `CantelopClient` with a reference to `src/agent.ts`. Application code imports the `cantelop` instance to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. Backend imports do not load it.
 
 ```ts
 import { cantelop } from "./src/cantelop.js";

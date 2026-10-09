@@ -8,7 +8,7 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 - Expose `new CantelopClient({ sessionRuntime })` as the sole integration constructor, bound to one existing App. Preserve typed Workspace/Session references and remove the `createApp` factory and its facade/options types.
 - Replace developer API/router exports and customer API compilation with App → Workspace → Session references and generated protocol Edge builds.
-- Require runtime ID and behavior handlers directly in CantelopClient. Its message/event/reply/view generics type both handlers and Session operations. Remove separate runtime/behavior factories. Build/watch read the default-exported client module and require matching Edge/native artifact identities.
+- Require an explicit runtime ID/module reference in CantelopClient. Build validation checks named runtime handlers against the client’s message/event/reply types without executing provider code. Bundle the runtime module and SDK listener directly for the Sandbox; exclude the client and backend transport. Remove separate definition factories. Build/watch read the client definition and require matching artifact IDs.
 - Preserve Workspace ID/slug addressing, App-scoped Session identity, lazy references, durable Workspace database access, and stop/reactivation lifecycle.
 - Add automatic App configuration from runtime context/environment/CLI integration profiles; retain explicit ID/slug selection and test connection overrides. Keep credentials separate from deployment login and scope them to selected Apps.
 - Define common `{ protocolVersion, id, workspace, session, command }` envelopes and strict discriminated command validation. Workspace-only commands use a null Session.
