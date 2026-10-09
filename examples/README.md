@@ -1,5 +1,7 @@
 # Agent integration examples
 
+Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It uses the OpenAI runtime below and keeps credentials out of browser code.
+
 The OpenAI, Anthropic, Pi, and OpenCode examples define native agent runtimes and ordinary application backend clients:
 
 ```text
