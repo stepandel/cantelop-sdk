@@ -2,141 +2,32 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v3.json",
   "title": "Cantelop App",
-  "description": "Runtime-only build and deployment configuration for one Cantelop App. Requires CLI build protocol 6.",
+  "description": "Project build settings for named Apps declared in code. Requires CLI build protocol 6.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
-    "app",
-    "session"
+    "definition"
   ],
   "properties": {
-    "app": {
-      "$ref": "#/$defs/appSlug"
-    },
-    "session": {
-      "$ref": "#/$defs/session"
-    },
-    "environment": {
-      "$ref": "#/$defs/environment"
-    },
     "schema_version": {
       "const": 3
+    },
+    "definition": {
+      "$ref": "#/$defs/projectFile"
     }
   },
   "$defs": {
-    "appSlug": {
-      "type": "string",
-      "description": "Slug of the existing App that build and deploy commands target.",
-      "pattern": "^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
-      "examples": [
-        "my-agent"
-      ]
-    },
     "projectFile": {
       "type": "string",
       "minLength": 1,
       "description": "Path relative to cantelop.json. It must stay inside the project and name a regular file."
-    },
-    "session": {
-      "description": "Default-exported CantelopClient module referencing a Session runtime implementation.",
-      "oneOf": [
-        {
-          "$ref": "#/$defs/projectFile"
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "entrypoint"
-          ],
-          "properties": {
-            "entrypoint": {
-              "$ref": "#/$defs/projectFile"
-            },
-            "dockerfile": {
-              "$ref": "#/$defs/projectFile",
-              "description": "Optional Dockerfile for native dependencies, system tools, and assets. Cantelop supplies the runtime user, startup command, and /workspace working directory. The build context is always the directory containing cantelop.json."
-            }
-          }
-        }
-      ]
-    },
-    "environmentName": {
-      "type": "string",
-      "pattern": "^(?!CANTELOP_)[A-Za-z_][A-Za-z0-9_]{0,127}$"
-    },
-    "environment": {
-      "type": "object",
-      "description": "Named App configuration declarations. Values stay outside source control except for non-secret development defaults.",
-      "propertyNames": {
-        "$ref": "#/$defs/environmentName"
-      },
-      "additionalProperties": {
-        "$ref": "#/$defs/environmentDeclaration"
-      }
-    },
-    "environmentDeclaration": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "default": {
-          "type": "string",
-          "description": "Non-secret fallback used by local development when .env does not override it."
-        },
-        "secret": {
-          "type": "boolean",
-          "default": false,
-          "description": "Marks the value as secret and redacted. Secret declarations cannot have defaults."
-        },
-        "required": {
-          "type": "boolean",
-          "default": false,
-          "description": "Makes doctor fail when the App does not have this variable or secret configured."
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "secret": {
-                "const": true
-              }
-            },
-            "required": [
-              "secret"
-            ]
-          },
-          "then": {
-            "not": {
-              "required": [
-                "default"
-              ]
-            }
-          }
-        }
-      ]
     }
   },
   "examples": [
     {
-      "app": "my-agent",
-      "session": "src/cantelop.ts",
-      "schema_version": 3
-    },
-    {
-      "app": "my-agent",
-      "session": "src/cantelop.ts",
-      "environment": {
-        "OPENAI_MODEL": {
-          "default": "gpt-5-mini"
-        },
-        "OPENAI_API_KEY": {
-          "secret": true,
-          "required": true
-        }
-      },
-      "schema_version": 3
+      "schema_version": 3,
+      "definition": "src/cantelop.ts"
     }
   ]
 }

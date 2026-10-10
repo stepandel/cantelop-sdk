@@ -3,13 +3,13 @@ import { mkdtemp, readFile, rm, access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { build } from "esbuild";
-import { buildEdgeApi, buildSessionRuntime, createCantelopCompilerPlugin } from "../dist/build.js";
+import { buildEdgeApi, buildSessionRuntime, buildAppArtifacts, createCantelopCompilerPlugin } from "../dist/build.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
 try {
   const schema = JSON.parse(await readFile(path.join(root, "schemas/app-v3.json"), "utf8"));
-  assert.deepEqual(schema.required, ["schema_version", "app", "session"]);
+  assert.deepEqual(schema.required, ["schema_version", "definition"]);
   assert.equal("api" in schema.properties, false);
   for (const name of ["openai", "anthropic", "pi", "opencode", "database", "web-chat"]) {
     const projectRoot = path.join(root, "examples", name);
@@ -25,13 +25,13 @@ try {
       assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
       assert.doesNotMatch(input, /node_modules\/.*(?:@openai\/agents|@anthropic-ai|@earendil-works|@opencode-ai)/);
     }
-    const session = typeof manifest.session === "string" ? manifest.session : manifest.session.entrypoint;
+    const session = typeof manifest.definition === "string" ? manifest.definition : manifest.definition.entrypoint;
     const artifact = await buildSessionRuntime({
       definition: path.join(projectRoot, session), projectRoot,
       outdir: path.join(temporary, name),
     });
     const edge = await buildEdgeApi({ definition: path.join(projectRoot, session), outdir: path.join(temporary, name, 'edge') });
-    assert.equal(edge.manifest.session_runtime_id, artifact.manifest.session_runtime_id);
+    assert.equal(edge.manifest.definition_runtime_id, artifact.manifest.definition_runtime_id);
     assert.equal(edge.manifest.kind, "cantelop-protocol-edge");
     assert.equal(edge.manifest.integration_protocol_version, 2);
     assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);
@@ -40,6 +40,15 @@ try {
     assert.equal(artifact.manifest.cli_build_protocol_version, 6);
     assert.equal("routes" in artifact.manifest, false);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
+  }
+  const multiRoot = path.join(root, "examples/multi-app");
+  const multi = await buildAppArtifacts({ definition: path.join(multiRoot, "src/cantelop.ts"), projectRoot: multiRoot, outdir: path.join(temporary, "multi-app") });
+  assert.deepEqual(multi.apps.map(app => app.name), ["support-agent", "research-agent"]);
+  assert.equal(multi.backend.manifest.apps.length, 2);
+  for (const app of multi.apps) {
+    assert.equal(app.runtime.manifest.app_name, app.name);
+    assert.equal(app.edge.manifest.session_runtime_id, app.runtime.manifest.session_runtime_id);
+    assert.doesNotMatch(await readFile(app.runtime.mainModule, "utf8"), /class CantelopClient/);
   }
   const browser = await build({
     entryPoints: [path.join(root, "examples/web-chat/public/chat.js")],

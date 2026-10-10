@@ -1,17 +1,4 @@
 {
   "schema_version": 3,
-  "app": "pi",
-  "session": "src/cantelop.ts",
-  "environment": {
-    "ANTHROPIC_API_KEY": {
-      "secret": true,
-      "required": true
-    },
-    "PI_PROVIDER": {
-      "default": "anthropic"
-    },
-    "PI_MODEL": {
-      "default": "claude-sonnet-5"
-    }
-  }
+  "definition": "src/cantelop.ts"
 }

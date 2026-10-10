@@ -1,14 +1,13 @@
 /// <reference types="node" />
 
 // Loaded lazily only for backend file discovery; never part of the generated Edge Worker.
-import { open, readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { AppConfigurationError, parseAppConfiguration, type AppConfigurationDocument } from "./app-config.js";
-import type { AppSelector } from "./integration.js";
 const MAX_BYTES = 1024 * 1024;
 
-export async function loadNodeAppConfiguration(env: Readonly<Record<string, string | undefined>>, options: { readonly discoverProject: boolean; readonly directory?: string }): Promise<{ document?: AppConfigurationDocument; projectApp?: AppSelector }> {
+export async function loadNodeAppConfiguration(env: Readonly<Record<string, string | undefined>>, _options: { readonly directory?: string } = {}): Promise<{ document?: AppConfigurationDocument }> {
   const configured = env.CANTELOP_INTEGRATION_CONFIG;
   const configDirectory = process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support")
     : process.platform === "win32" ? env.APPDATA : env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config");
@@ -37,23 +36,5 @@ export async function loadNodeAppConfiguration(env: Readonly<Record<string, stri
       if (configured !== undefined) throw new AppConfigurationError("app_configuration_invalid");
     }
   }
-  if (!options.discoverProject) return document === undefined ? {} : { document };
-  let projectApp: AppSelector | undefined;
-  let directory = options.directory ?? process.cwd();
-  while (true) {
-    const projectPath = env.CANTELOP_PROJECT_CONFIG ?? path.join(directory, "cantelop.json");
-    try {
-      const source = await readFile(projectPath, "utf8");
-      if (new TextEncoder().encode(source).byteLength > MAX_BYTES) throw new Error();
-      const value = JSON.parse(source) as { app?: unknown };
-      if (typeof value.app !== "string" || !/^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value.app)) throw new Error();
-      projectApp = { slug: value.app }; break;
-    } catch (error) {
-      if ((error as { code?: unknown }).code !== "ENOENT" || env.CANTELOP_PROJECT_CONFIG !== undefined) throw new AppConfigurationError("app_configuration_invalid");
-    }
-    const parent = path.dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return { ...(document === undefined ? {} : { document }), ...(projectApp === undefined ? {} : { projectApp }) };
+  return document === undefined ? {} : { document };
 }

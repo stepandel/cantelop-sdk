@@ -92,7 +92,7 @@ test('SDK receipts traverse Edge and private admission/status handlers with no d
     return Response.json({ id: new URL(req.url).pathname.split('/').at(-1), state: 'unknown' });
   } });
   const publicCalls = [];
-  const app = new CantelopClient({ sessionRuntime: { receive() {} }, connection: { fetch(req) {
+  const app = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection: { fetch(req) {
     req.headers.set("X-Cantelop-Session-Runtime", "test.v1");
     publicCalls.push(req.url);
     const headers = new Headers(req.headers); headers.set('Authorization', 'Bearer test-app-token');
@@ -128,7 +128,7 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
   try {
     const definition = path.join(directory, 'definition.mjs');
     await writeFile(path.join(directory, 'session.ts'), 'export function receive() {}');
-    await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; export default new CantelopClient({sessionRuntime:{ receive() {} }});`);
+    await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; export default new CantelopClient().app({ name: "first-agent",runtime:{ receive() {} }});`);
     const artifact = await buildEdgeApi({ definition, outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
     assert.equal(artifact.manifest.kind, 'cantelop-protocol-edge');
     assert.equal(artifact.manifest.integration_protocol_version, 2);
@@ -145,10 +145,10 @@ test('normal backend transport addresses only the App Edge command endpoint and 
   const original = globalThis.fetch; const calls = [];
   globalThis.fetch = async req => { calls.push(req); const body = await req.json(); return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }); };
   try {
-    const session = new CantelopClient({ sessionRuntime: { receive() {} }, edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
+    const session = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
     await session.dispatch('hello');
     assert.equal(calls[0].url, 'https://agent.example/commands');
     assert.equal(calls[0].headers.get('Authorization'), 'Bearer app-token'); assert.equal(calls[0].redirect, 'manual');
-    for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => new CantelopClient({ sessionRuntime: { receive() {} }, edgeUrl, accessToken: 'token' }), /App Edge URL/);
+    for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, edgeUrl, accessToken: 'token' }), /App Edge URL/);
   } finally { globalThis.fetch = original; }
 });

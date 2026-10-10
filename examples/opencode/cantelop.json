@@ -1,17 +1,4 @@
 {
   "schema_version": 3,
-  "app": "opencode",
-  "session": {
-    "entrypoint": "src/cantelop.ts",
-    "dockerfile": "docker/Dockerfile"
-  },
-  "environment": {
-    "ANTHROPIC_API_KEY": {
-      "secret": true,
-      "required": true
-    },
-    "OPENCODE_MODEL": {
-      "default": "anthropic/claude-sonnet-4-5"
-    }
-  }
+  "definition": "src/cantelop.ts"
 }

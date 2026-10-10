@@ -1,3 +1,4 @@
+import type { AppDeploymentConfiguration } from "./app-definition.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import type { WorkspaceDatabase } from "./database.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
@@ -25,17 +26,19 @@ export type AppSelector =
   | { readonly id: string; readonly slug?: never }
   | { readonly slug: string; readonly id?: never };
 
-export type CantelopClientOptions<Message = unknown, Event = never, Reply = never> = {
-  readonly sessionRuntime: SessionRuntime<Message, Event, Reply>;
-} & (
-  | ((AppSelector | { readonly id?: never; readonly slug?: never }) & {
-      readonly profile?: string;
-      readonly connection?: never;
-      readonly edgeUrl?: never;
-      readonly accessToken?: never;
-    })
-  | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never; readonly id?: never; readonly slug?: never; readonly profile?: never }
-  | { readonly edgeUrl: string; readonly accessToken: string; readonly connection?: never; readonly id?: never; readonly slug?: never; readonly profile?: never }
+/** Shared connection context; independent of any App or runtime. */
+export interface CantelopClientOptions {
+  readonly profile?: string;
+}
+
+/** A named App owns its runtime and Workspace namespace. */
+export type AppOptions<Message = unknown, Event = never, Reply = never> = {
+  readonly name: string;
+  readonly runtime: SessionRuntime<Message, Event, Reply>;
+} & AppDeploymentConfiguration & (
+  | { readonly connection?: never; readonly edgeUrl?: never; readonly accessToken?: never }
+  | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never }
+  | { readonly edgeUrl: string; readonly accessToken: string; readonly connection?: never }
 );
 
 export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = unknown> {

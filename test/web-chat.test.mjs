@@ -14,7 +14,7 @@ function frame(sequence, data, id = messageId) {
   return `id: ${streamId}:${sequence}\ndata: ${JSON.stringify({ stream_id: streamId, sequence, session_id: sessionId, message_id: id, created_at: '2026-10-09T00:00:00Z', data })}\n\n`;
 }
 async function withServer(fetchEdge, run) {
-  const server = createChatServer(new CantelopClient({ sessionRuntime: { receive() {} }, connection: { fetch: fetchEdge } }));
+  const server = createChatServer(new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection: { fetch: fetchEdge } }));
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try { await run(`http://127.0.0.1:${server.address().port}`); }

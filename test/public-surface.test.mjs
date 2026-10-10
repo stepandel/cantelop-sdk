@@ -28,7 +28,7 @@ test("runtime-only project schema requires a version and rejects the removed API
   const schema = JSON.parse(await readFile(new URL("../schemas/app-v3.json", import.meta.url), "utf8"));
   assert.equal(schema.additionalProperties, false);
   assert.equal(schema.properties.schema_version.const, 3);
-  assert.deepEqual(schema.required, ["schema_version", "app", "session"]);
+  assert.deepEqual(schema.required, ["schema_version", "definition"]);
   assert.equal("api" in schema.properties, false);
   for (const example of schema.examples) {
     assert.equal(example.schema_version, 3);

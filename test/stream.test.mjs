@@ -13,7 +13,7 @@ function frame(value = document(), newline = "\n") {
   return `id: ${value.stream_id}:${value.sequence}${newline}data: ${JSON.stringify(value)}${newline}${newline}`;
 }
 function makeSession(fetch) {
-  return new CantelopClient({ sessionRuntime: { receive() {} }, connection: { fetch } }).workspace({ id: workspaceId }).session({ id: "primary", keepAliveSeconds: 0 });
+  return new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection: { fetch } }).workspace({ id: workspaceId }).session({ id: "primary", keepAliveSeconds: 0 });
 }
 function response(chunks, onCancel = () => {}) {
   return new Response(new ReadableStream({

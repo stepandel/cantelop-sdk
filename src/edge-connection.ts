@@ -1,6 +1,6 @@
 import { assertRuntimeID } from "./session-runtime-contract.js";
-import { AppConfigurationError, resolveAppConfiguration, assertClientOptions, captureConfigurationContext } from "./app-config.js";
-import type { AppConnection, CantelopClientOptions } from "./integration.js";
+import { AppConfigurationError, resolveAppConfiguration, assertAppOptions, type ConfigurationContext } from "./app-config.js";
+import type { AppConnection, AppOptions } from "./integration.js";
 
 export const EDGE_ORIGIN = "https://edge.cantelop.internal";
 
@@ -40,12 +40,11 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
 }
 
 /** Capture configuration at construction; resolve files lazily on first operation. */
-export function resolveEdgeConnection(options: CantelopClientOptions<any, any, any>): AppConnection {
-  assertClientOptions(options);
+export function resolveEdgeConnection(options: AppOptions<any, any, any>, context: ConfigurationContext, profile?: string): AppConnection {
+  assertAppOptions(options);
   if (options.connection !== undefined) return options.connection;
   if (options.edgeUrl !== undefined) return createEdgeConnection(options);
-  const context = captureConfigurationContext();
-  const selection = { ...(options.id === undefined ? {} : { id: options.id }), ...(options.slug === undefined ? {} : { slug: options.slug }), ...(options.profile === undefined ? {} : { profile: options.profile }) };
+  const selection = { slug: options.name, ...(profile === undefined ? {} : { profile }) };
   let pending: Promise<AppConnection> | undefined;
   return Object.freeze({
     async fetch(request: Request) {
