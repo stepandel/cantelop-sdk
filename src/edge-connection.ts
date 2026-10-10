@@ -1,3 +1,4 @@
+import { assertRuntimeID } from "./session-runtime-contract.js";
 import { AppConfigurationError, resolveAppConfiguration, assertClientOptions, captureConfigurationContext } from "./app-config.js";
 import type { AppConnection, CantelopClientOptions } from "./integration.js";
 
@@ -11,7 +12,7 @@ export function edgeRequest(request: Request): Request {
   return new Request(url, request);
 }
 
-export function createEdgeConnection(options: { readonly edgeUrl?: string; readonly accessToken?: string } | undefined): AppConnection {
+export function createEdgeConnection(options: { readonly edgeUrl?: string; readonly accessToken?: string; readonly runtimeId?: string } | undefined): AppConnection {
   if (!options?.edgeUrl || !options.accessToken || /[\r\n]/.test(options.accessToken)) {
     throw new TypeError("An App Edge URL and access token are required");
   }
@@ -22,11 +23,14 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
     throw new TypeError("App Edge URL must be an HTTPS origin (HTTP loopback is allowed for local dev)");
   }
   const token = options.accessToken;
+  const runtimeId = options.runtimeId;
+  if (runtimeId !== undefined) assertRuntimeID(runtimeId);
   return Object.freeze({
     async fetch(request: Request) {
       const source = new URL(request.url);
       const target = new URL(source.pathname + source.search, origin);
       const headers = new Headers(request.headers);
+      if (!headers.has("X-Cantelop-Session-Runtime") && runtimeId !== undefined) headers.set("X-Cantelop-Session-Runtime", runtimeId);
       headers.set("Authorization", `Bearer ${token}`);
       return fetch(new Request(target, { ...{ method: request.method, headers, signal: request.signal, redirect: "manual" as const },
         ...(request.body === null ? {} : { body: await request.arrayBuffer() }),
@@ -36,12 +40,12 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
 }
 
 /** Capture configuration at construction; resolve files lazily on first operation. */
-export function resolveEdgeConnection(options: CantelopClientOptions): AppConnection {
+export function resolveEdgeConnection(options: CantelopClientOptions<any, any, any>): AppConnection {
   assertClientOptions(options);
   if (options.connection !== undefined) return options.connection;
   if (options.edgeUrl !== undefined) return createEdgeConnection(options);
   const context = captureConfigurationContext();
-  const selection = { ...options };
+  const selection = { ...(options.id === undefined ? {} : { id: options.id }), ...(options.slug === undefined ? {} : { slug: options.slug }), ...(options.profile === undefined ? {} : { profile: options.profile }) };
   let pending: Promise<AppConnection> | undefined;
   return Object.freeze({
     async fetch(request: Request) {

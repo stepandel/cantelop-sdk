@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { CantelopClient, AppConfigurationError } from '../dist/index.js';
 
-await promisify(execFile)(process.execPath, [new URL('../node_modules/typescript/bin/tsc', import.meta.url).pathname, '-p', new URL('../examples/web-chat/tsconfig.json', import.meta.url).pathname]);
+await promisify(execFile)(process.execPath, [new URL('../examples/web-chat/build.mjs', import.meta.url).pathname]);
 const { createChatServer } = await import('../examples/web-chat/dist/server.js');
 const sessionId = 'ses_' + '1'.repeat(32), messageId = 'msg_' + '2'.repeat(32);
 const streamId = '3'.repeat(32);
@@ -14,7 +14,7 @@ function frame(sequence, data, id = messageId) {
   return `id: ${streamId}:${sequence}\ndata: ${JSON.stringify({ stream_id: streamId, sequence, session_id: sessionId, message_id: id, created_at: '2026-10-09T00:00:00Z', data })}\n\n`;
 }
 async function withServer(fetchEdge, run) {
-  const server = createChatServer(new CantelopClient({ sessionRuntime: { id: "test.v1", entrypoint: "./session.ts" }, connection: { fetch: fetchEdge } }));
+  const server = createChatServer(new CantelopClient({ sessionRuntime: { receive() {} }, connection: { fetch: fetchEdge } }));
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try { await run(`http://127.0.0.1:${server.address().port}`); }

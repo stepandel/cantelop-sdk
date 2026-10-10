@@ -1,65 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, writeFile, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CantelopClient } from "../dist/index.js";
 import { createProtocolWorker } from "../dist/protocol-edge.js";
-import { buildEdgeApi, buildSessionRuntime, watchLocalProject } from "../dist/build.js";
-
-const runtime = { id: "chat.v1", entrypoint: "./agent.ts" };
-const messageId = "msg_" + "1".repeat(32);
+import { buildEdgeApi, buildSessionRuntime, buildBackendClient, watchLocalProject } from "../dist/build.js";
+import { compileClientDefinition } from "../dist/compiler.js";
 const clientModule = new URL("../dist/client.js", import.meta.url).pathname;
-const sessionModule = new URL("../dist/session.js", import.meta.url).pathname;
+const messageId = "msg_" + "1".repeat(32);
+function command(type = "view") { return { protocolVersion: 2, id: messageId, workspace: { slug: "customer" }, session: { id: "chat" }, command: { type } }; }
+function request(body, runtimeId) { return new Request("https://agent.example/commands", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer scoped", ...(runtimeId === undefined ? {} : { "X-Cantelop-Session-Runtime": runtimeId }) }, body: JSON.stringify(body) }); }
+function clientSource(body = 'receive() {}', imports = '') { return `import { CantelopClient } from ${JSON.stringify(clientModule)}; ${imports}
+export const cantelop = new CantelopClient({ sessionRuntime: { ${body} } }); export default cantelop;`; }
+async function project(t) { const directory = await mkdtemp(path.join(tmpdir(), "cantelop-inline-")); t.after(() => rm(directory, { recursive: true, force: true })); return { directory, definition: path.join(directory, "cantelop.mts"), outdir: path.join(directory, "out") }; }
 
-function command(type = "view") {
-  return { protocolVersion: 2, id: messageId, workspace: { slug: "customer" }, session: { id: "chat" }, command: { type } };
-}
-function request(body, runtimeId) {
-  return new Request("https://agent.example/commands", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer scoped", ...(runtimeId === undefined ? {} : { "X-Cantelop-Session-Runtime": runtimeId }) },
-    body: JSON.stringify(body),
-  });
-}
-function clientSource(id = "chat.v1", entrypoint = "./agent.ts", generics = "") {
-  return `import { CantelopClient } from ${JSON.stringify(clientModule)};
-    console.log("client-definition-only");
-    export default new CantelopClient${generics}({ sessionRuntime: ${JSON.stringify({ id, entrypoint })} });`;
-}
-async function project(t) {
-  const directory = await mkdtemp(path.join(tmpdir(), "cantelop-runtime-module-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  return { directory, definition: path.join(directory, "cantelop.mts"), entrypoint: path.join(directory, "agent.ts"), outdir: path.join(directory, "out") };
-}
-
-test("clients require a runtime reference and capture it immutably without loading the module", async () => {
-  for (const value of [undefined, null, {}, { id: "Chat v1", entrypoint: "./agent.ts" },
-    { id: "chat.v1", entrypoint: "../agent.ts" }, { id: "chat.v1", entrypoint: "/agent.ts" },
-    { id: "chat.v1", entrypoint: "./agent.ts", receive() {} }, { id: "chat.v1", entrypoint: "./" }]) {
-    assert.throws(() => new CantelopClient({ sessionRuntime: value }), TypeError);
-  }
-  assert.throws(() => new CantelopClient(), TypeError);
-  const metadata = { ...runtime };
-  const ids = [];
-  const cantelop = new CantelopClient({ sessionRuntime: metadata, connection: { async fetch(request) {
-    ids.push(request.headers.get("X-Cantelop-Session-Runtime"));
-    return Response.json({});
-  } } });
-  assert.equal(Object.isFrozen(cantelop.sessionRuntime), true);
-  const first = cantelop.workspace({ slug: "customer" }).session();
-  metadata.id = "changed.v2";
-  metadata.entrypoint = "./missing.ts";
-  assert.deepEqual(cantelop.sessionRuntime, runtime);
-  assert.throws(() => { cantelop.sessionRuntime = metadata; }, TypeError);
-  await first.stop();
-  await cantelop.workspace({ slug: "customer" }).session().stop();
-  assert.deepEqual(ids, ["chat.v1", "chat.v1"]);
+test("clients require handler implementations, reject developer identity, and freeze a snapshot", () => {
+  for (const value of [undefined, null, {}, { receive: 42 }, { receive() {}, id: 'manual' }, { receive() {}, entrypoint: './agent.ts' }, { receive() {}, onActivate: 3 }]) assert.throws(() => new CantelopClient({sessionRuntime: value}), TypeError);
+  const receive = () => {};
+  const runtime = { receive };
+  const client = new CantelopClient({sessionRuntime: runtime});
+  runtime.receive = () => { throw Error(); };
+  assert.equal(client.sessionRuntime.receive, receive);
+  assert.equal(Object.isFrozen(client.sessionRuntime), true);
 });
-
 test('Edge rejects missing or different runtime identity on every method before private routing', async () => {
   let calls = 0;
-  const worker = createProtocolWorker({ runtimeId: runtime.id, fetch: async () => { calls++; return Response.json({}); } });
+  const worker = createProtocolWorker({ runtimeId: "chat.v1", fetch: async () => { calls++; return Response.json({}); } });
   const commands = [
     { type: 'dispatch', message: 'hello' }, { type: 'steer', message: 'hello' },
     { type: 'request', message: 'hello', timeoutMs: 1000 }, { type: 'cancel', messageId },
@@ -78,96 +45,79 @@ test('Edge rejects missing or different runtime identity on every method before 
 });
 
 
-test("artifacts bind one runtime ID without evaluating the agent; Sandbox contains no client definition", async t => {
-  const { definition, entrypoint, outdir, directory } = await project(t);
-  await writeFile(definition, clientSource());
-  await writeFile(entrypoint, 'throw new Error("Agent evaluated during build"); export function receive() {}');
-  const edge = await buildEdgeApi({ definition, outdir: path.join(directory, "edge") });
-  const native = await buildSessionRuntime({ definition, outdir });
-  assert.equal(edge.manifest.session_runtime_id, "chat.v1");
+
+test("compiler splits imports and closures without executing runtime code; all artifacts share generated identity", async t => {
+  const { directory, definition, outdir } = await project(t);
+  await writeFile(path.join(directory, 'provider.ts'), 'throw new Error("provider-build-execution"); export const provider = "provider-runtime-only";');
+  await writeFile(definition, clientSource('receive() { console.log(provider, prefix); }', 'import { provider } from "./provider.js"; const prefix = "captured-closure";').replace('sessionRuntime:', 'edgeUrl:"https://test.example", accessToken:"scoped", sessionRuntime:'));
+  const compiled = await compileClientDefinition(definition);
+  assert.match(compiled.definition.id, /^rt_[a-f0-9]{64}$/);
+  assert.equal((await compileClientDefinition(definition)).definition.id, compiled.definition.id);
+  assert.match(compiled.runtimeModule, /captured-closure/);
+  assert.doesNotMatch(compiled.backendSource, /provider|captured-closure/);
+  const native = await buildSessionRuntime({definition, outdir});
+  const edge = await buildEdgeApi({definition, outdir: path.join(directory, 'edge')});
+  const backend = await buildBackendClient({definition, outdir: path.join(directory, 'backend')});
   assert.equal(native.manifest.session_runtime_id, edge.manifest.session_runtime_id);
-  const source = await readFile(native.mainModule, "utf8");
-  assert.match(source, /Agent evaluated during build/);
-  assert.doesNotMatch(source, /CantelopClient|client-definition-only|edge\.cantelop\.internal/);
-  await writeFile(definition, 'export default { sessionRuntime: { id: "chat.v1", entrypoint: "./agent.ts" } };');
-  await assert.rejects(buildEdgeApi({ definition, outdir }), /CantelopClient/);
+  assert.equal(backend.manifest.session_runtime_id, edge.manifest.session_runtime_id);
+  assert.doesNotMatch(await readFile(native.mainModule, 'utf8'), /CantelopClient|edge.cantelop.internal/);
+  assert.doesNotMatch(await readFile(backend.mainModule, 'utf8'), /provider-runtime-only|provider-build-execution|captured-closure/);
+  const evaluated = await import('data:text/javascript,' + encodeURIComponent(compiled.backendSource.replace(JSON.stringify(clientModule), JSON.stringify(new URL('../dist/client.js', import.meta.url).href))));
+  const client = evaluated.default;
+  assert.equal('id' in client.sessionRuntime, false);
+  const fetch = globalThis.fetch;
+  let header;
+  globalThis.fetch = async request => { header = request.headers.get('X-Cantelop-Session-Runtime'); return Response.json({}); };
+  try { await client.workspace({slug:'customer'}).session().stop(); }
+  finally { globalThis.fetch = fetch; }
+  assert.equal(header, compiled.definition.id);
+  await writeFile(path.join(directory, 'provider.ts'), 'export const provider = "changed-provider";');
+  assert.notEqual((await compileClientDefinition(definition)).definition.id, compiled.definition.id);
 });
 
-test("builds reject missing exports, invalid hooks, and mismatched handler contracts", async t => {
-  const { definition, entrypoint, outdir } = await project(t);
-  await writeFile(definition, clientSource("chat.v1", "./agent.ts", '<{ prompt: string }, { text: string }, { answer: string }>'));
-  const context = `import type { SessionContext } from ${JSON.stringify(sessionModule)};`;
-  for (const source of [
-    "export function helper() {}",
-    "export const receive = 42;",
-    "export function receive() {} export const onActivate = 1;",
-    "export function receive() {} export const onRecover = false;",
-    "export function receive() {} export const redelivery = 1;",
-    `${context} export function receive(context: SessionContext<{ other: number }>) {}`,
-    `${context} export function receive(context: SessionContext<{ prompt: string }, { wrong: boolean }>) {}`,
-    `${context} export function receive(context: SessionContext<{ prompt: string }, never, { wrong: boolean }>) {}`,
-  ]) {
-    await writeFile(entrypoint, source);
-    await assert.rejects(buildEdgeApi({ definition, outdir }), /Invalid Session runtime module/);
+test("compiler enforces contextual payload, output, lifecycle and reply contracts", async t => {
+  const {definition, outdir} = await project(t);
+  const prefix = `import { CantelopClient } from ${JSON.stringify(clientModule)}; export default new CantelopClient<{prompt:string},{text:string},{answer:string}>({sessionRuntime:`;
+  for (const runtime of ['{}', '{receive:42}', '{receive() {}, onActivate:3}', '{receive(ctx) {ctx.output.send({wrong:true});}}', '{receive(ctx) {ctx.reply({wrong:true});}}', '{receive(ctx) {ctx.message.payload.wrong;}}', '{receive(ctx: {message:{payload:{other:number}}}) {}}']) {
+    await writeFile(definition, prefix + runtime + '});');
+    await assert.rejects(buildEdgeApi({definition, outdir}), /Invalid Session runtime/);
   }
-  await writeFile(entrypoint, `${context}
-    export const redelivery = true;
-    export async function onActivate() {}
-    export async function onRecover() {}
-    export async function receive(context: SessionContext<{ prompt: string }, { text: string }, { answer: string }>) {
-      await context.output.send({ text: context.message.payload.prompt });
-      context.reply({ answer: context.message.payload.prompt });
-    }`);
-  await buildSessionRuntime({ definition, outdir });
+  await writeFile(definition, prefix + '{receive(ctx) {ctx.output.send({text:ctx.message.payload.prompt}); ctx.reply({answer:"ok"});}, onActivate() {}, onRecover() {}, redelivery:true}});');
+  await buildSessionRuntime({definition,outdir});
 });
 
-test("runtime references must resolve to an existing module inside the definition directory", async t => {
-  const { directory, definition, outdir } = await project(t);
-  await writeFile(definition, clientSource());
-  await assert.rejects(buildSessionRuntime({ definition, outdir }), /does not exist/);
-  const outside = await mkdtemp(path.join(tmpdir(), "cantelop-outside-"));
-  t.after(() => rm(outside, { recursive: true, force: true }));
-  const target = path.join(outside, "agent.ts");
-  await writeFile(target, "export function receive() {}");
-  await symlink(target, path.join(directory, "agent.ts"));
-  await assert.rejects(buildSessionRuntime({ definition, outdir }), /inside its definition directory/);
-});
-
-test("watching follows runtime references, their imports, and contract changes", { timeout: 30000 }, async t => {
-  const { directory, definition, outdir } = await project(t);
-  const first = path.join(directory, "one.ts");
-  const second = path.join(directory, "two.ts");
-  await writeFile(first, 'export function receive() { console.log("first-behaviour"); }');
-  const contract = path.join(directory, "payload.ts");
-  await writeFile(contract, "export type Payload = unknown;");
-  const secondSource = `import type { SessionContext } from ${JSON.stringify(sessionModule)};
-    import type { Payload } from "./payload.js";
-    export function receive(context: SessionContext<Payload>) { console.log("second-behaviour"); }`;
-  await writeFile(second, secondSource);
-  await writeFile(definition, clientSource("chat.v1", "./one.ts"));
-  const events = [];
-  const watcher = await watchLocalProject({ sessionDefinition: definition, sessionRuntimeOutdir: outdir, onBuild: event => events.push(event) });
-  t.after(() => watcher.dispose());
-  await writeFile(definition, clientSource("chat.v2", "./two.ts"));
-  await waitFor(() => events.length > 0);
-  assert.equal(events.at(-1).error, undefined);
-  assert.match(await readFile(path.join(outdir, "session-runtime.mjs"), "utf8"), /second-behaviour/);
-  assert.equal(JSON.parse(await readFile(path.join(outdir, "cantelop-runtime.json"), "utf8")).session_runtime_id, "chat.v2");
-  events.length = 0;
-  await writeFile(contract, "export type Payload = { incompatible: string };");
-  await waitFor(() => events.some(event => event.error));
-  assert.match(events.at(-1).error, /Invalid Session runtime module/);
-  assert.equal(JSON.parse(await readFile(path.join(outdir, "cantelop-runtime.json"), "utf8")).session_runtime_id, "chat.v2");
-  events.length = 0;
-  await writeFile(contract, "export type Payload = unknown;");
-  await waitFor(() => events.length > 0);
-  assert.equal(events.at(-1).error, undefined);
-});
-
-async function waitFor(predicate) {
-  const deadline = Date.now() + 10000;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error("Timed out waiting for rebuild");
-    await new Promise(resolve => setTimeout(resolve, 50));
+test("compiler rejects dynamic definitions and runtime capture of the client", async t => {
+  const {definition} = await project(t);
+  for (const source of [clientSource('receive() { cantelop.workspace({slug:"self"}); }'), clientSource('receive() {}', 'console.log("ambiguous-effect");'), `import { CantelopClient } from ${JSON.stringify(clientModule)}; const opts={sessionRuntime:{receive(){}}}; export default new CantelopClient(opts);`]) {
+    await writeFile(definition, source);
+    await assert.rejects(compileClientDefinition(definition), /cannot capture|side effects|static object/);
   }
-}
+});
+
+test("watch follows imported runtime and type contracts and recovers after invalid edits", {timeout:30000}, async t => {
+  const {directory,definition,outdir} = await project(t);
+  const contract = path.join(directory,'payload.ts');
+  const agent = path.join(directory,'agent.ts');
+  await writeFile(contract,'export type Payload = {prompt:string};');
+  await writeFile(agent,`import type { Payload } from "./payload.js"; import type { SessionContext } from ${JSON.stringify(new URL('../dist/session.js',import.meta.url).pathname)}; export function receive(ctx:SessionContext<Payload>) {console.log("first-runtime",ctx.message.payload.prompt);}`);
+  await writeFile(definition,`import {CantelopClient} from ${JSON.stringify(clientModule)}; import {receive} from "./agent.js"; import type {Payload} from "./payload.js"; export default new CantelopClient<Payload>({sessionRuntime:{receive}});`);
+  const events=[];
+  const watcher=await watchLocalProject({sessionDefinition:definition,sessionRuntimeOutdir:outdir,onBuild:event=>events.push(event)});
+  t.after(()=>watcher.dispose());
+  const manifest=()=>readFile(path.join(outdir,'cantelop-runtime.json'),'utf8').then(JSON.parse);
+  const initial=(await manifest()).session_runtime_id;
+  await writeFile(agent,(await readFile(agent,'utf8')).replace('first-runtime','second-runtime'));
+  await waitFor(()=>events.length>0);
+  assert.equal(events.at(-1).error,undefined);
+  const second=(await manifest()).session_runtime_id;
+  assert.notEqual(second,initial);
+  events.length=0;
+  await writeFile(contract,'export type Payload = {other:number};');
+  await waitFor(()=>events.some(e=>e.error));
+  assert.equal((await manifest()).session_runtime_id,second);
+  events.length=0;
+  await writeFile(contract,'export type Payload = {prompt:string};');
+  await waitFor(()=>events.length>0);
+  assert.equal(events.at(-1).error,undefined);
+});
+async function waitFor(predicate) { const deadline=Date.now()+15000; while(!predicate()){if(Date.now()>deadline)throw Error('Timed out waiting for rebuild');await new Promise(resolve=>setTimeout(resolve,50));} }

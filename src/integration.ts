@@ -25,8 +25,8 @@ export type AppSelector =
   | { readonly id: string; readonly slug?: never }
   | { readonly slug: string; readonly id?: never };
 
-export type CantelopClientOptions = {
-  readonly sessionRuntime: SessionRuntime;
+export type CantelopClientOptions<Message = unknown, Event = never, Reply = never> = {
+  readonly sessionRuntime: SessionRuntime<Message, Event, Reply>;
 } & (
   | ((AppSelector | { readonly id?: never; readonly slug?: never }) & {
       readonly profile?: string;

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { build } from "esbuild";
-import { buildEdgeApi, buildSessionRuntime } from "../dist/build.js";
+import { buildEdgeApi, buildSessionRuntime, createCantelopCompilerPlugin } from "../dist/build.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
@@ -19,7 +19,7 @@ try {
     await assert.rejects(access(path.join(projectRoot, "src/api.ts")), { code: "ENOENT" });
     const client = await build({
       entryPoints: [path.join(projectRoot, name === "web-chat" ? "src/server.ts" : "src/cantelop.ts")], bundle: true,
-      platform: "node", format: "esm", write: false, metafile: true,
+      platform: "node", format: "esm", write: false, metafile: true, plugins: [createCantelopCompilerPlugin({ definition: path.join(projectRoot, "src/cantelop.ts") })],
     });
     for (const input of Object.keys(client.metafile.inputs)) {
       assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
@@ -31,6 +31,7 @@ try {
       outdir: path.join(temporary, name),
     });
     const edge = await buildEdgeApi({ definition: path.join(projectRoot, session), outdir: path.join(temporary, name, 'edge') });
+    assert.equal(edge.manifest.session_runtime_id, artifact.manifest.session_runtime_id);
     assert.equal(edge.manifest.kind, "cantelop-protocol-edge");
     assert.equal(edge.manifest.integration_protocol_version, 2);
     assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);

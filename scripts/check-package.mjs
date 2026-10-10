@@ -55,7 +55,8 @@ try {
   );
   await writeFile(path.join(consumer, "definition.mjs"), [
     'import { CantelopClient } from "@cantelop/sdk";',
-    'export default new CantelopClient({sessionRuntime:{id:"package.v1",entrypoint:"./session.mjs"}});',
+    'import { receive } from "./session.mjs";',
+    'export default new CantelopClient({sessionRuntime:{receive}});',
   ].join("\n"));
   await writeFile(path.join(consumer, "session.mjs"), [
     'import * as sessionSDK from "@cantelop/sdk/session";',
@@ -80,12 +81,19 @@ try {
     'const edge = await build.buildEdgeApi({ definition: "./definition.mjs", outdir: "./edge" });',
     'assert.equal(edge.manifest.kind, "cantelop-protocol-edge");',
     'assert.equal((await import(new URL(edge.mainModule, `file://${process.cwd()}/`))).default.fetch instanceof Function, true);',
-    'await build.buildSessionRuntime({ definition: "./definition.mjs", outdir: "./artifact" });',
+    'const native = await build.buildSessionRuntime({ definition: "./definition.mjs", outdir: "./artifact" });',
+    'const backend = await build.buildBackendClient({ definition: "./definition.mjs", outdir: "./backend" });',
+    'assert.equal(backend.manifest.session_runtime_id, native.manifest.session_runtime_id);',
+    'assert.equal(edge.manifest.session_runtime_id, native.manifest.session_runtime_id);',
+    'assert.equal(typeof build.createCantelopCompilerPlugin, "function");',
+    'const compiledClient = (await import(new URL(backend.mainModule, `file://${process.cwd()}/`))).default;',
+    'assert.ok(compiledClient instanceof sdk.CantelopClient);',
+    'assert.throws(() => compiledClient.sessionRuntime.receive(), /Sandbox/);',
   ].join("\n"));
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   await writeFile(path.join(consumer, "integration.ts"), [
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type AppCommandEnvelope, type SessionEventCursor } from "@cantelop/sdk";',
-    'const sessionRuntime = { id: "package.v1", entrypoint: "./session.mjs" };',
+    'const sessionRuntime = { receive() {} };',
     'const connection: AppConnection = { fetch: async () => new Response(null) };',
     'const app = new CantelopClient<{ prompt: string }, { text: string }, { answer: string }, { entries: string[] }>({ sessionRuntime, connection });',
     'new CantelopClient({ sessionRuntime });',
@@ -93,7 +101,7 @@ try {
     'new CantelopClient();',
     '// @ts-expect-error App identity alone does not define a runtime contract.',
     'new CantelopClient({ slug: "support-agent" });',
-    '// @ts-expect-error A module reference is required.',
+    '// @ts-expect-error Runtime identity is system managed.',
     'new CantelopClient({ sessionRuntime: { id: "package.v1", receive() {} } });',
     '// @ts-expect-error The client must be constructed with new.',
     'CantelopClient();',
@@ -146,7 +154,7 @@ try {
     'import { writeFile } from "node:fs/promises";',
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "@cantelop/sdk";',
     'assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 2);',
-    'const sessionRuntime = { id: "package.v1", entrypoint: "./session.mjs" };',
+    'const sessionRuntime = { receive() {} };',
     'let calls = 0;',
     'const app = new CantelopClient({ sessionRuntime, connection: { async fetch(request) {',
     '  calls++;',

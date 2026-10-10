@@ -1,4 +1,4 @@
-import { assertSessionRuntime } from "./session-runtime-contract.js";
+import { assertSessionRuntime, RUNTIME_ID } from "./session-runtime-contract.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import { AppConfigurationError } from "./app-config.js";
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
@@ -12,22 +12,24 @@ import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, ass
 export class CantelopClient<Message = unknown, Event = never, Reply = never, View = never> {
   readonly #connection: AppConnection;
 
-  readonly #sessionRuntime: SessionRuntime;
+  readonly #sessionRuntime: SessionRuntime<Message, Event, Reply>;
+  readonly #runtimeId: string | undefined;
 
-  get sessionRuntime(): SessionRuntime { return this.#sessionRuntime; }
+  get sessionRuntime(): SessionRuntime<Message, Event, Reply> { return this.#sessionRuntime; }
 
-  constructor(options: CantelopClientOptions) {
+  constructor(options: CantelopClientOptions<Message, Event, Reply>) {
     assertSessionRuntime(options?.sessionRuntime);
     this.#sessionRuntime = Object.freeze({ ...options.sessionRuntime });
+    this.#runtimeId = (options.sessionRuntime as unknown as Record<symbol, string>)[RUNTIME_ID];
     this.#connection = resolveEdgeConnection(options);
   }
 
   workspace(input: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View> {
     const connection = this.#connection;
-    const runtimeId = this.#sessionRuntime.id;
+    const runtimeId = this.#runtimeId;
     const edgeFetch = (request: Request) => {
       const headers = new Headers(request.headers);
-      headers.set("X-Cantelop-Session-Runtime", runtimeId);
+      if (runtimeId !== undefined) headers.set("X-Cantelop-Session-Runtime", runtimeId);
       return connection.fetch(edgeRequest(new Request(request, { headers })));
     };
     function send(envelope: AppCommandEnvelope, signal?: AbortSignal) {

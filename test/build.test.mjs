@@ -37,7 +37,7 @@ test("buildSessionRuntime emits one deployable native module", async (t) => {
   assert.equal(artifact.manifestFile, path.join(outdir, "cantelop-runtime.json"));
   assert.deepEqual(artifact.manifest, {
     schema_version: 1, kind: "cantelop-session-runtime", main_module: "session-runtime.mjs",
-    session_runtime_id: "test.v1", cli_build_protocol_version: 6, runtime_protocol_version: 2, integration_protocol_version: 2,
+    session_runtime_id: artifact.manifest.session_runtime_id, cli_build_protocol_version: 6, runtime_protocol_version: 2, integration_protocol_version: 2,
     capabilities: { priority: false, messageCancellation: false, durableView: false },
   });
   assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
@@ -228,6 +228,8 @@ async function stopChild(child) {
 
 async function runtimeDefinition(entrypoint) {
   const definition = path.join(path.dirname(entrypoint), "definition.mjs");
-  await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; export default new CantelopClient({sessionRuntime:{id:"test.v1",entrypoint:${JSON.stringify("./" + path.basename(entrypoint))}}});`);
+  const source = await readFile(entrypoint, "utf8");
+  const names = ["receive", "onActivate", "onRecover", "redelivery"].filter(name => name === "receive" || new RegExp(`export (?:async )?(?:function|const) ${name}\\b`).test(source));
+  await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; import { ${names.join(", ")} } from ${JSON.stringify("./" + path.basename(entrypoint))}; export default new CantelopClient({sessionRuntime:{${names.join(", ")}}});`);
   return definition;
 }
