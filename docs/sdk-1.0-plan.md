@@ -6,9 +6,9 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 ## Phase 1 — SDK and protocol-managed Edge foundation
 
-- Expose `new CantelopClient({ sessionRuntime })` as the sole integration constructor, bound to one existing App. Preserve typed Workspace/Session references and remove the `createApp` factory and its facade/options types.
+- Expose an App-agnostic `new CantelopClient()` with named, typed `cantelop.app({ name, runtime })` resources. Preserve typed Workspace/Session references and remove the `createApp` factory and its facade/options types.
 - Replace developer API/router exports and customer API compilation with App → Workspace → Session references and generated protocol Edge builds.
-- Require inline runtime handlers in CantelopClient and generate runtime identity internally. Build validation checks these handlers against the client’s message/event/reply types without executing provider code. Bundle the runtime module and SDK listener directly for the Sandbox; exclude the client and backend transport. Remove separate definition factories. Build/watch statically extract handlers and their dependency graph, generate runtime identity, and require matching artifact IDs. Host backend builds must apply the compiler transform.
+- Require inline runtime handlers on each named App and generate runtime identity internally. Build validation checks these handlers against the client’s message/event/reply types without executing provider code. Bundle the runtime module and SDK listener directly for the Sandbox; exclude the client and backend transport. Remove separate definition factories. Build/watch statically extract handlers and their dependency graph, generate runtime identity, and require matching artifact IDs. Host backend builds must apply the compiler transform.
 - Preserve Workspace ID/slug addressing, App-scoped Session identity, lazy references, durable Workspace database access, and stop/reactivation lifecycle.
 - Add automatic App configuration from runtime context/environment/CLI integration profiles; retain explicit ID/slug selection and test connection overrides. Keep credentials separate from deployment login and scope them to selected Apps.
 - Define common `{ protocolVersion, id, workspace, session, command }` envelopes and strict discriminated command validation. Workspace-only commands use a null Session.
@@ -22,7 +22,7 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 **CLI**
 
-- Adopt project schema 3 and CLI build protocol 6; reject incompatible SDKs before build/upload. The unpublished build contract requires a single exported CantelopClient instance discovered by type for both artifacts.
+- Adopt project schema 3 and CLI build protocol 6; reject incompatible SDKs before build/upload. The unpublished build contract requires named App definitions discovered by SDK type and explicit App name for per-App Edge/Sandbox artifacts and the shared backend. App identity/environment/image configuration moves out of the manifest into App definitions.
 - Update init, doctor, build/watch, dev, dry-run and deploy to produce/upload both generated Edge and native runtime artifacts. No customer `src/api.ts` is required.
 - Run the same command Worker locally against a numeric loopback bridge, provision local integration credentials/default keep-alive, and inject the reserved App configuration into managed callers. Populate the versioned integration profile for independently launched local code; export scoped environment configuration for deployed callers. SDK users need no URL/token arguments.
 - Preserve custom images, native dependencies, managed schema discovery/migrations, workspace mounts and recovery. Qualify all provider/database examples.

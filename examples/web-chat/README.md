@@ -1,6 +1,6 @@
 # Agent chat in a web app
 
-A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate `CantelopClient` into an existing app. This project owns its [client definition](src/cantelop.ts), [OpenAI Session behaviour](src/agent.ts), shared contracts, and `cantelop.json`. The backend and Sandbox use the same definition; no customer Edge routes are authored.
+A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate Client → App → Workspace → Session into an existing app. This project owns its [client definition](src/cantelop.ts), [OpenAI Session behaviour](src/agent.ts), shared contracts, and `cantelop.json`. The backend and Sandbox use the same definition; no customer Edge routes are authored.
 
 ```text
 Browser → POST /api/chat → CantelopClient → App Edge /commands → agent runtime
@@ -9,7 +9,7 @@ Browser ← streamed chat text ← session.stream()
 
 The files follow the application flow:
 
-- `src/cantelop.ts` configures the client with imported runtime handlers. Backend builds use the [compiler transform](../../docs/runtime-definitions.md).
+- `src/cantelop.ts` declares the named App and its runtime on a shared client. Backend builds use the [compiler transform](../../docs/runtime-definitions.md).
 - `src/agent.ts` exports the OpenAI runtime handler, bundled with the SDK listener for the Sandbox.
 - `src/contracts.ts` defines the shared message and output types.
 - `src/server.ts` serves the chat UI and handles browser requests.
@@ -18,8 +18,8 @@ The files follow the application flow:
 The integration is in [src/server.ts](src/server.ts):
 
 ```ts
-import { cantelop } from "./cantelop.js";
-const workspace = cantelop.workspace({ slug: "web-chat-demo" });
+import { app } from "./cantelop.js";
+const workspace = app.workspace({ slug: "web-chat-demo" });
 const session = workspace.session({ id: conversationId, keepAliveSeconds: 300 });
 const message = await session.dispatch(
   { type: "prompt", prompt },

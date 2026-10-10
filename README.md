@@ -12,24 +12,25 @@ import { CantelopClient } from "@cantelop/sdk";
 import type { Message, Event, Reply } from "./contracts.js";
 import { receive } from "./agent.js";
 
-export const cantelop = new CantelopClient<Message, Event, Reply>({
-  sessionRuntime: {
-    receive,
-  },
+const cantelop = new CantelopClient();
+
+export const support = cantelop.app<Message, Event, Reply>({
+  name: "support-agent",
+  runtime: { receive },
 });
 ```
 
 ```ts
-import { cantelop } from "./cantelop.js";
+import { support } from "./cantelop.js";
 
-const workspace = cantelop.workspace({ slug: "customer-123" });
-// Or: cantelop.workspace({ id: canonicalWorkspaceId });
+const workspace = support.workspace({ slug: "customer-123" });
+// Or: support.workspace({ id: canonicalWorkspaceId });
 const session = workspace.session({ id: "conversation-456" });
 ```
 
 Backend builds use the Cantelop compiler transform to exclude Sandbox dependencies; ordinary source imports load their dependencies. See [runtime compilation](docs/runtime-definitions.md).
 
-`CantelopClient` binds to one existing App; constructing it does not provision an App. The SDK resolves the App identity and scoped integration credentials from runtime context, environment configuration, or a CLI-managed integration profile. Use `new CantelopClient({ sessionRuntime, slug: "support-agent" })` or `{ id }` to select another configured App. CLI provisioning remains a coordinated follow-up. Connection overrides remain available for tests; see [automatic App configuration](docs/app-configuration.md).
+`CantelopClient` supplies shared connection context, optionally selecting a profile. Each `cantelop.app({ name, runtime })` declares a named App with its own typed runtime and Workspace namespace. One client can define multiple Apps. App names are deployment slugs, independent of JavaScript export names. Connections and scoped credentials resolve automatically per App; constructing these objects does not provision resources. See [App configuration](docs/app-configuration.md).
 
 Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. The Edge API remains deployed; its implementation is owned by the protocol rather than developer-authored routing.
 
@@ -92,32 +93,28 @@ export async function receive({ message, session, env, output, reply, signal }: 
 }
 ```
 
-`runAgent` is application code. The runtime module exports `receive` and optional `onActivate`, `onRecover` and `redelivery`; the build validates these exports against the client’s contract without executing agent code. The Sandbox bundle includes this implementation and the SDK listener, with no API client. Each activation runs one Session runtime in a dedicated Sandbox. Inline handlers serialize subsequent intake. Move long-running work into `context.activity` when the mailbox must remain responsive to commands.
+`runAgent` is application code. The runtime module exports `receive` and optional `onActivate`, `onRecover` and `redelivery`; the build validates the handlers configured on the App against its contract without executing agent code. The Sandbox bundle includes this implementation and the SDK listener, with no API client. Each activation runs one Session runtime in a dedicated Sandbox. Inline handlers serialize subsequent intake. Move long-running work into `context.activity` when the mailbox must remain responsive to commands.
 
-Applications own durable jobs, checkpoints, and idempotency. The optional `onActivate` export restores state once per incarnation; the optional `onRecover` export opts into replacement-Sandbox recovery. Redelivery remains opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies retain their JSON and size limits.
+Applications own durable jobs, checkpoints, and idempotency. The optional `onActivate` hook restores state once per incarnation; the optional `onRecover` hook opts into replacement-Sandbox recovery. Redelivery remains opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies retain their JSON and size limits.
 
 ## Runtime-only project
 
 ```json
 {
   "schema_version": 3,
-  "app": "support-agent",
-  "session": "src/cantelop.ts",
-  "environment": {
-    "PROVIDER_API_KEY": { "secret": true, "required": true }
-  }
+  "definition": "src/cantelop.ts"
 }
 ```
 
-The [manifest schema](schemas/app-v3.json) has no `api` entry. A custom image uses `session: { "entrypoint": "src/cantelop.ts", "dockerfile": "docker/Dockerfile" }`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown; custom images install dependencies and assets outside `/workspace`.
+The [manifest schema](schemas/app-v3.json) points to a definition module and has no App name, runtime configuration, or customer API entry. App names, environment declarations, and optional `dockerfile: "docker/Dockerfile"` belong in `cantelop.app(...)`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown.
 
-The SDK build module is reserved for CLI/platform tooling. It builds `session-runtime.mjs` plus `cantelop-runtime.json`, with runtime/integration/build protocol versions and optional managed database schema. `db/schema.ts` is discovered from the project/Session entrypoint, independently of any API module. Runtime and schema changes have separate watch events. `buildEdgeApi({ definition, outdir })` separately generates `worker.mjs` and `cantelop-edge.json` without a customer API entrypoint. The CLI must deploy both artifacts and require their `session_runtime_id` values to match. Message, event, reply and view types are declared on the client; compiled commands carry `X-Cantelop-Session-Runtime`, which Edge checks before private routing. See [runtime definition enforcement](docs/runtime-definitions.md).
+The SDK build module is tooling. `buildAppArtifacts({ definition, outdir })` generates separate Edge/Sandbox artifacts for each named App and a shared compiled backend module. Individual builds/watch accept an `app` name selector when a module defines multiple Apps. Each deployment must match `app_name` and `session_runtime_id`; the backend compiler removes every App's runtime-only dependencies. `db/schema.ts` is discovered independently and describes each App's isolated Workspace databases. See [runtime compilation](docs/runtime-definitions.md).
 
 The platform deploys the generated Edge Worker through the existing dispatcher/outbound trust chain. Compatible CLI support must update initialization, local connections, manifest validation, artifact upload, and deployment before this path can be used in production. Webhook handlers belong in the customer’s own application and call the same SDK primitives.
 
 ## Examples and development
 
-[Provider examples](examples/README.md) have backend `src/cantelop.ts` and native `src/agent.ts`. The [database example](examples/database/README.md) shares application schema across both. [Workspace database documentation](docs/workspace-databases.md) covers renewal and transaction behavior.
+[The multi-App example](examples/multi-app/README.md) shows two Apps under one client. [Provider examples](examples/README.md) have backend `src/cantelop.ts` and native `src/agent.ts`. The [database example](examples/database/README.md) shares application schema across both. [Workspace database documentation](docs/workspace-databases.md) covers renewal and transaction behavior.
 
 ```sh
 pnpm install --frozen-lockfile

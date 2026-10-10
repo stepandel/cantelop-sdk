@@ -8,7 +8,7 @@ Provisioning is asynchronous; opening the database can report
 ## Application backend
 
 ```ts
-const workspace = cantelop.workspace({ slug: "default" });
+const workspace = app.workspace({ slug: "default" });
 const db = await workspace.database();
 await db.execute({
   sql: "INSERT INTO metadata (session_id, value) VALUES (?, ?)",

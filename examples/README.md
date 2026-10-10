@@ -1,22 +1,22 @@
 # Agent integration examples
 
-Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through the client definition and keeps credentials out of browser code.
+Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through a named App definition and keeps credentials out of browser code.
 
 The OpenAI, Anthropic, Pi, and OpenCode examples define native agent runtimes and ordinary application backend clients:
 
 ```text
-src/cantelop.ts   Client configuration and runtime reference
+src/cantelop.ts   Shared client and named App/runtime configuration
 src/contracts.ts  Shared message and event types
 src/agent.ts      Exported runtime handlers and provider behavior
-cantelop.json     Deployment configuration
+cantelop.json     Definition module selection
 ```
 
-Each provider example exports one configured `cantelop` instance with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider SDKs and secrets stay in the runtime. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
+Each provider example exports a named `app` on an App-agnostic client with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider SDKs and secrets stay in the runtime. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
 
 ```ts
-import { cantelop } from "./src/cantelop.js";
+import { app } from "./src/cantelop.js";
 
-const workspace = cantelop.workspace({ slug: "customer-123" });
+const workspace = app.workspace({ slug: "customer-123" });
 const session = workspace.session({ id: "conversation-456" });
 await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
 for await (const event of session.stream()) {
@@ -35,3 +35,5 @@ This 1.0 prerelease requires CLI build protocol 6 and project manifest schema 3.
 Each deployment example has one `tsconfig.json` covering its application and runtime code.
 
 Run `pnpm check:examples` from the SDK root to type-check backend clients and runtimes and qualify their runtime-only artifacts. The [database example](database/README.md) demonstrates backend service functions and runtime operations over the same managed Workspace database. [Application-owned queue](application-queue/README.md) and [supervised activity](supervised-activity/README.md) examples retain persistence, recovery, and subprocess behavior.
+
+[The multi-App example](multi-app/README.md) declares two independently typed Apps on one client and builds separate Edge/Sandbox artifacts.

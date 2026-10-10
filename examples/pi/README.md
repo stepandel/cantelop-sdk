@@ -1,11 +1,11 @@
 # Pi agent integration
 
-`src/cantelop.ts` configures a `CantelopClient` with imported handlers from `src/agent.ts`. Application code imports the `cantelop` instance to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. The [backend compiler transform](../../docs/runtime-definitions.md) excludes provider dependencies from the backend bundle.
+`src/cantelop.ts` creates a client and declares a named App with imported handlers from `src/agent.ts`. Application code imports the named `app` handle to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. The [backend compiler transform](../../docs/runtime-definitions.md) excludes provider dependencies from the backend bundle.
 
 ```ts
-import { cantelop } from "./src/cantelop.js";
+import { app } from "./src/cantelop.js";
 
-const workspace = cantelop.workspace({ slug: "customer-123" });
+const workspace = app.workspace({ slug: "customer-123" });
 const session = workspace.session({
   id: "conversation-456",
   keepAliveSeconds: 300,
@@ -16,7 +16,7 @@ for await (const event of session.stream()) {
 }
 ```
 
-The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `slug: "another-agent"` on the client in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared in `cantelop.json`; keep provider credentials in the runtime environment.
+The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
 
 The runtime still handles its application-defined `prompt`, `steer`, and `cancel` messages. Until named runtime capabilities are implemented, send those custom commands through `dispatch()`. Protocol-level `session.steer(message)` submits the same payload with actor priority; `session.cancel(messageId)` targets one submission. Both require the coordinated platform/runtime follow-up; these examples do not advertise those capabilities yet.
 

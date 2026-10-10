@@ -1,49 +1,25 @@
-# App configuration
+# Client context and named App connections
 
-Instantiate a client bound to one existing App in your backend, then select its Workspaces and Sessions:
+The client is independent of App identity and runtime:
 
 ```ts
-import { CantelopClient } from "@cantelop/sdk";
-import { cantelop } from "./cantelop.js";
+const cantelop = new CantelopClient();
+// Or: new CantelopClient({ profile: "production" });
 
-const session = cantelop.workspace({ slug: "customer" }).session();
-await session.dispatch(message);
+export const support = cantelop.app({
+  name: "support-agent",
+  runtime: { receive },
+});
+const session = support.workspace({ slug: "customer" }).session();
 ```
 
-The client resolves its App’s Edge origin and integration credential. To select another configured App, use `new CantelopClient({ sessionRuntime, slug: "support-agent" })` or `new CantelopClient({ sessionRuntime, id: "app_0123456789abcdef0123456789abcdef" })`. Add `profile: "production"` to select a named profile. Workspace ID/slug selectors and Session lifecycle remain unchanged.
+`name` is the App's existing deployment slug, scoped to the selected account/environment. Each App resolves only its own Edge origin and integration credential. The SDK never reads administrative CLI login credentials or borrows another App's token. `cantelop.json` identifies a definition module and does not supply App identity; profile defaults cannot override an explicitly named App.
 
-This alpha implements SDK resolution. CLI credential provisioning and runtime injection still require the coordinated CLI/platform follow-ups. Existing CLI login credentials cannot authenticate this protocol. There is no separate hosting service involved: requests go to the selected App's deployed Edge Worker at `POST {app_url}/commands`.
+Constructing a client, App, Workspace, or Session does not contact the network or provision resources. The client captures its profile, runtime/environment context and directory once. Local integration files are read lazily when an App first needs a connection; concurrent operations on that App share resolution. Failures can retry after local credentials are repaired. Successful connections remain fixed for that App instance. Create a new client after changing captured environment configuration.
 
-The required `sessionRuntime` contains handler implementations. Declare message/event/reply/view types on `CantelopClient`; the compiler extracts the Sandbox implementation and generates runtime identity. Backend builds use the compiler transform to exclude provider dependencies. CLI-managed App records may carry generated `runtimeId`, or App-scoped environment configuration may inject `CANTELOP_SESSION_RUNTIME_ID`. These are system metadata rather than constructor options; compiled identity takes precedence. See [runtime compilation](runtime-definitions.md).
+## Scoped CLI/runtime configuration
 
-## Configuration sources
-
-App identity uses the first available selection in this order:
-
-1. An explicit `id` or `slug` argument.
-2. The selected profile's `defaultApp` in runtime-injected configuration.
-3. The selected profile's `defaultApp` in `CANTELOP_APP_CONFIG`.
-4. `CANTELOP_APP_ID` or `CANTELOP_APP_SLUG`.
-5. The nearest ancestor `cantelop.json` file's `app` slug (Node backends).
-6. The local integration profile's `defaultApp`.
-
-Credentials for that selected App are looked up in runtime configuration, `CANTELOP_APP_CONFIG`, App-bound environment credentials, then the local integration profile. A credential for another App is never used as a fallback. A profile argument overrides `CANTELOP_PROFILE`; otherwise each configuration document uses its `activeProfile`. A requested profile missing from a consulted document fails with `app_not_configured`.
-
-Environment-only deployment can supply `CANTELOP_APP_SLUG` and `CANTELOP_INTEGRATION_TOKEN`. The SDK derives `https://{slug}.cantelop.dev`; `CANTELOP_EDGE_URL` can override it. When supplying only `CANTELOP_APP_ID`, supply `CANTELOP_EDGE_URL` as well. If both ID and slug are provided, they must identify the same App. An environment token requires an explicit environment App identity; it does not become a global credential.
-
-`CANTELOP_APP_CONFIG` contains the JSON document described below. Managed runtimes can inject the same document at `globalThis[Symbol.for("dev.cantelop.sdk.app-config.v1")]` before constructing the client. Both mechanisms support backends without filesystem access. Credentials belong in trusted backend configuration; these are server-side integration clients.
-
-## Local integration profiles
-
-The Node adapter reads a separate `integration.json`, never the CLI's administrative login credential file. Its default location is:
-
-- macOS: `~/Library/Application Support/cantelop/integration.json`
-- Linux: `$XDG_CONFIG_HOME/cantelop/integration.json`, or `~/.config/cantelop/integration.json`
-- Windows: `%APPDATA%/cantelop/integration.json`
-
-`CANTELOP_INTEGRATION_CONFIG` overrides that path. When `CANTELOP_CONFIG` selects a CLI login file, its sibling `integration.json` is used unless the integration path is explicitly set. The login file's contents are not read. `CANTELOP_PROJECT_CONFIG` overrides project manifest discovery. Explicit or injected App selections skip project discovery.
-
-The versioned profile document looks like this:
+The CLI/platform follow-up must provide integration credentials scoped to named Apps. A private integration profile can include several:
 
 ```json
 {
@@ -51,12 +27,16 @@ The versioned profile document looks like this:
   "activeProfile": "default",
   "profiles": {
     "default": {
-      "defaultApp": { "slug": "support-agent" },
       "apps": [
         {
-          "id": "app_0123456789abcdef0123456789abcdef",
+          "id": "app_11111111111111111111111111111111",
           "slug": "support-agent",
-          "accessToken": "APP_INTEGRATION_CREDENTIAL"
+          "accessToken": "<App-scoped integration credential>"
+        },
+        {
+          "id": "app_22222222222222222222222222222222",
+          "slug": "research-agent",
+          "accessToken": "<different App-scoped credential>"
         }
       ]
     }
@@ -64,12 +44,24 @@ The versioned profile document looks like this:
 }
 ```
 
-An App record may include `edgeUrl` for a deployment origin override and `expiresAt` for credential expiry. Each record maps a canonical ID to a slug, allowing either selector without platform API discovery. IDs and slugs must be unique within a profile. Profile files are bounded to 1 MiB and must be private on POSIX systems, for example mode `0600`. Keep them out of source control. The compatible CLI will create and refresh these App integration profiles; manual configuration is available for qualification before that follow-up ships.
+Reserved `CANTELOP_APP_CONFIG` or the runtime injection point can supply the same document. `CANTELOP_INTEGRATION_CONFIG` selects a private integration file. Default file discovery uses Cantelop's integration profile directory, independently of CLI administrative login files; profile files require private permissions on Unix. `CANTELOP_PROFILE` selects a profile unless the client explicitly supplies one. Invalid/expired credentials fail without including their values in errors.
 
-## Resolution and failures
+For a single named App, environment configuration can supply `CANTELOP_APP_SLUG` and `CANTELOP_INTEGRATION_TOKEN`, with optional `CANTELOP_EDGE_URL`. A slug is necessary to match the code's App name; an App ID alone cannot match it. Other Apps require their own matching profile/injected record and cannot reuse this credential.
 
-Constructing a client, Workspace or Session reference does not make a network request. Runtime/environment values and the working directory are captured when the client is constructed. Local files are read lazily on the first operation requiring a connection. Concurrent operations share resolution. A failed resolution can retry after local configuration is repaired; successful connections remain fixed for that client instance. Create a new client after changing environment/runtime configuration or rotating a resolved credential.
+Normally the backend compiler embeds generated runtime identity. For uncompiled local development, CLI-managed App records may carry `runtimeId`, or matching environment configuration may inject `CANTELOP_SESSION_RUNTIME_ID`. These are generated system metadata, not constructor options. Compiled identity takes precedence over configuration. See [runtime compilation](runtime-definitions.md).
 
-`AppConfigurationError` exposes a redacted `code`: `app_configuration_missing`, `app_configuration_invalid`, `app_not_configured` or `app_credentials_expired`. Configuration failures occur before command submission and are not ambiguous execution failures.
+## App-specific overrides
 
-Advanced integrations can still provide `new CantelopClient({ sessionRuntime, edgeUrl, accessToken })` or `new CantelopClient({ sessionRuntime, connection })`. These explicit transports cannot be combined with App identity or profile options. Origins require HTTPS, with HTTP permitted only for localhost or numeric loopback development addresses. The default backend path is `new CantelopClient({ sessionRuntime })`, optionally with an App selector; transport details stay in configuration.
+Advanced transport overrides belong on an App, so one client's other Apps retain their own routing/authentication:
+
+```ts
+const app = cantelop.app({
+  name: "test-agent",
+  runtime: { receive },
+  connection: { async fetch(request) { return testEdge.fetch(request); } },
+});
+```
+
+A custom connection owns routing, authentication and reserved metadata. Alternatively supply `edgeUrl` and `accessToken` together on the App. URLs require HTTPS, with HTTP loopback permitted for local development. Credentials are backend-only; SDK transport does not follow redirects.
+
+Runtime handlers, provider environment declarations and optional Dockerfile configuration also belong on the App. Actual provider secrets are injected into its Sandbox by coordinated CLI/platform support. See [the definition contract](runtime-definitions.md).

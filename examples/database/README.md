@@ -3,10 +3,10 @@
 `src/cantelop.ts` configures the client and references `src/runtime.ts` for its Session implementation. `src/tasks.ts` contains plain database functions shared by the application backend and the runtime. `db/schema.ts` declares the managed application schema.
 
 ```ts
-import { cantelop } from "./src/cantelop.js";
+import { app } from "./src/cantelop.js";
 import { createTask, listTasks } from "./src/tasks.js";
 
-const workspace = cantelop.workspace({ slug: "customer-123" });
+const workspace = app.workspace({ slug: "customer-123" });
 await createTask(await workspace.database(), "Review proposal");
 const tasks = await listTasks(await workspace.database());
 
