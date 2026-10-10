@@ -14,7 +14,7 @@ The client resolves its App’s Edge origin and integration credential. To selec
 
 This alpha implements SDK resolution. CLI credential provisioning and runtime injection still require the coordinated CLI/platform follow-ups. Existing CLI login credentials cannot authenticate this protocol. There is no separate hosting service involved: requests go to the selected App's deployed Edge Worker at `POST {app_url}/commands`.
 
-The required `sessionRuntime` contains a runtime ID and relative `entrypoint` referencing its implementation module. Declare message/event/reply/view types on `CantelopClient`; build validation checks the referenced module’s handlers against that contract. Importing the client does not load the runtime implementation. App identity/credentials remain automatic; see [runtime definition enforcement](runtime-definitions.md).
+The required `sessionRuntime` contains handler implementations. Declare message/event/reply/view types on `CantelopClient`; the compiler extracts the Sandbox implementation and generates runtime identity. Backend builds use the compiler transform to exclude provider dependencies. CLI-managed App records may carry generated `runtimeId`, or App-scoped environment configuration may inject `CANTELOP_SESSION_RUNTIME_ID`. These are system metadata rather than constructor options; compiled identity takes precedence. See [runtime compilation](runtime-definitions.md).
 
 ## Configuration sources
 

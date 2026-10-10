@@ -9,7 +9,7 @@ Browser ← streamed chat text ← session.stream()
 
 The files follow the application flow:
 
-- `src/cantelop.ts` configures the client and references the agent runtime module.
+- `src/cantelop.ts` configures the client with imported runtime handlers. Backend builds use the [compiler transform](../../docs/runtime-definitions.md).
 - `src/agent.ts` exports the OpenAI runtime handler, bundled with the SDK listener for the Sandbox.
 - `src/contracts.ts` defines the shared message and output types.
 - `src/server.ts` serves the chat UI and handles browser requests.

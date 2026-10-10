@@ -27,7 +27,7 @@ for await (const event of session.stream({ after: view.cursor })) {
 await session.stop();
 ```
 
-Message, event, reply and view types are declared on `CantelopClient<Message, Event, Reply, View>`. Its required `sessionRuntime` references a module whose exported handlers are checked against the same contract at build time; the fourth generic is application view state. Dispatch and steer both accept the client’s message type and return `MessageRef` with ID, accepted timestamp and status lookup. The former separate steering generic and session-wide `abort()` are removed.
+Message, event, reply and view types are declared on `CantelopClient<Message, Event, Reply, View>`. Its required `sessionRuntime` contains handlers checked against the same contract and extracted at build time; the fourth generic is application view state. Dispatch and steer both accept the client’s message type and return `MessageRef` with ID, accepted timestamp and status lookup. The former separate steering generic and session-wide `abort()` are removed.
 
 References remain lazy. Session IDs remain App-scoped; omitting one generates it immediately. ID/slug Workspace selection is unchanged. Explicit Workspace resolution is memoized per reference, concurrent database calls share its handle, and failures can be retried. Session commands carry the selected Workspace directly; their Edge handlers own provisioning or read-only lookup.
 
@@ -35,7 +35,7 @@ The public constructor is `new CantelopClient({ sessionRuntime })`, bound to one
 
 Explicit `{ connection }` and `{ edgeUrl, accessToken }` are advanced/test overrides. HTTPS is required except for numeric/localhost loopback development, and redirects are disabled. A connection receives logical Edge requests at `https://edge.cantelop.internal`; it never receives private platform requests.
 
-Both artifacts embed the definition’s runtime ID. The client sends it in `X-Cantelop-Session-Runtime` on every command, including reads and streams. Edge returns `session_runtime_mismatch` (409) before provisioning or forwarding when the ID is missing/different. The native artifact captures that ID at build time and starts the referenced runtime module directly, without constructing a client. See [runtime definition enforcement](runtime-definitions.md).
+Edge, Sandbox, and compiled backend artifacts embed the compiler-generated runtime ID. The client sends it in `X-Cantelop-Session-Runtime` on every command, including reads and streams. Edge returns `session_runtime_mismatch` (409) before provisioning or forwarding when the ID is missing/different. The native artifact captures that ID at build time and starts the extracted handler implementation directly, without constructing a client. See [runtime definition enforcement](runtime-definitions.md).
 
 ## Common command envelope
 
@@ -115,7 +115,7 @@ POST streaming returns SSE with existing `{ stream_id, sequence, session_id, mes
 
 CLI build protocol 6 generates `worker.mjs` plus `cantelop-edge.json` with `buildEdgeApi({ definition, outdir, runtimeOrigin? })`, and `session-runtime.mjs` plus `cantelop-runtime.json` with `buildSessionRuntime({ definition, outdir, projectRoot? })`. Both advertise integration protocol 2; the native actor runtime protocol remains 2. The Worker requires `CANTELOP_INTEGRATION_TOKEN`; optional keep-alive requires the configured App default binding. Local bridge overrides must be numeric HTTP loopback origins.
 
-Project schema 3 selects the default-exported client module in `session`. The client supplies the runtime ID and implementation entrypoint. Both builds validate the runtime module’s exported handlers without executing it. It has no customer API entrypoint. The CLI must build/upload both artifacts, retain dispatcher/outbound routing and Worker environment/secrets synchronization, and update init, doctor, dev, watch, dry-run and deploy. Existing CLIs must reject this prerelease before upload; the SDK is unpublished and its definition/build contract is updated directly. Schema discovery/watch starts at the project or Session entrypoint and adding an absent schema file requires a watcher restart.
+Project schema 3 selects the default-exported client module in `session`. The client supplies inline handlers. The compiler validates their source without executing it, extracts their Sandbox dependency graph, generates identity, and removes runtime dependencies from the backend variant. The CLI must integrate the backend transform or generated backend module. It has no customer API entrypoint. The CLI must build/upload matching Edge/Sandbox artifacts and compile the backend definition, retain dispatcher/outbound routing and Worker environment/secrets synchronization, and update init, doctor, dev, watch, dry-run and deploy. Existing CLIs must reject this prerelease before upload; the SDK is unpublished and its definition/build contract is updated directly. Schema discovery/watch starts at the project or Session entrypoint and adding an absent schema file requires a watcher restart.
 
 The platform must implement private integration-v2 admission/read/cancellation routes, credentials/defaults, actor capability negotiation and durable view storage before production rollout. Existing Node/Bun runtime behavior is preserved in this foundation rather than advertising unsupported new capabilities.
 

@@ -10,11 +10,11 @@ This repository currently targets **1.0.0-alpha.0**. The SDK authoring/build bou
 // src/cantelop.ts — the application and deployment definition.
 import { CantelopClient } from "@cantelop/sdk";
 import type { Message, Event, Reply } from "./contracts.js";
+import { receive } from "./agent.js";
 
 export const cantelop = new CantelopClient<Message, Event, Reply>({
   sessionRuntime: {
-    id: "support.v1",
-    entrypoint: "./agent.ts",
+    receive,
   },
 });
 export default cantelop;
@@ -27,6 +27,8 @@ const workspace = cantelop.workspace({ slug: "customer-123" });
 // Or: cantelop.workspace({ id: canonicalWorkspaceId });
 const session = workspace.session({ id: "conversation-456" });
 ```
+
+Backend builds use the Cantelop compiler transform to exclude Sandbox dependencies; ordinary source imports load their dependencies. See [runtime compilation](docs/runtime-definitions.md).
 
 `CantelopClient` binds to one existing App; constructing it does not provision an App. The SDK resolves the App identity and scoped integration credentials from runtime context, environment configuration, or a CLI-managed integration profile. Use `new CantelopClient({ sessionRuntime, slug: "support-agent" })` or `{ id }` to select another configured App. CLI provisioning remains a coordinated follow-up. Connection overrides remain available for tests; see [automatic App configuration](docs/app-configuration.md).
 
@@ -79,6 +81,7 @@ Breaking iteration or aborting the subscription only closes its stream. It does 
 // src/agent.ts — the runtime module referenced by the client.
 import type { SessionContext } from "@cantelop/sdk/session";
 import type { Message, Event, Reply } from "./contracts.js";
+import { receive } from "./agent.js";
 import { runAgent } from "./agent.js";
 
 export async function receive({ message, session, env, output, reply, signal }: SessionContext<Message, Event, Reply>) {
@@ -109,7 +112,7 @@ Applications own durable jobs, checkpoints, and idempotency. The optional `onAct
 
 The [manifest schema](schemas/app-v3.json) has no `api` entry. A custom image uses `session: { "entrypoint": "src/cantelop.ts", "dockerfile": "docker/Dockerfile" }`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown; custom images install dependencies and assets outside `/workspace`.
 
-The SDK build module is reserved for CLI/platform tooling. It builds `session-runtime.mjs` plus `cantelop-runtime.json`, with runtime/integration/build protocol versions and optional managed database schema. `db/schema.ts` is discovered from the project/Session entrypoint, independently of any API module. Runtime and schema changes have separate watch events. `buildEdgeApi({ definition, outdir })` separately generates `worker.mjs` and `cantelop-edge.json` without a customer API entrypoint. The CLI must deploy both artifacts and require their `session_runtime_id` values to match. Message, event, reply and view types are declared on the client; every command carries `X-Cantelop-Session-Runtime`, which Edge checks before private routing. See [runtime definition enforcement](docs/runtime-definitions.md).
+The SDK build module is reserved for CLI/platform tooling. It builds `session-runtime.mjs` plus `cantelop-runtime.json`, with runtime/integration/build protocol versions and optional managed database schema. `db/schema.ts` is discovered from the project/Session entrypoint, independently of any API module. Runtime and schema changes have separate watch events. `buildEdgeApi({ definition, outdir })` separately generates `worker.mjs` and `cantelop-edge.json` without a customer API entrypoint. The CLI must deploy both artifacts and require their `session_runtime_id` values to match. Message, event, reply and view types are declared on the client; compiled commands carry `X-Cantelop-Session-Runtime`, which Edge checks before private routing. See [runtime definition enforcement](docs/runtime-definitions.md).
 
 The platform deploys the generated Edge Worker through the existing dispatcher/outbound trust chain. Compatible CLI support must update initialization, local connections, manifest validation, artifact upload, and deployment before this path can be used in production. Webhook handlers belong in the customer’s own application and call the same SDK primitives.
 

@@ -1,6 +1,6 @@
 # OpenCode agent integration
 
-`src/cantelop.ts` configures a `CantelopClient` with a reference to `src/agent.ts`. Application code imports the `cantelop` instance to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. Backend imports do not load it.
+`src/cantelop.ts` configures a `CantelopClient` with imported handlers from `src/agent.ts`. Application code imports the `cantelop` instance to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. The [backend compiler transform](../../docs/runtime-definitions.md) excludes provider dependencies from the backend bundle.
 
 ```ts
 import { cantelop } from "./src/cantelop.js";

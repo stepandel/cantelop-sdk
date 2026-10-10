@@ -18,7 +18,7 @@ corepack pnpm check:package
 The last command creates an ephemeral `npm pack` tarball, verifies that all
 JavaScript and declaration targets in `exports` are present, rejects source and
 test directories, installs the tarball into an empty consumer, imports every
-public entrypoint, verifies removed Edge authoring exports, and builds generated Edge and native runtime artifacts. It deletes the tarball and
+public entrypoint, verifies removed Edge authoring exports, and builds matching generated Edge, native runtime and backend client artifacts. It deletes the tarball and
 consumer afterward.
 
 The package version is explicit in `package.json`; release automation must fail
