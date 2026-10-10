@@ -22,7 +22,7 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 **CLI**
 
-- Adopt project schema 3 and CLI build protocol 6; reject incompatible SDKs before build/upload. The unpublished build contract requires a default-exported CantelopClient definition for both artifacts.
+- Adopt project schema 3 and CLI build protocol 6; reject incompatible SDKs before build/upload. The unpublished build contract requires a single exported CantelopClient instance discovered by type for both artifacts.
 - Update init, doctor, build/watch, dev, dry-run and deploy to produce/upload both generated Edge and native runtime artifacts. No customer `src/api.ts` is required.
 - Run the same command Worker locally against a numeric loopback bridge, provision local integration credentials/default keep-alive, and inject the reserved App configuration into managed callers. Populate the versioned integration profile for independently launched local code; export scoped environment configuration for deployed callers. SDK users need no URL/token arguments.
 - Preserve custom images, native dependencies, managed schema discovery/migrations, workspace mounts and recovery. Qualify all provider/database examples.

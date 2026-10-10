@@ -43,25 +43,49 @@ export async function compileClientDefinition(filename: string) {
   const diagnostics = ts.getPreEmitDiagnostics(program);
   if (diagnostics.length) fail("Invalid Session runtime:\n" + ts.formatDiagnostics(diagnostics.slice(0, 10), { getCurrentDirectory: () => path.dirname(filename), getCanonicalFileName: f => f, getNewLine: () => "\n" }));
   const fileSymbol = checker.getSymbolAtLocation(file);
-  if (!fileSymbol) return fail("Default export must be a CantelopClient definition");
-  const exported = checker.getExportsOfModule(fileSymbol).find(s => s.name === "default");
-  const declaration = exported?.declarations?.[0];
-  let expression: ts.Expression | undefined = declaration && ts.isExportAssignment(declaration) ? declaration.expression : undefined;
-  let clientSymbol: ts.Symbol | undefined;
-  let clientStatement: ts.Statement | undefined;
+  if (!fileSymbol) return fail("Export one top-level CantelopClient instance from the definition module");
   const topStatement = (node: ts.Node): ts.Statement | undefined => {
     while (node.parent && node.parent !== file) node = node.parent;
     return node.parent === file ? node as ts.Statement : undefined;
   };
-  if (expression && ts.isIdentifier(expression)) {
-    clientSymbol = checker.getSymbolAtLocation(expression);
-    const value = clientSymbol?.valueDeclaration;
-    if (value && ts.isVariableDeclaration(value)) { clientStatement = topStatement(value); expression = value.initializer; }
-  } else if (expression) clientStatement = topStatement(expression);
-  if (!expression || !ts.isNewExpression(expression) || !clientStatement) return fail("Default export must be a top-level new CantelopClient({...}) definition");
+  const resolveSymbol = (symbol: ts.Symbol) => symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+  const isSDKClient = (symbol: ts.Symbol | undefined) => symbol?.declarations?.some(d =>
+    ts.isClassDeclaration(d) && d.name?.text === "CantelopClient" && /[/\\]client\.(?:ts|d\.ts)$/.test(d.getSourceFile().fileName));
+  const exports = checker.getExportsOfModule(fileSymbol);
+  const clientExports = new Set<ts.Symbol>();
+  const aliasDeclarations = new Set<ts.VariableDeclaration>();
+  const candidates = new Map<ts.Node, { symbol: ts.Symbol; declaration: ts.Declaration; expression: ts.Expression | undefined }>();
+  for (const exported of exports) {
+    const symbol = resolveSymbol(exported);
+    if (!(symbol.flags & ts.SymbolFlags.Value) || !isSDKClient(checker.getTypeOfSymbolAtLocation(symbol, file).getSymbol())) continue;
+    clientExports.add(symbol);
+    let declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
+    let expression = declaration && ts.isExportAssignment(declaration) ? declaration.expression
+      : declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+    const seen = new Set<ts.Declaration>();
+    while (expression && ts.isIdentifier(expression)) {
+      if (declaration && ts.isVariableDeclaration(declaration)) {
+        if (seen.has(declaration)) return fail("Circular client export alias");
+        seen.add(declaration);
+        aliasDeclarations.add(declaration);
+      }
+      const referenced = checker.getSymbolAtLocation(expression);
+      declaration = referenced && resolveSymbol(referenced).valueDeclaration;
+      expression = declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+    }
+    if (declaration) candidates.set(declaration, { symbol, declaration, expression });
+  }
+  if (candidates.size === 0) return fail("Export one top-level CantelopClient instance from the definition module");
+  if (candidates.size > 1) return fail("Ambiguous client definition: export exactly one CantelopClient instance");
+  const candidate = [...candidates.values()][0]!;
+  const expression = candidate.expression;
+  const clientSymbol = ts.isVariableDeclaration(candidate.declaration) ? checker.getSymbolAtLocation(candidate.declaration.name) : undefined;
+  const clientStatement = topStatement(candidate.declaration);
+  if (!expression || !ts.isNewExpression(expression) || !clientStatement || candidate.declaration.getSourceFile() !== file) {
+    return fail("Exported client must be a top-level new CantelopClient({...}) in the definition module");
+  }
   const constructor = checker.getSymbolAtLocation(expression.expression);
-  const target = constructor && (constructor.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(constructor) : constructor);
-  if (!target?.declarations?.some(d => ts.isClassDeclaration(d) && d.name?.text === "CantelopClient" && /[/\\]client\.(?:ts|d\.ts)$/.test(d.getSourceFile().fileName))) return fail("Default export must instantiate the SDK CantelopClient");
+  if (!constructor || !isSDKClient(resolveSymbol(constructor))) return fail("Exported client must instantiate the SDK CantelopClient");
   const argument = expression.arguments?.[0];
   if (!argument || !ts.isObjectLiteralExpression(argument) || argument.properties.some(p => ts.isSpreadAssignment(p))) return fail("Client options must be a static object without spreads");
   const runtimeProperty = argument.properties.find(p => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === "sessionRuntime");
@@ -101,7 +125,11 @@ export async function compileClientDefinition(filename: string) {
     return selected;
   };
   const sandboxStatements = collect([runtime], true);
-  const backendStatements = collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty)], false);
+  const backendStatements = collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty), ...[...aliasDeclarations].map(d => d.initializer!)], false);
+  for (const alias of aliasDeclarations) {
+    const statement = topStatement(alias);
+    if (statement && statement !== clientStatement) backendStatements.add(statement);
+  }
   // Side effects must be owned by a referenced module; the definition itself is declarative.
   for (const statement of file.statements) {
     if (ts.isImportDeclaration(statement) && !statement.importClause || ts.isExpressionStatement(statement)) fail("Client definitions cannot contain top-level side effects; move them into a runtime dependency");
@@ -109,7 +137,7 @@ export async function compileClientDefinition(filename: string) {
   }
   for (const statement of file.statements) if (ts.isVariableStatement(statement) && statement.declarationList.declarations.length !== 1) fail("Use one top-level declaration per statement in client definitions");
   for (const symbol of checker.getExportsOfModule(fileSymbol)) {
-    if (symbol.name !== "default" && symbol !== clientSymbol && (symbol.flags & ts.SymbolFlags.Value)) fail("Client definitions may only export their CantelopClient instance; put other values in dependency modules");
+    if (!clientExports.has(resolveSymbol(symbol)) && (resolveSymbol(symbol).flags & ts.SymbolFlags.Value)) fail("Client definitions may only export their CantelopClient instance; put other values in dependency modules");
   }
   const printer = ts.createPrinter();
   const print = (node: ts.Node) => printer.printNode(ts.EmitHint.Unspecified, node, file);
@@ -126,7 +154,10 @@ export async function compileClientDefinition(filename: string) {
   const statementText = clientStatement.getText(file);
   const start = runtime.getStart(file) - clientStatement.getStart(file);
   const rewritten = statementText.slice(0, start) + replacement + statementText.slice(runtime.end - clientStatement.getStart(file));
-  const backendSource = selectedSource(backendStatements) + "\n" + rewritten + "\n" + (declaration && (declaration as ts.Node) !== clientStatement && ts.isExportAssignment(declaration) ? print(declaration) : "");
+  const exportStatements = file.statements.filter(statement => statement !== clientStatement && (ts.isExportAssignment(statement) || ts.isExportDeclaration(statement)));
+  const aliasStatements = new Set([...aliasDeclarations].map(topStatement).filter((statement): statement is ts.Statement => statement !== undefined && statement !== clientStatement));
+  const dependencies = new Set([...backendStatements].filter(statement => !aliasStatements.has(statement)));
+  const backendSource = selectedSource(dependencies) + "\n" + rewritten + "\n" + selectedSource(aliasStatements) + "\n" + exportStatements.map(print).join("\n");
   return { definition: { id }, entrypoint: filename, runtimeModule, backendSource, watchFiles: [...new Set(watchFiles)] };
 }
 

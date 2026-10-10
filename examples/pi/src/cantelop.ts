@@ -5,5 +5,3 @@ import type { SessionMessage, SessionEvent } from "./contracts.js";
 export const cantelop = new CantelopClient<SessionMessage, SessionEvent>({
   sessionRuntime: { receive },
 });
-
-export default cantelop;

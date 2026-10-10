@@ -56,7 +56,7 @@ try {
   await writeFile(path.join(consumer, "definition.mjs"), [
     'import { CantelopClient } from "@cantelop/sdk";',
     'import { receive } from "./session.mjs";',
-    'export default new CantelopClient({sessionRuntime:{receive}});',
+    'export const cantelop = new CantelopClient({sessionRuntime:{receive}});',
   ].join("\n"));
   await writeFile(path.join(consumer, "session.mjs"), [
     'import * as sessionSDK from "@cantelop/sdk/session";',
@@ -86,7 +86,7 @@ try {
     'assert.equal(backend.manifest.session_runtime_id, native.manifest.session_runtime_id);',
     'assert.equal(edge.manifest.session_runtime_id, native.manifest.session_runtime_id);',
     'assert.equal(typeof build.createCantelopCompilerPlugin, "function");',
-    'const compiledClient = (await import(new URL(backend.mainModule, `file://${process.cwd()}/`))).default;',
+    'const compiledClient = (await import(new URL(backend.mainModule, `file://${process.cwd()}/`))).cantelop;',
     'assert.ok(compiledClient instanceof sdk.CantelopClient);',
     'assert.throws(() => compiledClient.sessionRuntime.receive(), /Sandbox/);',
   ].join("\n"));

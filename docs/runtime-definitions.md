@@ -15,7 +15,6 @@ export const cantelop = new CantelopClient<Message, Event, Reply>({
     },
   },
 });
-export default cantelop;
 ```
 
 Or use `import { receive } from "./agent.js"` with `sessionRuntime: { receive }`. Separate handler files are an organizational choice. There is no runtime ID, implementation path, behavior factory, or client subclass to configure. The constructor captures a frozen handler snapshot and resolves its App connection lazily. Workspace/Session lifecycle is unchanged.
@@ -47,7 +46,7 @@ await build({
 
 The build module is tooling, not part of the application's runtime dependency graph. `buildBackendClient({ definition, outdir })` alternatively produces a standalone backend module and manifest; it leaves package dependencies external, so place its output in the application's dependency environment.
 
-Definitions must default-export a top-level `new CantelopClient({...})`, directly or through one exported variable. Options and `sessionRuntime` must be static object literals without spreads. Local helpers and closures are supported, with one top-level variable declaration per statement. The runtime cannot capture its client instance. Keep the definition declarative: top-level effects, bare side-effect imports, ambiguous unused value declarations, and additional value exports are rejected. Put initialization in a referenced runtime module or lifecycle hook. Arbitrary constructor execution cannot be safely split between execution environments.
+Definitions must export exactly one top-level `new CantelopClient({...})` instance. The compiler discovers it by SDK type, regardless of its variable or export name. Named exports are sufficient; default exports are optional. Multiple aliases of the same instance count once; distinct exported clients produce an ambiguity error. Backend compilation preserves the original export names. Options and `sessionRuntime` must be static object literals without spreads. Local helpers and closures are supported, with one top-level variable declaration per statement. The runtime cannot capture its client instance. Keep the definition declarative: top-level effects, bare side-effect imports, ambiguous unused value declarations, and additional value exports are rejected. Put initialization in a referenced runtime module or lifecycle hook. Arbitrary constructor execution cannot be safely split between execution environments.
 
 ## Identity and deployment
 

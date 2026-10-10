@@ -17,7 +17,6 @@ export const cantelop = new CantelopClient<Message, Event, Reply>({
     receive,
   },
 });
-export default cantelop;
 ```
 
 ```ts

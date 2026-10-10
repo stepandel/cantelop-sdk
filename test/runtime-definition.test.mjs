@@ -12,7 +12,7 @@ const messageId = "msg_" + "1".repeat(32);
 function command(type = "view") { return { protocolVersion: 2, id: messageId, workspace: { slug: "customer" }, session: { id: "chat" }, command: { type } }; }
 function request(body, runtimeId) { return new Request("https://agent.example/commands", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer scoped", ...(runtimeId === undefined ? {} : { "X-Cantelop-Session-Runtime": runtimeId }) }, body: JSON.stringify(body) }); }
 function clientSource(body = 'receive() {}', imports = '') { return `import { CantelopClient } from ${JSON.stringify(clientModule)}; ${imports}
-export const cantelop = new CantelopClient({ sessionRuntime: { ${body} } }); export default cantelop;`; }
+export const cantelop = new CantelopClient({ sessionRuntime: { ${body} } });`; }
 async function project(t) { const directory = await mkdtemp(path.join(tmpdir(), "cantelop-inline-")); t.after(() => rm(directory, { recursive: true, force: true })); return { directory, definition: path.join(directory, "cantelop.mts"), outdir: path.join(directory, "out") }; }
 
 test("clients require handler implementations, reject developer identity, and freeze a snapshot", () => {
@@ -63,7 +63,7 @@ test("compiler splits imports and closures without executing runtime code; all a
   assert.doesNotMatch(await readFile(native.mainModule, 'utf8'), /CantelopClient|edge.cantelop.internal/);
   assert.doesNotMatch(await readFile(backend.mainModule, 'utf8'), /provider-runtime-only|provider-build-execution|captured-closure/);
   const evaluated = await import('data:text/javascript,' + encodeURIComponent(compiled.backendSource.replace(JSON.stringify(clientModule), JSON.stringify(new URL('../dist/client.js', import.meta.url).href))));
-  const client = evaluated.default;
+  const client = evaluated.cantelop;
   assert.equal('id' in client.sessionRuntime, false);
   const fetch = globalThis.fetch;
   let header;
@@ -121,3 +121,31 @@ test("watch follows imported runtime and type contracts and recovers after inval
   assert.equal(events.at(-1).error,undefined);
 });
 async function waitFor(predicate) { const deadline=Date.now()+15000; while(!predicate()){if(Date.now()>deadline)throw Error('Timed out waiting for rebuild');await new Promise(resolve=>setTimeout(resolve,50));} }
+
+
+test("discovery accepts any client export name, preserves aliases, and deduplicates the same instance", async t => {
+  const {definition} = await project(t);
+  const prelude = `import { CantelopClient as Client } from ${JSON.stringify(clientModule)};`;
+  for (const [source, names] of [
+    ['export const agent = new Client({sessionRuntime:{receive(){}}});', ['agent']],
+    ['const agent = new Client({sessionRuntime:{receive(){}}}); export {agent as integration};', ['integration']],
+    ['export const agent = new Client({sessionRuntime:{receive(){}}}); export {agent as integration}; export default agent;', ['agent','integration','default']],
+    ['export const agent = new Client({sessionRuntime:{receive(){}}}); const alias = agent; export const integration = alias;', ['agent','integration']],
+  ]) {
+    await writeFile(definition, prelude + source);
+    const compiled = await compileClientDefinition(definition);
+    const module = await import('data:text/javascript,' + encodeURIComponent(compiled.backendSource.replace(JSON.stringify(clientModule), JSON.stringify(new URL('../dist/client.js',import.meta.url).href))));
+    assert.deepEqual(Object.keys(module).sort(), names.sort());
+    assert.ok(names.every(name => module[name] === module[names[0]]));
+    assert.doesNotMatch(compiled.runtimeModule,/CantelopClient/);
+  }
+});
+
+test("discovery rejects missing and multiple exported client instances", async t => {
+  const {definition} = await project(t);
+  const prelude = `import {CantelopClient} from ${JSON.stringify(clientModule)};`;
+  await writeFile(definition, prelude + 'const privateClient = new CantelopClient({sessionRuntime:{receive(){}}}); export type Message=string;');
+  await assert.rejects(compileClientDefinition(definition), /Export one top-level CantelopClient instance/);
+  await writeFile(definition, prelude + 'export const first = new CantelopClient({sessionRuntime:{receive(){}}}); export const second = new CantelopClient({sessionRuntime:{receive(){}}});');
+  await assert.rejects(compileClientDefinition(definition), /Ambiguous client definition/);
+});
