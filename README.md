@@ -1,577 +1,132 @@
 # Cantelop SDK
 
-Cantelop is a platform for running agents in isolated Sandboxes with persistent
-Workspaces. This TypeScript SDK lets you define an agent's HTTP API and Session
-runtime, send messages to the agent, and stream its responses. You control the
-agent logic; Cantelop manages routing and Sandbox lifecycle.
+Cantelop runs agents in isolated Sandboxes with durable Workspaces. The 1.0 SDK exposes App → Workspace → Session directly to application backends. Developers define their Session runtime; the SDK generates the protocol-managed Edge API and the platform deploys it with opinionated middleware.
 
-## Prerequisites
+This repository currently targets **1.0.0-alpha.0**. The SDK authoring/build boundary has changed: Edge API definitions and router exports are removed. The prerelease requires CLI build protocol **6**, runtime-only project schema **3**, and coordinated platform integration support. The existing CLI and platform cannot deploy the new path yet. The SDK is unpublished; see [integration contracts and follow-ups](docs/integration-foundation.md).
 
-### To use the SDK
-
-- Node.js 22 or newer
-- An API key for the LLM provider you plan to use
-
-### To run locally
-
-- Cantelop CLI
-- Bun
-- Docker with `linux/amd64` support
-
-### To deploy
-
-- A Cantelop account
-
-## Install
-
-For the best development experience, use the Cantelop CLI.
-
-### Cantelop CLI
-
-Install the CLI with Homebrew (recommended):
-
-```sh
-brew install stepandel/tap/cantelop
-```
-
-Alternatively, use the installer for macOS or Linux:
-
-```sh
-curl -fsSL https://console.cantelop.dev/install.sh | sh
-```
-
-### SDK Package
-
-Cantelop SDK can be installed directly in your app:
-
-```sh
-bun add @cantelop/sdk@latest
-```
-
-## Initialize a project
-
-Start with a single command
-
-```sh
-cantelop init -app <agent-name> -provider <openai, claude, or pi>
-```
-
-This creates `cantelop.json`, `src/api.ts`, `src/session.ts`, and `package.json`.  `cantelop.json` will look something like this.
-
-```json
-{
-  "app": "my-agent",
-  "api": "src/api.ts",
-  "session": "src/session.ts"
-}
-```
-
-## Architecture overview
-
-An App has two pieces:
-
-- **Edge API** (`src/api.ts`): receives HTTP requests and dispatches messages.
-- **Session runtime** (`src/session.ts`): runs your agent and business logic
-inside a native Sandbox.
-
-Cantelop uses the actor model: each Session has an identity, its own runtime
-process, and a mailbox that handles messages one at a time. Requests using the
-same Session ID reach the same logical actor. Your code decides how to handle
-each message.
-
-### Actor model and message lifecycle
-
-Cantelop separates the public Edge API from the native agent runtime. The Edge
-API validates HTTP requests and dispatches application-defined messages; the
-Session behaviour owns the agent, model, and business logic inside Linux.
-
-```text
-+--------+     +----------+     +-----------------------+
-| Client | --> | Edge API | --> | Session actor mailbox |
-+--------+     +----------+     |  (platform managed)   |
-                               +-----------+-----------+
-                                           |
-                                           v
-                                 +-------------------+
-                                 | Session behaviour |
-                                 +---------+---------+
-                                           |
-                         +-----------------+----------------+
-                         |                                  |
-                         v                                  v
-                +------------------+                +---------------+
-                | Managed activity |                | Output events |
-                +------------------+                +---------------+
-```
-
-A Session is an addressable actor. Opening the same App-scoped Session ID always
-targets the same logical actor, even when requests arrive at different Edge API
-workers. During each activation, Cantelop gives that actor a dedicated Sandbox
-running exactly one SDK-managed Session runtime process. The process is never
-shared by multiple Sessions, so module-level agent and conversation state is
-per-Session.
-
-The runtime processes the actor's in-memory inbox one message at a time.
-Fire Fuse persists transport admission and replies. The application persists
-its own jobs, checkpoints, and recovery state. Long-running agent work can move into the Session's single
-managed activity, allowing the mailbox to keep receiving commands such as
-steer and cancel. The application defines what every message means; Cantelop
-only provides identity, routing, serialization, activity management, and event
-transport.
-
-## Edge API
-
-In `src/api.ts`, define a `/chat` route that opens a Session and sends it a
-message. Cantelop supplies the App and router:
+## Integrate from an application backend
 
 ```ts
-import { defineApi } from "@cantelop/sdk/api";
+// src/cantelop.ts — the application and deployment definition.
+import { CantelopClient } from "@cantelop/sdk";
+import type { Message, Event, Reply } from "./contracts.js";
+import { receive } from "./agent.js";
 
-const workspaceSlug = "default";
+const cantelop = new CantelopClient();
 
-type SessionMessage = { type: "chat"; prompt: string };
-
-export default defineApi<SessionMessage>(({ app, router }) => {
-  router.route("POST", "/chat", async ({ request }) => {
-    const body = await request.json() as {
-      sessionId?: string;
-      keepAliveSeconds: number;
-      prompt: string;
-    };
-    const session = app.sessions.open({
-      ...(body.sessionId === undefined ? {} : { id: body.sessionId }),
-      workspaceSlug,
-      keepAliveSeconds: body.keepAliveSeconds,
-    });
-    const message = await session.dispatch({
-      type: "chat",
-      prompt: body.prompt,
-    });
-    return Response.json({ sessionId: session.id, message }, { status: 202 });
-  });
+export const support = cantelop.app<Message, Event, Reply>({
+  name: "support-agent",
+  runtime: { receive },
 });
 ```
 
-Omit `sessionId` for a new Session; reuse the returned ID to continue it.  
-`202` means the message was accepted, not that the agent has finished. Add  
-request validation and caller authorization for your application.
+```ts
+import { support } from "./cantelop.js";
 
-### Route listing
+const workspace = support.workspace({ slug: "customer-123" });
+// Or: support.workspace({ id: canonicalWorkspaceId });
+const session = workspace.session({ id: "conversation-456" });
+```
 
-Each deployment publishes the API's route table, the method and path of every
-`router.route` call, so the Cantelop console can list an App's routes beside
-their traffic. To collect it, the build runs your `defineApi` factory once with
-an empty `env` and an `app` that throws when used. Handlers never run.
+Backend builds use the Cantelop compiler transform to exclude Sandbox dependencies; ordinary source imports load their dependencies. See [runtime compilation](docs/runtime-definitions.md).
 
-Keep the factory to route registration. A factory that throws without
-environment values, or that uses `app` outside a handler, still deploys, but
-the build warns and the release lists no declared routes. Routes registered
-only when an environment value is set are not listed.
+`CantelopClient` supplies shared connection context, optionally selecting a profile. Each `cantelop.app({ name, runtime })` declares a named App with its own typed runtime and Workspace namespace. One client can define multiple Apps. App names are deployment slugs, independent of JavaScript export names. Connections and scoped credentials resolve automatically per App; constructing these objects does not provision resources. See [App configuration](docs/app-configuration.md).
 
-## Session runtime
+Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. The Edge API remains deployed; its implementation is owned by the protocol rather than developer-authored routing.
 
-In `src/session.ts`, handle the same chat message and publish the result.
-Here, `runAgent` is your own provider integration in `agent.ts`, not an SDK
-function:
+Workspace and Session references are lazy. Omitting a Session ID generates one immediately. `dispatch()` lazily resolves/provisions a Workspace slug and activates a Sandbox when needed. A canonical Workspace ID never provisions a replacement. Explicit resolution and database access share the Workspace reference’s cached metadata. Session commands send the selected Workspace to Edge for operation-specific lookup.
 
 ```ts
-import { defineSessionBehaviour } from "@cantelop/sdk/session";
-import { runAgent } from "./agent.js";
-
-type SessionMessage = { type: "chat"; prompt: string };
-type SessionEvent = { type: "done"; answer: string };
-
-export default defineSessionBehaviour<SessionMessage, SessionEvent>(
-  async ({ message, session, env, output, signal }) => {
-    const answer = await runAgent(message.payload.prompt, {
-      sessionId: session.id,
-      apiKey: env.OPENAI_API_KEY,
-      signal,
-    });
-    await output.send({ type: "done", answer });
-  },
+const receipt = await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+const status = await receipt.status();
+const reply = await session.request(
+  { type: "prompt", prompt: "Return one answer" },
+  { timeoutMs: 15_000 },
 );
 ```
 
-This handler is an example of a queue behavior. It waits for the agent before handling the next message.
+Acceptance means durable message admission, not agent completion. `request()` enters the normal-priority mailbox and returns one JSON reply when the handler finishes. Timeout or disconnect ends waiting and does not prove execution stopped. A failed request exposes its Message ID through `RemoteAppError`; reuse that ID for an ambiguous retry. The SDK does not automatically replay writes.
 
-Applications that can resume from durable Workspace state may opt into Sandbox
-recovery with an `onRecover` hook:
+## Session lifecycle and controls
 
-```ts
-export default defineSessionBehaviour<SessionMessage, SessionEvent>({
-  async receive(context) {
-    // Handle ordinary messages.
-  },
-  async onRecover({ recovery, activity }) {
-    activity.start(async ({ signal }) => {
-      await resumeSavedWork(recovery.interruptedMessageId, { signal });
-    });
-  },
-});
-```
-
-After an unexpected Sandbox loss during outstanding work, Cantelop activates a
-replacement with the same Workspace and invokes this hook before admitting new
-messages. Recovery is at least once across replacement Sandboxes, so persist
-enough application state to make repeated calls safe. Returning from the hook
-finishes recovery initialization; managed activity remains supervised until it
-settles. Normal release, cancellation, idle expiry, and work timeout do not invoke
-the hook.
-
-## Environments
-
-The `environment` field in `cantelop.json` documents the configuration your app
-expects, provides shared defaults for local development, and lets the CLI catch
-missing production configuration before deployment.
-
-### Declare configuration
-
-Add an `environment` block to your manifest:
-
-```json
-{
-  "environment": {
-    "OPENAI_MODEL": { "default": "gpt-5-mini", "required": true },
-    "OPENAI_API_KEY": { "secret": true, "required": true }
-  }
-}
-```
-
-- `default` supplies a string value for local development. It never sets a
-production value and cannot be used with `secret: true`.
-- `secret` tells the CLI to use encrypted environment variables for the production value.
-It defaults to `false`; setting it does not create or upload a secret.
-- `required` tells `cantelop doctor` to check that the target App has that name  
-configured with the declared kind.
-
-### Run with local values
-
-Variables in a `.env` file beside `cantelop.json` can be used for local development.
-Override the default values in `cantelop.json` with the values in `.env`.
-
-### Configure and check production
-
-After `cantelop login`, find the App ID with `cantelop app list` and use it for
-configuration commands:
-
-```sh
-cantelop app env set OPENAI_MODEL=gpt-5-mini
-printf %s "$OPENAI_API_KEY" | cantelop app secret set OPENAI_API_KEY
-```
-
-Inspect configuration with:
-
-```sh
-cantelop app env list
-cantelop app secret list
-cantelop doctor
-```
-
-Use `env set` or `secret set` again to update a value. Remove it with
-`cantelop app env unset APP_ID NAME` or
-`cantelop app secret unset APP_ID NAME`.
-
-## Deploy
-
-For the first deployment, authenticate the CLI and deploy the App named in
-`cantelop.json`:
-
-```sh
-cantelop login
-cantelop deploy --create-app
-```
-
-Run `cantelop doctor` to check the toolchain, project, and required production
-configuration once the App exists. For subsequent deployments, use:
-
-```sh
-cantelop deploy
-```
-
-`cantelop deploy` builds the Edge API and `linux/amd64` Session image, uploads
-them, and creates a release. Run `cantelop deploy --dry-run` first to perform
-the same build without login, upload, or release creation.
-
-### Custom runtime images
-
-When native dependencies or system tools require a custom image, expand the
-`session` entry in `cantelop.json`:
-
-```json
-"session": {
-  "entrypoint": "src/session.ts",
-  "dockerfile": "docker/Dockerfile"
-}
-```
-
-The Docker build context is always the directory containing `cantelop.json`,
-even when the Dockerfile is in a subdirectory. Resolve Dockerfile `COPY` paths
-from that project root and place build ignore rules in its `.dockerignore`.
-
-The Dockerfile installs dependencies and supplies assets. For example, to add
-Python:
-
-```dockerfile
-FROM debian:bookworm-slim
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates python3 \
-    && rm -rf /var/lib/apt/lists/*
-```
-
-Cantelop supplies the Session runtime, managed user, home and cache directories,
-startup command, and `/workspace` working directory. You do not need to set
-`USER`, `WORKDIR`, `ENTRYPOINT`, or `CMD` for the runtime. You can still use
-`USER` and `WORKDIR` within build steps; the CLI sets their final runtime values.
-
-Install dependencies and copy assets into system locations or a path such as
-`/opt/app`. Files baked into the image under `/workspace` would be hidden by the
-durable mount, so the CLI rejects them. Home, temporary files, and caches are
-ephemeral; write data that must survive a Sandbox restart under `/workspace`.
-
-Cantelop owns mounts, listener ports, health checks, and shutdown behavior. The
-final base image must not declare `VOLUME`, pending `ONBUILD` instructions, or
-`CANTELOP_*` environment variables. `/__cantelop` and `/opt/cantelop` are reserved
-for the runtime. Ordinary application `ENV` values remain available, while
-identity, home, temporary, and XDG paths are managed by Cantelop. Keep credentials
-in App environment variables and secrets.
-
-## Workspaces
-
-Each Sandbox mounts its Session's Workspace at `/workspace`. This is durable
-storage: its files survive Sandbox termination and remain available when a new
-Sandbox starts.
-
-Both default and custom images start the Session process in `/workspace`, so
-relative file paths resolve inside the durable Workspace.
-
-A Workspace can be shared by multiple Sessions, including Sandboxes running
-in parallel. They access the same files through NFS, which supports concurrent
-reads and writes across Sandboxes.
-
-Workspaces are scoped to an App and addressed by a server-selected slug.
-Use `workspaces.open()` when an application needs to provision or inspect the
-Workspace independently of a Session:
-
-```ts
-const workspace = await app.workspaces.open({ slug: "user-1" });
-const workspaceId = workspace.id;
-```
-
-## Sessions and messages
-
-Every message belongs to a Session. `app.sessions.open()` is lazy and creates
-a local reference. The first `dispatch()` allocates a Sandbox if needed  
-and sends the message. Omitting `id` generates one in the SDK, immediately  
-available as `session.id`.
-
-```ts
-const session = app.sessions.open({
-  id: "telegram",
-  workspaceSlug: "user-1",
-  keepAliveSeconds: 300,
-});
-```
-
-A Session keeps its Sandbox warm for `keepAliveSeconds` after work completes.
-If the Sandbox has already been released, the platform can reactivate the same
-logical Session on a new Sandbox. The Session identity remains reusable when
-its Sandbox is released. Set `keepAliveSeconds: 0` to release the Sandbox as
-soon as the mailbox and managed activity are idle.
-
-Releasing a Sandbox clears its temporary storage. Files in the persistent
-`/workspace` mount survive and are available to the next Sandbox.
-
-To stop a Session's current Sandbox and close its event streams:
+Workspaces provide durable files and databases. Session memory and temporary files are ephemeral; Session identity remains reusable. Multiple Sessions may share a Workspace, so the application owns coordination of shared state. Session IDs remain App-scoped even though references are nested under Workspace.
 
 ```ts
 await session.stop();
+// The same identity can activate on a new Sandbox.
+await session.dispatch({ type: "prompt", prompt: "Continue" });
 ```
 
-The Session remains reusable: a later `dispatch()` or `request()` can activate
-it on a new Sandbox. Stopping does not wait for work to become idle, so it
-can interrupt running work. Calling it again on an idle Session succeeds.
-It does not create a Session or resolve/create its Workspace; stopping a
-Session that has never been materialized returns a `RemoteAppError` from the
-platform. Other platform errors are also surfaced as `RemoteAppError`.
+`stop()` releases the current Sandbox and closes streams, potentially interrupting work. It retains current errors for an unmaterialized Session. The integration route includes the Workspace selector for platform ownership/binding checks without provisioning.
 
-Opening a Session requires a `workspaceSlug` and an explicit `keepAliveSeconds`.
-The SDK resolves and, when absent, creates the App-scoped Workspace on the first
-`dispatch()` or `events()` call. Supplying a canonical `workspaceId` remains
-supported when the caller already has one. The Session ID is immutable and App-scoped,
-while `keepAliveSeconds` applies to each request. Use a new ID for a distinct
-logical Session.
+Dispatch and steer accept the same message type and return an ID/status reference. Dispatch queues normal work; steer prioritizes its message at the next safe scheduling boundary. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
 
-### Implementing different message types
+`cancel(messageId)` targets one queued/running message. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Actor priority, cancellation attribution and view publication/storage still require coordinated platform/runtime support; runtime artifacts advertise those capabilities as false.
 
-You define the message protocol and control how each message is handled.
-Fire Fuse persists messages in its transport queue before activating the
-Session's Sandbox. The runtime handles them one at a time in FIFO (acceptance)
-order. It
-does not assign business logic to names such as `chat`, `steer`, or `cancel`.
-
-Extend the message type used by your API and Session behaviour, then dispatch
-to the same Session reference:
+## Stream output
 
 ```ts
-type SessionMessage =
-  | { type: "chat"; prompt: string }
-  | { type: "steer"; prompt: string }
-  | { type: "cancel" };
-
-await session.dispatch({ type: "steer", prompt: "Focus on the tests first." });
-await session.dispatch({ type: "cancel" });
-```
-
-For short commands that need one result, give the behaviour a reply type and
-call `request()`. Requests enter the same FIFO mailbox as dispatched messages;
-the HTTP wait ends when the handler replies and returns, without waiting for a
-managed activity or Session quiescence.
-
-```ts
-type SessionReply = { authenticated: boolean };
-
-export default defineSessionBehaviour<SessionMessage, SessionEvent, SessionReply>(
-  async ({ message, reply }) => {
-    if (message.payload.type === "auth.check") {
-      reply({ authenticated: await authenticated() });
-    }
-  },
-);
-
-const result = await session.request(
-  { type: "auth.check" },
-  { timeoutMs: 15_000, signal: request.signal },
-);
-```
-
-A request handler must call `reply()` exactly once with JSON-compatible data of
-at most 64 KiB. A timeout or caller disconnect stops waiting but does not prove
-that execution stopped. A failed request throws a `RemoteAppError` carrying its
-`messageId`; pass that as `id` when retrying an ambiguous request and the
-platform retrieves the original result instead of executing a second copy.
-Use event streaming for incremental or long-running output.
-
-Your behaviour inspects `message.payload.type` and decides whether to queue
-work, call a provider's steering API, cancel an activity, or do something else.
-Use a managed activity for long-running work so later messages can be handled
-while it runs.
-
-See the [OpenAI](./examples/openai), [Anthropic](./examples/anthropic),
-[Pi](./examples/pi), and [OpenCode](./examples/opencode) examples for complete
-routes, message handlers, and provider-specific steering and cancellation.
-
-## Response streaming (SSE and WebSockets)
-
-Publish responses from a Session behaviour or managed activity with
-`output.send()`.
-
-```ts
-for await (const delta of generate(prompt)) {
-  await output.send({ type: "text_delta", delta });
+for await (const event of session.stream({ signal })) {
+  console.log(event.data, event.cursor, event.messageId);
 }
-await output.send({ type: "done" });
 ```
 
-Await each send for backpressure, and keep the behaviour or activity running
-until streaming finishes. Events must be JSON-compatible and at most 64 KiB.
+`stream()` is an async iterator over existing SSE output. Metadata includes cursor `{ streamId, sequence }`, Session ID, Message ID, and creation time. Resume explicitly with `session.stream({ after: savedCursor })`. Replay remains bounded; cursor expiration and stream reset retain their remote error codes. The SDK does not reconnect automatically.
 
-### Transport behavior
+Breaking iteration or aborting the subscription only closes its stream. It does not cancel agent work or keep the Sandbox warm. Browser-facing routes remain part of the application's own authorized backend.
 
-`session.events(request)` adapts a `GET` request into a Session event stream.
-Your application chooses the public route and authorizes access.
-
-- **SSE:** the default transport. Browser `EventSource` reconnects with the last
-  event's `stream_id:sequence` in `Last-Event-ID`; the SDK forwards it for replay.
-- **WebSockets:** upgrade requests require the `cantelop.events.v1` subprotocol.
-Cantelop enforces an output-only stream; send commands through `dispatch()`.
-
-Both transports deliver your payload plus `stream_id`, `sequence`, `session_id`,
-`message_id`, and `created_at`. Resume explicitly with
-`?stream_id=<stream>&after=<sequence>`; this also works for SSE and overrides
-`Last-Event-ID`. Replay is bounded and in-memory: expired cursors return
-`event_cursor_expired`, while a replaced stream reports `event_stream_reset`.
-
-Disconnecting stops only the subscription, not the agent. Subscriptions do not
-keep a Sandbox warm.
-
-### Example route
-
-Here, `/events` and `agent:primary` are example choices, not SDK requirements:
+## Define the runtime
 
 ```ts
-router.route("GET", "/events", async ({ request }) => {
-  await requireAuthenticatedViewer(request);
-  const session = app.sessions.open({
-    id: "agent:primary",
-    workspaceSlug: "user-1",
-    keepAliveSeconds: 300,
+// src/agent.ts — the runtime module referenced by the client.
+import type { SessionContext } from "@cantelop/sdk/session";
+import type { Message, Event, Reply } from "./contracts.js";
+import { receive } from "./agent.js";
+import { runAgent } from "./agent.js";
+
+export async function receive({ message, session, env, output, reply, signal }: SessionContext<Message, Event, Reply>) {
+  const answer = await runAgent(message.payload.prompt, {
+    sessionId: session.id, apiKey: env.PROVIDER_API_KEY, signal,
   });
-  return session.events(request);
-});
+  await output.send({ type: "done" });
+  reply({ answer });
+}
 ```
 
-Connect with `new EventSource("/events")` or a WebSocket using
-`cantelop.events.v1`. See the [provider examples](./examples/README.md) for
-complete clients. Both transports also work with `cantelop dev`.
+`runAgent` is application code. The runtime module exports `receive` and optional `onActivate`, `onRecover` and `redelivery`; the build validates the handlers configured on the App against its contract without executing agent code. The Sandbox bundle includes this implementation and the SDK listener, with no API client. Each activation runs one Session runtime in a dedicated Sandbox. Inline handlers serialize subsequent intake. Move long-running work into `context.activity` when the mailbox must remain responsive to commands.
 
-## Examples
+Applications own durable jobs, checkpoints, and idempotency. The optional `onActivate` hook restores state once per incarnation; the optional `onRecover` hook opts into replacement-Sandbox recovery. Redelivery remains opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies retain their JSON and size limits.
 
-Each provider example contains two independently checked entrypoints:
+## Runtime-only project
 
-- [examples/openai](./examples/openai)
-- [examples/anthropic](./examples/anthropic)
-- [examples/pi](./examples/pi)
+```json
+{
+  "schema_version": 3,
+  "definition": "src/cantelop.ts"
+}
+```
 
-In every example, `src/api.ts` is Edge-only and `src/session.ts` defines the
-native Session behaviour.
+The [manifest schema](schemas/app-v3.json) points to a definition module and has no App name, runtime configuration, or customer API entry. App names, environment declarations, and optional `dockerfile: "docker/Dockerfile"` belong in `cantelop.app(...)`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown.
 
-## Development
+The SDK build module is tooling. `buildAppArtifacts({ definition, outdir })` generates separate Edge/Sandbox artifacts for each named App and a shared compiled backend module. Individual builds/watch accept an `app` name selector when a module defines multiple Apps. Each deployment must match `app_name` and `session_runtime_id`; the backend compiler removes every App's runtime-only dependencies. `db/schema.ts` is discovered independently and describes each App's isolated Workspace databases. See [runtime compilation](docs/runtime-definitions.md).
 
-```bash
-pnpm install
+The platform deploys the generated Edge Worker through the existing dispatcher/outbound trust chain. Compatible CLI support must update initialization, local connections, manifest validation, artifact upload, and deployment before this path can be used in production. Webhook handlers belong in the customer’s own application and call the same SDK primitives.
+
+## Examples and development
+
+[The multi-App example](examples/multi-app/README.md) shows two Apps under one client. [Provider examples](examples/README.md) have backend `src/cantelop.ts` and native `src/agent.ts`. The [database example](examples/database/README.md) shares application schema across both. [Workspace database documentation](docs/workspace-databases.md) covers renewal and transaction behavior.
+
+```sh
+pnpm install --frozen-lockfile
 pnpm check
 pnpm test
 pnpm check:examples
 pnpm check:package
+pnpm test:bun
 ```
 
-`check:package` packs the exact npm artifact, rejects leaked development files,
-installs it into an empty project, imports every public entrypoint, and builds a
-customer API. See [docs/releasing.md](./docs/releasing.md) for the release
-boundary. Publishing is a separate production operation.
+Package qualification checks the actual npm tarball, removed exports/files, generated Edge and native runtime build artifacts, and a clean consumer's integration types. Publishing remains a separate operation; see [release guidance](docs/releasing.md).
 
-## Workspace databases
+All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope at `POST /commands`. The Edge interprets each operation through its own handler; Edge ↔ Sandbox remains the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
 
-API and Session runtimes share an automatically provisioned Workspace database.
-See [Workspace database access](docs/workspace-databases.md) for SQL clients,
-renewable native credentials, and transaction behavior.
-
-## Application owned messaging
-
-The Session inbox stays in memory even when Workspace database credentials are
-available. A successful `receive` return acknowledges application intake.
-Applications that need durable work commit their own queue or control update
-before returning. Keep agent runs in `context.activity` so new receive handlers
-can queue, steer, or cancel them while they run.
-
-`onActivate(context)` runs once in each runtime incarnation, before its first
-receive or recovery callback. Restore pending application jobs and checkpoints
-there, and register the worker as tracked activity. The hook has the Session,
-database, activity, output, signal, and send capabilities. If restoration fails,
-intake fails rather than acknowledging uninitialized work.
-
-Set `redelivery: true` only when your receive handler deduplicates message IDs
-across process loss. The platform may then redeliver unacknowledged intake after
-confirming the old owner is terminated, within the original delivery deadline.
-Without that opt-in, interrupted intake remains uncertain and is not replayed.
-An application DB commit and the platform acknowledgement are separate commits;
-external side effects are never guaranteed exactly once.
-
-`context.send()` and activity completion messages enter the in-memory inbox.
-Persist internal follow-ups yourself if they must survive a crash. Acknowledged
-intake and a completed application job are separate states. Compute remains busy
-while tracked intake, activity, or output handoff is outstanding.
-
-See the [application queue example](examples/application-queue/README.md) for
-application-owned receipt, queue, steering, cancellation, and checkpoint tables.
+For a runnable browser and server integration, see [the web chat example](examples/web-chat/README.md).

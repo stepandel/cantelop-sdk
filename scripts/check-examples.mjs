@@ -1,156 +1,61 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { build } from "esbuild";
+import { buildEdgeApi, buildSessionRuntime, buildAppArtifacts, createCantelopCompilerPlugin } from "../dist/build.js";
 
-import { buildApi, buildSessionRuntime } from "../dist/build.js";
-
-const repositoryRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
-const schemaUrl =
-  "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v2.json";
-const examples = ["openai", "anthropic", "pi", "opencode"];
-const validWorkspaceSlug = "user-1";
-const expectedEnvironment = {
-  openai: {
-    OPENAI_MODEL: { default: "gpt-5-mini" },
-    OPENAI_API_KEY: { secret: true, required: true },
-  },
-  anthropic: {
-    ANTHROPIC_API_KEY: { secret: true, required: true },
-  },
-  opencode: {
-    ANTHROPIC_API_KEY: { secret: true, required: true },
-    OPENCODE_MODEL: { default: "anthropic/claude-sonnet-4-5" },
-  },
-  pi: {
-    ANTHROPIC_API_KEY: { secret: true, required: true },
-    PI_PROVIDER: { default: "anthropic" },
-    PI_MODEL: { default: "claude-sonnet-5" },
-  },
-};
-const temporaryRoot = await mkdtemp(
-  path.join(os.tmpdir(), "cantelop-example-check-"),
-);
-
+const root = path.resolve(import.meta.dirname, "..");
+const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
 try {
-  const schema = JSON.parse(
-    await readFile(path.join(repositoryRoot, "schemas/app-v2.json"), "utf8"),
-  );
-  assert.equal(schema.$id, schemaUrl);
-  assert.ok(schema.examples.length > 0);
-  for (const example of schema.examples) {
-    assert.equal(example.session, "src/session.ts");
-  }
-  assert.equal(schema.examples[1].environment.OPENAI_MODEL.default, "gpt-5-mini");
-
-  const rootReadme = await readFile(path.join(repositoryRoot, "README.md"), "utf8");
-  assert.doesNotMatch(rootReadme, /`\[[^`]+\]\([^)]+\)`/);
-
-  for (const example of examples) {
-    const exampleRoot = path.join(repositoryRoot, "examples", example);
-    const apiSource = await readFile(path.join(exampleRoot, "src/api.ts"), "utf8");
-    const contractsSource = await readFile(path.join(exampleRoot, "src/contracts.ts"), "utf8");
-    const sessionSource = await readFile(path.join(exampleRoot, "src/session.ts"), "utf8");
-    const routes = [...apiSource.matchAll(/router\.route\("([A-Z]+)", "([^"]+)"/g)]
-      .map(([, method, route]) => `${method} ${route}`);
-    assert.deepEqual(routes, [
-      "GET /health",
-      "GET /events",
-      "POST /chat",
-      "POST /steer",
-      "POST /cancel",
-    ]);
-    assert.doesNotMatch(sessionSource, /steer:\s*steerTurn/);
-    assert.doesNotMatch(sessionSource, /queuedPrompts|PromptInput|AnswerOutput/);
-    assert.doesNotMatch(sessionSource, /type:\s*"message"/);
-    assert.doesNotMatch(sessionSource, /No active .* to steer|already processing a prompt/);
-    if (example === "anthropic") {
-      assert.doesNotMatch(sessionSource, /promptQueue/);
-      assert.match(sessionSource, /AsyncIterable<SDKUserMessage>/);
-      assert.match(sessionSource, /command\.type === "steer" \? "now" : "later"/);
-    } else {
-      assert.match(sessionSource, /promptQueue\.push\(command\.prompt\)/);
-      assert.match(sessionSource, /send\(\{ type: "prompt", prompt: nextPrompt \}\)/);
-    }
-    assert.match(apiSource, /type:\s*"prompt"/);
-    assert.match(apiSource, /type:\s*"steer"/);
-    assert.match(apiSource, /type:\s*"cancel"/);
-    assert.match(apiSource, /session\.events\(request\)/);
-    assert.match(contractsSource, /SessionMessage/);
-    assert.match(contractsSource, /SessionEvent/);
-    assert.match(sessionSource, /activity\.start\(/);
-    assert.match(sessionSource, /defineSessionBehaviour/);
-    const manifest = JSON.parse(
-      await readFile(path.join(exampleRoot, "cantelop.json"), "utf8"),
-    );
-    assert.deepEqual(manifest.environment, expectedEnvironment[example]);
-    if (example === "openai") {
-      assert.match(sessionSource, /OPENAI_MODEL \?\? "gpt-5-mini"/);
-    }
-    if (example === "pi") {
-      assert.match(sessionSource, /PI_MODEL \?\? "claude-sonnet-5"/);
-      assert.match(sessionSource, /agent\?\.clearAllQueues\(\)/);
-    }
-
-    const apiArtifact = await buildApi({
-      entrypoint: path.join(exampleRoot, "src/api.ts"),
-      outdir: path.join(temporaryRoot, example, "api"),
+  const schema = JSON.parse(await readFile(path.join(root, "schemas/app-v3.json"), "utf8"));
+  assert.deepEqual(schema.required, ["schema_version", "definition"]);
+  assert.equal("api" in schema.properties, false);
+  for (const name of ["openai", "anthropic", "pi", "opencode", "database", "web-chat"]) {
+    const projectRoot = path.join(root, "examples", name);
+    const manifest = JSON.parse(await readFile(path.join(projectRoot, "cantelop.json"), "utf8"));
+    assert.equal(manifest.schema_version, 3);
+    assert.equal("api" in manifest, false);
+    await assert.rejects(access(path.join(projectRoot, "src/api.ts")), { code: "ENOENT" });
+    const client = await build({
+      entryPoints: [path.join(projectRoot, name === "web-chat" ? "src/server.ts" : "src/cantelop.ts")], bundle: true,
+      platform: "node", format: "esm", write: false, metafile: true, plugins: [createCantelopCompilerPlugin({ definition: path.join(projectRoot, "src/cantelop.ts") })],
     });
-    assert.equal(apiArtifact.routeDiscoveryError, undefined);
-    assert.deepEqual(
-      apiArtifact.manifest.routes.map(({ method, path: route }) => `${method} ${route}`),
-      ["POST /cancel", "POST /chat", "GET /events", "GET /health", "POST /steer"],
-    );
-    const worker = (await import(
-      `${pathToFileURL(apiArtifact.mainModule).href}?example=${example}`
-    )).default;
-    const invalidRequests = [
-      new Request("https://example.invalid/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{",
-      }),
-      jsonRequest("/chat", {
-        workspaceSlug: validWorkspaceSlug,
-        keepAliveSeconds: -1,
-        prompt: "hello",
-      }),
-      jsonRequest("/steer", {
-        sessionId: "invalid session",
-        workspaceSlug: validWorkspaceSlug,
-        keepAliveSeconds: 30,
-        prompt: "hello",
-      }),
-      jsonRequest("/cancel", {
-        sessionId: "session-1",
-        workspaceSlug: "invalid--workspace",
-        keepAliveSeconds: 30,
-      }),
-      new Request(
-        "https://example.invalid/events?sessionId=&workspaceSlug=&keepAliveSeconds=604801",
-      ),
-    ];
-    for (const request of invalidRequests) {
-      const response = await worker.fetch(request);
-      assert.equal(response.status, 400, `${example}: ${request.method} ${request.url}`);
+    for (const input of Object.keys(client.metafile.inputs)) {
+      assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
+      assert.doesNotMatch(input, /node_modules\/.*(?:@openai\/agents|@anthropic-ai|@earendil-works|@opencode-ai)/);
     }
-    await buildSessionRuntime({
-      entrypoint: path.join(exampleRoot, "src/session.ts"),
-      outdir: path.join(temporaryRoot, example, "session-runtime"),
+    const session = typeof manifest.definition === "string" ? manifest.definition : manifest.definition.entrypoint;
+    const artifact = await buildSessionRuntime({
+      definition: path.join(projectRoot, session), projectRoot,
+      outdir: path.join(temporary, name),
     });
+    const edge = await buildEdgeApi({ definition: path.join(projectRoot, session), outdir: path.join(temporary, name, 'edge') });
+    assert.equal(edge.manifest.definition_runtime_id, artifact.manifest.definition_runtime_id);
+    assert.equal(edge.manifest.kind, "cantelop-protocol-edge");
+    assert.equal(edge.manifest.integration_protocol_version, 2);
+    assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);
+    assert.equal(artifact.manifest.kind, "cantelop-session-runtime");
+    assert.doesNotMatch(await readFile(artifact.mainModule, "utf8"), /class CantelopClient/);
+    assert.equal(artifact.manifest.cli_build_protocol_version, 6);
+    assert.equal("routes" in artifact.manifest, false);
+    assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
   }
-} finally {
-  await rm(temporaryRoot, { recursive: true, force: true });
-}
-
-function jsonRequest(route, body) {
-  return new Request(`https://example.invalid${route}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+  const multiRoot = path.join(root, "examples/multi-app");
+  const multi = await buildAppArtifacts({ definition: path.join(multiRoot, "src/cantelop.ts"), projectRoot: multiRoot, outdir: path.join(temporary, "multi-app") });
+  assert.deepEqual(multi.apps.map(app => app.name), ["support-agent", "research-agent"]);
+  assert.equal(multi.backend.manifest.apps.length, 2);
+  for (const app of multi.apps) {
+    assert.equal(app.runtime.manifest.app_name, app.name);
+    assert.equal(app.edge.manifest.session_runtime_id, app.runtime.manifest.session_runtime_id);
+    assert.doesNotMatch(await readFile(app.runtime.mainModule, "utf8"), /class CantelopClient/);
+  }
+  const browser = await build({
+    entryPoints: [path.join(root, "examples/web-chat/public/chat.js")],
+    bundle: true, platform: "browser", format: "esm", write: false, metafile: true,
   });
+  assert.equal(Object.keys(browser.metafile.inputs).length, 1);
+  process.stdout.write("Qualified backend clients, protocol Edge Workers, and native runtime examples\n");
+} finally {
+  await rm(temporary, { recursive: true, force: true });
 }

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cantelop · Agent chat</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/chat.js" type="module"></script>
+</head>
+<body>
+  <main>
+    <header><div><span class="eyebrow">CANTELOP / EXAMPLE</span><h1>Talk to your agent.</h1></div><button id="new-chat" type="button">New chat</button></header>
+    <p class="intro">An agent conversation inside your own app.</p>
+    <section id="messages" aria-label="Conversation" aria-live="polite"><p id="empty">Send a message to get started.</p></section>
+    <form id="composer">
+      <label for="prompt">Your message</label>
+      <textarea id="prompt" rows="3" maxlength="4000" placeholder="What would you like to work on?" required></textarea>
+      <div class="actions"><span id="status" role="status">Ready</span><button id="disconnect" type="button" hidden>Disconnect</button><button id="send" type="submit">Send message ↗</button></div>
+    </form>
+  </main>
+</body>
+</html>

@@ -1,7 +1,7 @@
 {
   "name": "@cantelop/sdk",
-  "version": "0.17.0",
-  "description": "Provider-neutral API and Session runtime SDK for Cantelop applications",
+  "version": "1.0.0-alpha.0",
+  "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -23,14 +23,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./api": {
-      "types": "./dist/api.d.ts",
-      "import": "./dist/api.js"
-    },
-    "./edge": {
-      "types": "./dist/edge.d.ts",
-      "import": "./dist/edge.js"
     },
     "./build": {
       "types": "./dist/build.d.ts",
@@ -70,10 +62,16 @@
     "@libsql/client": "^0.17.0",
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "0.45.2",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.6.3"
+    "@types/node": "^24.0.0"
+  },
+  "imports": {
+    "#cantelop-app-config": {
+      "node": "./dist/app-config-node.js",
+      "default": "./dist/app-config-empty.js"
+    }
   }
 }

@@ -3,9 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "check": "tsc -p tsconfig.api.json && tsc -p tsconfig.session.json"
+    "check": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@cantelop/sdk": "workspace:*",

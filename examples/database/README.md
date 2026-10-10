@@ -1,17 +1,19 @@
-# Developer-owned database schema
+# Workspace database integration
 
-From this directory, install dependencies and run `cantelop dev`. The compatible
-CLI discovers `db/schema.ts`, generates its schema artifact, and automatically
-initializes each Workspace before issuing its application connection. No manual
-SQL or migration review is needed. `cantelop deploy` applies schema changes before
-release activation. The SDK and platform changes must be deployed together.
+`src/cantelop.ts` configures the client and references `src/runtime.ts` for its Session implementation. `src/tasks.ts` contains plain database functions shared by the application backend and the runtime. `db/schema.ts` declares the managed application schema.
 
-POST `/tasks` with `{"title":"Review proposal"}`, then GET `/tasks`. Session code
-uses the same schema and Workspace database. Drizzle provides the typed queries;
-Cantelop provides the renewable libSQL connection and migration lifecycle.
+```ts
+import { app } from "./src/cantelop.js";
+import { createTask, listTasks } from "./src/tasks.js";
 
-Add a column to `db/schema.ts` to try an automatic local migration. Both API and
-Session code import the schema. Existing records survive rebuilds and restarts.
+const workspace = app.workspace({ slug: "customer-123" });
+await createTask(await workspace.database(), "Review proposal");
+const tasks = await listTasks(await workspace.database());
 
-Use `cantelop database migrations WORKSPACE_ID --json` to inspect hosted application migration history, including the SQL used for application
-changes. The Session inbox stays in memory; application queues can use this same schema.
+const session = workspace.session({ id: "conversation-456" });
+const reply = await session.request({ title: "Agent task" });
+```
+
+The `receive` export in `src/runtime.ts` calls `createTask` against its Workspace database and replies with the task ID. Backend calls and runtime messages use the same schema and function.
+
+`cantelop.json` selects `src/cantelop.ts` for deployment. The runtime artifact carries the database schema directly. This prerelease requires CLI build protocol 6 and manifest schema 3; CLI/platform adoption remains a follow-up.

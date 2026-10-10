@@ -1,5 +1,4 @@
 {
-  "app": "database-example",
-  "api": "src/api.ts",
-  "session": "src/session.ts"
+  "schema_version": 3,
+  "definition": "src/cantelop.ts"
 }

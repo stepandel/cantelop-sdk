@@ -1,35 +1,21 @@
-export {
-  defineApi,
-} from "./api.js";
 export type {
-  ApiContext,
-  ApiDefinition,
-  ApiEnvironment,
-  ApiFactory,
-  AcceptedMessageStatus,
-  CantelopApp,
-  FailedMessageStatus,
-  HandledMessageStatus,
-  HandlingMessageStatus,
-  HttpMethod,
-  Route,
-  RouteContext,
-  RouteDescriptor,
-  RouteHandler,
-  Router,
-  MessageRef,
-  MessageStatus,
-  MessageExecution,
-  Session,
-  SessionIdentity,
-  SessionOpenByIDConfig,
-  SessionOpenBySlugConfig,
-  SessionOpenConfig,
-  SessionService,
-  Workspace,
-  WorkspaceCreateConfig,
-  WorkspaceOpenConfig,
-  WorkspaceService,
-  UnknownMessageStatus,
-} from "./api.js";
-export { RemoteAppError } from "./api.js";
+  AcceptedMessageStatus, FailedMessageStatus, HandledMessageStatus,
+  HandlingMessageStatus, MessageRef, MessageStatus, MessageExecution,
+  SessionIdentity, SessionRequestOptions, Workspace, UnknownMessageStatus,
+} from "./resources.js";
+export { RemoteAppError } from "./remote-app.js";
+export { CantelopClient } from "./client.js";
+export type {
+  AppConnection, AppSelector, AppOptions, CantelopClientOptions, IntegrationSessionOptions,
+  SessionRef, WorkspaceRef, WorkspaceSelector,
+  SessionEvent, SessionEventCursor, SessionStreamOptions,
+  SessionCommandOptions, SessionSubmissionOptions, MessageCancellation, SessionView,
+  SessionCommand, AppCommandEnvelope,
+} from "./integration.js";
+export { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";
+export { AppConfigurationError } from "./app-config.js";
+
+export type { SessionRuntime } from "./session-runtime-contract.js";
+
+export type { App } from "./app.js";
+export type { AppDeploymentConfiguration, AppEnvironmentDeclaration } from "./app-definition.js";

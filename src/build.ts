@@ -1,3 +1,4 @@
+import type { AppDeploymentConfiguration } from "./app-definition.js";
 /// <reference types="node" />
 
 /**
@@ -10,6 +11,8 @@
 import { spawn } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { compileClientDefinition as readRuntimeDefinition, compileAppDefinitions, RuntimeContractError } from "./compiler.js";
+export { createCantelopCompilerPlugin } from "./compiler.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -25,74 +28,51 @@ export { createApplicationSchema, validateApplicationSchema, applicationMigratio
 export type { ApplicationDatabaseSchema, AppliedApplicationMigration } from "./database-schema.js";
 export const CANTELOP_DATABASE_SCHEMA_PROTOCOL_VERSION = 1;
 
-import type { HttpMethod } from "./router.js";
-
-const MANIFEST_SCHEMA_VERSION = 3;
-const MAX_MANIFEST_ROUTES = 100;
-const MANIFEST_ROUTE_PATH = /^\/[\x21-\x7e]{0,127}$/;
-const ROUTE_DISCOVERY_TIMEOUT_MS = 10_000;
-const ROUTE_DISCOVERY_MARKER = "cantelop-routes:";
-const MAIN_MODULE = "worker.mjs";
-const MANIFEST_FILE = "cantelop-api.json";
+const BUILD_EVALUATION_TIMEOUT_MS = 10_000;
+const BUILD_ARTIFACT_MARKER = "cantelop-build-artifact:";
 const SESSION_RUNTIME_MAIN_MODULE = "session-runtime.mjs";
-const EDGE_ADAPTER_MODULE = fileURLToPath(new URL("./edge.js", import.meta.url));
+const SESSION_MANIFEST_FILE = "cantelop-runtime.json";
 const SESSION_RUNTIME_ADAPTER_MODULE = fileURLToPath(new URL("./runtime.js", import.meta.url));
 const SESSION_RUNTIME_STARTUP_STATE_KEY = "dev.cantelop.sdk.session-runtime-startup.v1";
 
 // The CLI checks this exact protocol before using the build module. Increment
 // it when an incompatible build/watch contract is introduced.
-export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 5;
+export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 6;
 
 /** Local credentials and HTTP libSQL support required by database-enabled CLI dev. */
 export const CANTELOP_LOCAL_DATABASE_PROTOCOL_VERSION = 1;
 
-export interface BuildApiOptions {
-  readonly entrypoint: string;
-  readonly outdir: string;
-}
-
-export interface BuildLocalApiOptions extends BuildApiOptions {
-  /** Numeric loopback origin for the local Cantelop Session bridge. */
-  readonly runtimeOrigin: string;
-}
-
-export interface ApiArtifactRoute {
-  readonly method: HttpMethod;
-  readonly path: string;
-}
-
-export interface ApiArtifactManifest {
-  readonly schema_version: 3 | 4;
-  readonly database_schema?: ApplicationDatabaseSchema;
-  readonly kind: "cantelop-edge-api";
-  readonly main_module: "worker.mjs";
-  /**
-   * Routes the API registers without any environment, sorted by path then
-   * method. Null when discovery failed; the artifact remains deployable.
-   */
-  readonly routes: readonly ApiArtifactRoute[] | null;
-}
-
-export interface ApiArtifact {
-  readonly directory: string;
-  readonly mainModule: string;
-  readonly manifestFile: string;
-  readonly manifest: ApiArtifactManifest;
-  /** Why `manifest.routes` is null. */
-  readonly routeDiscoveryError?: string;
-}
-
 export interface BuildSessionRuntimeOptions {
-  readonly entrypoint: string;
+  readonly definition: string;
+  /** Required when a definition module exports multiple Apps. */
+  readonly app?: string;
   readonly outdir: string;
+  /** Manifest/project root; inferred from the Session entrypoint when omitted. */
+  readonly projectRoot?: string;
+}
+
+export interface SessionRuntimeManifest extends AppDeploymentConfiguration {
+  readonly schema_version: 1;
+  readonly kind: "cantelop-session-runtime";
+  readonly main_module: "session-runtime.mjs";
+  readonly cli_build_protocol_version: 6;
+  readonly runtime_protocol_version: 2;
+  readonly integration_protocol_version: 2;
+  readonly session_runtime_id: string;
+  readonly app_name: string;
+  /** Advertised only after coordinated actor scheduling, attribution and projection support. */
+  readonly capabilities: Readonly<{ priority: false; messageCancellation: false; durableView: false }>;
+  readonly database_schema?: ApplicationDatabaseSchema;
 }
 
 export interface SessionRuntimeArtifact {
   readonly directory: string;
   readonly mainModule: string;
+  readonly manifestFile: string;
+  readonly manifest: SessionRuntimeManifest;
 }
 
-export type LocalBuildComponent = "api" | "session-runtime";
+export type LocalBuildComponent = "session-runtime" | "database-schema";
 
 export interface LocalBuildEvent {
   readonly component: LocalBuildComponent;
@@ -100,11 +80,10 @@ export interface LocalBuildEvent {
 }
 
 export interface WatchLocalProjectOptions {
-  readonly apiEntrypoint: string;
-  readonly apiOutdir: string;
-  readonly sessionEntrypoint: string;
+  readonly sessionDefinition: string;
+  readonly app?: string;
   readonly sessionRuntimeOutdir: string;
-  readonly runtimeOrigin: string;
+  readonly projectRoot?: string;
   readonly onBuild: (event: LocalBuildEvent) => void;
 }
 
@@ -112,143 +91,66 @@ export interface LocalProjectWatcher {
   dispose(): Promise<void>;
 }
 
-/**
- * Bundles a customer API definition into a standard module Worker artifact.
- * Deployment credentials and provider-specific upload metadata deliberately
- * remain outside the SDK.
- */
-export async function buildApi(options: BuildApiOptions): Promise<ApiArtifact> {
-  return buildApiArtifact(options);
+export interface BuildEdgeApiOptions {
+  readonly definition: string;
+  /** Required when a definition module exports multiple Apps. */
+  readonly app?: string;
+  readonly outdir: string;
+  /** Local CLI only: a numeric loopback Session bridge origin. */
+  readonly runtimeOrigin?: string;
+}
+export interface EdgeApiArtifact {
+  readonly directory: string;
+  readonly mainModule: string;
+  readonly manifestFile: string;
+  readonly manifest: Readonly<{
+    schema_version: 1;
+    kind: "cantelop-protocol-edge";
+    main_module: "worker.mjs";
+    cli_build_protocol_version: 6;
+    integration_protocol_version: 2;
+    session_runtime_id: string;
+    required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
+    default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS";
+  }>;
 }
 
-/**
- * Bundles a customer API definition for the local worker host. Calls to the
- * platform-owned runtime hostname are redirected to a loopback Session bridge;
- * customer API source and the production artifact remain unchanged.
- */
-export async function buildLocalApi(
-  options: BuildLocalApiOptions,
-): Promise<ApiArtifact> {
-  const runtimeOrigin = localRuntimeOrigin(options.runtimeOrigin);
-  return buildApiArtifact(options, runtimeOrigin);
-}
-
-async function buildApiArtifact(
-  options: BuildApiOptions,
-  runtimeOrigin?: string,
-): Promise<ApiArtifact> {
-  const entrypoint = path.resolve(options.entrypoint);
+/** Generates the protocol-owned App Worker; there is no customer API entrypoint. */
+export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeApiArtifact> {
+  const runtime = await readRuntimeDefinition(path.resolve(options.definition), options.app);
   const outdir = path.resolve(options.outdir);
-  if (entrypoint === outdir || path.dirname(entrypoint) === outdir) {
-    throw new TypeError("API artifact output must not contain the source entrypoint");
+  if (options.runtimeOrigin !== undefined) {
+    const url = new URL(options.runtimeOrigin);
+    if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname) ||
+        url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+      throw new TypeError("Local runtime origin must be a numeric HTTP loopback origin");
+    }
   }
   await mkdir(outdir, { recursive: true });
-
-  const mainModule = path.join(outdir, MAIN_MODULE);
-  await build(apiBuildOptions(entrypoint, mainModule, runtimeOrigin));
-
-  const discovery = await discoverRoutes(entrypoint);
-  const manifest = await writeApiManifest(outdir, discovery.routes, await buildDatabaseSchema(await projectSchemaPath(entrypoint)));
-  const manifestFile = path.join(outdir, MANIFEST_FILE);
-
-  return Object.freeze({
-    directory: outdir,
-    mainModule,
-    manifestFile,
-    manifest: Object.freeze(manifest),
-    ...(discovery.error === undefined ? {} : { routeDiscoveryError: discovery.error }),
+  const mainModule = path.join(outdir, "worker.mjs");
+  const adapter = fileURLToPath(new URL("./protocol-edge.js", import.meta.url));
+  await build({
+    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nexport default createProtocolWorker(${JSON.stringify({ runtimeId: runtime.definition.id, ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }) })});`, resolveDir: outdir },
+    bundle: true, platform: "browser", format: "esm", target: "es2022", outfile: mainModule, logLevel: "silent",
   });
+  const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
+    schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
+    cli_build_protocol_version: 6, integration_protocol_version: 2, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
+    ...(runtime.definition.environment === undefined ? {} : { environment: runtime.definition.environment }),
+    ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
+    required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
+    default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS",
+  });
+  const manifestFile = path.join(outdir, "cantelop-edge.json");
+  await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
+  return Object.freeze({ directory: outdir, mainModule, manifestFile, manifest });
 }
 
-function apiBuildOptions(
-  entrypoint: string,
-  mainModule: string,
-  runtimeOrigin?: string,
-): BuildOptions {
-  return {
-    stdin: {
-      contents: [
-        `import definition from ${JSON.stringify(entrypoint)};`,
-        `import { createApiWorker } from ${JSON.stringify(EDGE_ADAPTER_MODULE)};`,
-        ...(runtimeOrigin === undefined ? [
-          "export default createApiWorker(definition);",
-        ] : [
-          `const runtimeOrigin = ${JSON.stringify(runtimeOrigin)};`,
-          "const runtimeFetch = (request) => {",
-          "  const source = new URL(request.url);",
-          "  return fetch(new Request(new URL(source.pathname + source.search, runtimeOrigin), request));",
-          "};",
-          "export default createApiWorker(definition, { fetch: runtimeFetch, localDatabaseOrigin: runtimeOrigin });",
-        ]),
-      ].join("\n"),
-      loader: "ts",
-      resolveDir: path.dirname(entrypoint),
-      sourcefile: "cantelop-api-bootstrap.ts",
-    },
-    bundle: true,
-    format: "esm",
-    platform: "browser",
-    target: "es2022",
-    outfile: mainModule,
-    sourcemap: "external",
-    legalComments: "none",
-    logLevel: "silent",
-  };
-}
-
-interface RouteDiscovery {
-  readonly routes: readonly ApiArtifactRoute[] | null;
-  readonly error?: string;
-}
-
-/**
- * Lists the routes an API definition registers. The definition is evaluated
- * with no environment, exactly as the Worker does without bindings, so the
- * result depends only on the bundled source. It runs in a child process: API
- * modules are customer code and may hold the event loop open or never settle.
- */
-async function discoverRoutes(entrypoint: string): Promise<RouteDiscovery> {
-  try {
-    const bundle = await build({
-      stdin: {
-        contents: [
-          `import definition from ${JSON.stringify(entrypoint)};`,
-          "const unavailable = () => { throw new Error(\"The App is not available during route discovery\"); };",
-          "const app = Object.freeze({",
-          "  workspaces: Object.freeze({ create: unavailable, open: unavailable }),",
-          "  sessions: Object.freeze({ open: unavailable }),",
-          "});",
-          "const routes = definition.create({ app, env: Object.freeze({}) }).list();",
-          `process.stdout.write("\\n${ROUTE_DISCOVERY_MARKER}" + JSON.stringify(routes) + "\\n", () => process.exit(0));`,
-        ].join("\n"),
-        loader: "ts",
-        resolveDir: path.dirname(entrypoint),
-        sourcefile: "cantelop-api-routes.ts",
-      },
-      bundle: true,
-      format: "esm",
-      platform: "browser",
-      target: "es2022",
-      write: false,
-      legalComments: "none",
-      logLevel: "silent",
-    });
-    const source = bundle.outputFiles?.[0]?.text;
-    if (source === undefined) throw new Error("route discovery produced no module");
-    return { routes: manifestRoutes(await evaluateRouteModule(source)) };
-  } catch (error) {
-    return {
-      routes: null,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-function evaluateRouteModule(source: string): Promise<unknown> {
+function evaluateBuildModule(source: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-"], {
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: ROUTE_DISCOVERY_TIMEOUT_MS,
+      timeout: BUILD_EVALUATION_TIMEOUT_MS,
       killSignal: "SIGKILL",
     });
     let stdout = "";
@@ -260,15 +162,15 @@ function evaluateRouteModule(source: string): Promise<unknown> {
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-2048); });
     child.on("error", reject);
     child.on("close", (code, signal) => {
-      const marker = stdout.lastIndexOf(`\n${ROUTE_DISCOVERY_MARKER}`);
+      const marker = stdout.lastIndexOf(`\n${BUILD_ARTIFACT_MARKER}`);
       if (code !== 0 || marker < 0) {
         const reason = signal === "SIGKILL"
-          ? "the API module did not finish loading"
-          : stderr.trim().split("\n").find((line) => /Error\b/.test(line))?.trim() ?? "the API module could not be evaluated";
+          ? "the schema module did not finish loading"
+          : stderr.trim().split("\n").find((line) => /Error\b/.test(line))?.trim() ?? "the schema module could not be evaluated";
         reject(new Error(reason));
         return;
       }
-      const start = marker + 1 + ROUTE_DISCOVERY_MARKER.length;
+      const start = marker + 1 + BUILD_ARTIFACT_MARKER.length;
       try {
         resolve(JSON.parse(stdout.slice(start, stdout.indexOf("\n", start))));
       } catch (error) {
@@ -280,59 +182,24 @@ function evaluateRouteModule(source: string): Promise<unknown> {
   });
 }
 
-function manifestRoutes(value: unknown): readonly ApiArtifactRoute[] {
-  if (!Array.isArray(value)) throw new Error("the API definition did not list its routes");
-  if (value.length > MAX_MANIFEST_ROUTES) {
-    throw new Error(`an API manifest lists at most ${MAX_MANIFEST_ROUTES} routes`);
-  }
-  return Object.freeze(value.map((route: { method: HttpMethod; path: string }) => {
-    if (!MANIFEST_ROUTE_PATH.test(route.path)) {
-      throw new Error(`route path cannot be listed in the API manifest: ${route.path}`);
-    }
-    return Object.freeze({ method: route.method, path: route.path });
-  }));
-}
-
-async function writeApiManifest(
-  outdir: string,
-  routes: readonly ApiArtifactRoute[] | null,
-  databaseSchema?: ApplicationDatabaseSchema,
-): Promise<ApiArtifactManifest> {
-  const manifest: ApiArtifactManifest = {
-    schema_version: databaseSchema ? 4 : MANIFEST_SCHEMA_VERSION,
-    ...(databaseSchema ? { database_schema: databaseSchema } : {}),
-    kind: "cantelop-edge-api",
-    main_module: MAIN_MODULE,
-    routes,
-  };
-  const manifestFile = path.join(outdir, MANIFEST_FILE);
-  await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o644,
+async function writeSessionManifest(outdir: string, schemaPath: string, runtimeId: string, appName: string, configuration: AppDeploymentConfiguration): Promise<SessionRuntimeManifest> {
+  const databaseSchema = await buildDatabaseSchema(schemaPath);
+  const manifest: SessionRuntimeManifest = Object.freeze({
+    schema_version: 1,
+    kind: "cantelop-session-runtime",
+    main_module: SESSION_RUNTIME_MAIN_MODULE,
+    cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
+    runtime_protocol_version: 2,
+    integration_protocol_version: 2,
+    session_runtime_id: runtimeId,
+    app_name: appName,
+    ...(configuration.environment === undefined ? {} : { environment: configuration.environment }),
+    ...(configuration.dockerfile === undefined ? {} : { dockerfile: configuration.dockerfile }),
+    capabilities: Object.freeze({ priority: false, messageCancellation: false, durableView: false }),
+    ...(databaseSchema === undefined ? {} : { database_schema: databaseSchema }),
   });
+  await writeFile(path.join(outdir, SESSION_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8" });
   return manifest;
-}
-
-function localRuntimeOrigin(value: string): string {
-  let origin: URL;
-  try {
-    origin = new URL(value);
-  } catch {
-    throw new TypeError("Local runtime origin must be a numeric HTTP loopback origin");
-  }
-  const numericLoopback = origin.hostname === "127.0.0.1" || origin.hostname === "[::1]";
-  if (
-    origin.protocol !== "http:" ||
-    !numericLoopback ||
-    origin.username !== "" ||
-    origin.password !== "" ||
-    origin.pathname !== "/" ||
-    origin.search !== "" ||
-    origin.hash !== ""
-  ) {
-    throw new TypeError("Local runtime origin must be a numeric HTTP loopback origin");
-  }
-  return origin.origin;
 }
 
 /**
@@ -343,7 +210,9 @@ function localRuntimeOrigin(value: string): string {
 export async function buildSessionRuntime(
   options: BuildSessionRuntimeOptions,
 ): Promise<SessionRuntimeArtifact> {
-  const entrypoint = path.resolve(options.entrypoint);
+  const definitionPath = path.resolve(options.definition);
+  let runtime = await readRuntimeDefinition(definitionPath, options.app);
+  const entrypoint = runtime.entrypoint;
   const outdir = path.resolve(options.outdir);
   if (entrypoint === outdir || path.dirname(entrypoint) === outdir) {
     throw new TypeError(
@@ -353,38 +222,42 @@ export async function buildSessionRuntime(
   await mkdir(outdir, { recursive: true });
 
   const mainModule = path.join(outdir, SESSION_RUNTIME_MAIN_MODULE);
-  await build(sessionRuntimeBuildOptions(entrypoint, mainModule));
-
+  await build(sessionRuntimeBuildOptions(definitionPath, mainModule, value => { runtime = value; }, options.app));
+  const schemaPath = await projectSchemaPath(runtime.entrypoint, options.projectRoot);
+  const manifest = await writeSessionManifest(outdir, schemaPath, runtime.definition.id, runtime.definition.name, runtime.definition);
   return Object.freeze({
-    directory: outdir,
-    mainModule,
+    directory: outdir, mainModule,
+    manifestFile: path.join(outdir, SESSION_MANIFEST_FILE), manifest,
   });
 }
 
-function sessionRuntimeBuildOptions(entrypoint: string, mainModule: string): BuildOptions {
+function sessionRuntimeBuildOptions(definitionPath: string, mainModule: string, onDefinition: (value: Awaited<ReturnType<typeof readRuntimeDefinition>>) => void, app?: string): BuildOptions {
+  let watchFiles: readonly string[] = [definitionPath];
+  let runtimeModule = "";
   return {
-    stdin: {
-      contents: [
-        `const key = Symbol.for(${JSON.stringify(SESSION_RUNTIME_STARTUP_STATE_KEY)});`,
-        "const state = { started: process.hrtime.bigint(), seen: new Set() };",
-        "Object.defineProperty(globalThis, key, { value: state, configurable: false });",
-        "const mark = (stage) => {",
-        "  if (state.seen.has(stage)) return;",
-        "  state.seen.add(stage);",
-        "  const now = process.hrtime.bigint();",
-        "  process.stderr.write(`${JSON.stringify({ component: \"cantelop.sdk\", event: \"session_runtime_startup_stage\", stage, elapsed_us: Number((now - state.started) / 1000n) })}\\n`);",
-        "};",
-        "mark(\"bun_entry\");",
-        `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
-        `const { default: definition } = await import(${JSON.stringify(entrypoint)});`,
-        "mark(\"module_evaluated\");",
-        "const sessionRuntime = serveSessionRuntime(definition);",
-        "await sessionRuntime.ready;",
-      ].join("\n"),
-      loader: "ts",
-      resolveDir: path.dirname(entrypoint),
-      sourcefile: "cantelop-session-runtime-bootstrap.ts",
-    },
+    entryPoints: ["cantelop:session-bootstrap"],
+    plugins: [{ name: "cantelop-runtime-definition", setup(builder) {
+      builder.onResolve({ filter: /^cantelop:extracted-runtime$/ }, () => ({ path: "runtime", namespace: "cantelop-extracted" }));
+      builder.onLoad({ filter: /.*/, namespace: "cantelop-extracted" }, () => ({ contents: runtimeModule, loader: "js", resolveDir: path.dirname(definitionPath) }));
+      builder.onResolve({ filter: /^cantelop:session-bootstrap$/ }, () => ({ path: "bootstrap", namespace: "cantelop-runtime" }));
+      builder.onLoad({ filter: /.*/, namespace: "cantelop-runtime" }, async () => {
+        try {
+          const runtime = await readRuntimeDefinition(definitionPath, app);
+          watchFiles = runtime.watchFiles;
+          onDefinition(runtime);
+          runtimeModule = runtime.runtimeModule;
+          return {
+            contents: sessionRuntimeBootstrap(),
+            loader: "ts",
+            resolveDir: path.dirname(runtime.entrypoint),
+            watchFiles: [...watchFiles],
+          };
+        } catch (error) {
+          if (error instanceof RuntimeContractError) watchFiles = [...new Set([...watchFiles, ...error.watchFiles])];
+          return { errors: [{ text: error instanceof Error ? error.message : String(error) }], watchFiles: [...watchFiles] };
+        }
+      });
+    } }],
     bundle: true,
     format: "esm",
     platform: "node",
@@ -398,48 +271,56 @@ function sessionRuntimeBuildOptions(entrypoint: string, mainModule: string): Bui
   };
 }
 
+function sessionRuntimeBootstrap(): string {
+  return [
+    `const key = Symbol.for(${JSON.stringify(SESSION_RUNTIME_STARTUP_STATE_KEY)});`,
+    "const state = { started: process.hrtime.bigint(), seen: new Set() };",
+    "Object.defineProperty(globalThis, key, { value: state, configurable: false });",
+    "const mark = (stage) => {",
+    "  if (state.seen.has(stage)) return;",
+    "  state.seen.add(stage);",
+    "  const now = process.hrtime.bigint();",
+    "  process.stderr.write(`${JSON.stringify({ component: \"cantelop.sdk\", event: \"session_runtime_startup_stage\", stage, elapsed_us: Number((now - state.started) / 1000n) })}\\n`);",
+    "};",
+    "mark(\"bun_entry\");",
+    `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
+    'const { default: behaviour } = await import("cantelop:extracted-runtime");',
+    'if (typeof behaviour.receive !== "function") throw new Error("Session runtime must export receive");',
+    "mark(\"module_evaluated\");",
+    "const sessionRuntime = serveSessionRuntime(behaviour);",
+    "await sessionRuntime.ready;",
+  ].join("\n");
+}
+
 export async function watchLocalProject(
   options: WatchLocalProjectOptions,
 ): Promise<LocalProjectWatcher> {
-  const runtimeOrigin = localRuntimeOrigin(options.runtimeOrigin);
-  const apiEntrypoint = path.resolve(options.apiEntrypoint);
-  const apiOutdir = path.resolve(options.apiOutdir);
-  const sessionEntrypoint = path.resolve(options.sessionEntrypoint);
+  const sessionDefinition = path.resolve(options.sessionDefinition);
+  let runtime = await readRuntimeDefinition(sessionDefinition, options.app);
+  let buildingRuntime = runtime;
+  const sessionEntrypoint = runtime.entrypoint;
   const sessionRuntimeOutdir = path.resolve(options.sessionRuntimeOutdir);
-  await Promise.all([
-    mkdir(apiOutdir, { recursive: true }),
-    mkdir(sessionRuntimeOutdir, { recursive: true }),
-  ]);
-
-  const schemaPath = await projectSchemaPath(apiEntrypoint);
+  await mkdir(sessionRuntimeOutdir, { recursive: true });
+  const schemaPath = await projectSchemaPath(sessionEntrypoint, options.projectRoot);
   const contexts: BuildContext[] = [];
   try {
-    contexts.push(
-      await watchedContext(
-        "api",
-        apiBuildOptions(
-          apiEntrypoint,
-          path.join(apiOutdir, MAIN_MODULE),
-          runtimeOrigin,
-        ),
-        options.onBuild,
-        async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes, await buildDatabaseSchema(schemaPath)),
-      ),
-    );
     if (await exists(schemaPath)) {
-      contexts.push(await watchedContext("api", {
+      contexts.push(await watchedContext("database-schema", {
         entryPoints: [schemaPath], bundle: true, platform: "node", format: "esm", write: false,
         logLevel: "silent",
-      }, options.onBuild, async () => writeApiManifest(apiOutdir, (await discoverRoutes(apiEntrypoint)).routes, await buildDatabaseSchema(schemaPath))));
+      }, options.onBuild, async () => writeSessionManifest(sessionRuntimeOutdir, schemaPath, runtime.definition.id, runtime.definition.name, runtime.definition)));
     }
     contexts.push(
       await watchedContext(
         "session-runtime",
         sessionRuntimeBuildOptions(
-          sessionEntrypoint,
+          sessionDefinition,
           path.join(sessionRuntimeOutdir, SESSION_RUNTIME_MAIN_MODULE),
+          value => { buildingRuntime = value; },
+          options.app,
         ),
         options.onBuild,
+        async () => { runtime = buildingRuntime; return writeSessionManifest(sessionRuntimeOutdir, schemaPath, runtime.definition.id, runtime.definition.name, runtime.definition); },
       ),
     );
   } catch (error) {
@@ -508,11 +389,12 @@ async function exists(filename: string): Promise<boolean> {
     throw error;
   }
 }
-/** The project root is the nearest ancestor of the API entrypoint holding cantelop.json or package.json. */
-async function projectSchemaPath(entrypoint: string): Promise<string> {
+/** Discover the schema independently of any API module. */
+async function projectSchemaPath(entrypoint: string, projectRoot?: string): Promise<string> {
+  if (projectRoot !== undefined) return path.join(path.resolve(projectRoot), "db/schema.ts");
   for (let directory = path.dirname(path.resolve(entrypoint)); ; directory = path.dirname(directory)) {
     if (await exists(path.join(directory, "cantelop.json")) || await exists(path.join(directory, "package.json"))) return path.join(directory, "db/schema.ts");
-    if (path.dirname(directory) === directory) return path.resolve("db/schema.ts");
+    if (path.dirname(directory) === directory) return path.join(path.dirname(path.resolve(entrypoint)), "db/schema.ts");
   }
 }
 /** Discovered automatically from the project root; absence opts out of managed application schemas. */
@@ -526,7 +408,36 @@ export async function buildDatabaseSchema(entrypoint = path.resolve("db/schema.t
   const source = bundle.outputFiles?.[0]?.text;
   if (!source) throw new Error("database schema produced no module");
   const generator = fileURLToPath(new URL("./database-schema.js", import.meta.url));
-  const result = await evaluateRouteModule(`${source}\nimport { createApplicationSchema } from ${JSON.stringify(generator)};\nconst artifact = await createApplicationSchema(globalThis.__cantelopBuildSchema);\nprocess.stdout.write("\\n${ROUTE_DISCOVERY_MARKER}" + JSON.stringify(artifact) + "\\n", () => process.exit(0));`);
+  const result = await evaluateBuildModule(`${source}\nimport { createApplicationSchema } from ${JSON.stringify(generator)};\nconst artifact = await createApplicationSchema(globalThis.__cantelopBuildSchema);\nprocess.stdout.write("\\n${BUILD_ARTIFACT_MARKER}" + JSON.stringify(artifact) + "\\n", () => process.exit(0));`);
   const { validateApplicationSchema } = await import("./database-schema.js");
   return validateApplicationSchema(result);
+}
+
+/** Generate a backend client module with the Sandbox dependency graph removed. */
+export async function buildBackendClient(options: { readonly definition: string; readonly outdir: string }) {
+  const compiled = await compileAppDefinitions(path.resolve(options.definition));
+  const directory = path.resolve(options.outdir);
+  await mkdir(directory, { recursive: true });
+  const mainModule = path.join(directory, "client.mjs");
+  await build({ stdin: { contents: compiled.backendSource, resolveDir: path.dirname(path.resolve(options.definition)), loader: "ts" }, bundle: true, packages: "external", platform: "node", format: "esm", target: "es2022", outfile: mainModule, logLevel: "silent" });
+  const manifest = { schema_version: 1, kind: "cantelop-backend-client", apps: compiled.apps.map(app => ({ name: app.definition.name, session_runtime_id: app.definition.id })), main_module: "client.mjs" } as const;
+  const manifestFile = path.join(directory, "cantelop-client.json");
+  await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
+  return { directory, mainModule, manifestFile, manifest };
+}
+
+/** Build each named App into its own deployment directory plus the shared backend module. */
+export async function buildAppArtifacts(options: { readonly definition: string; readonly outdir: string; readonly projectRoot?: string }) {
+  const compiled = await compileAppDefinitions(path.resolve(options.definition));
+  const apps = [];
+  for (const app of compiled.apps) {
+    const outdir = path.join(path.resolve(options.outdir), app.definition.name);
+    const edge = await buildEdgeApi({ definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "edge") });
+    const runtime = await buildSessionRuntime({ definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "runtime"), ...(options.projectRoot === undefined ? {} : { projectRoot: options.projectRoot }) });
+    if (edge.manifest.session_runtime_id !== runtime.manifest.session_runtime_id) throw new Error("App definition changed during build; rebuild artifacts");
+    apps.push({ name: app.definition.name, edge, runtime });
+  }
+  const backend = await buildBackendClient({ definition: options.definition, outdir: path.join(path.resolve(options.outdir), "backend") });
+  for (const app of apps) if (backend.manifest.apps.find(record => record.name === app.name)?.session_runtime_id !== app.runtime.manifest.session_runtime_id) throw new Error("App definition changed during build; rebuild artifacts");
+  return { apps, backend };
 }

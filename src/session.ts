@@ -73,14 +73,6 @@ export interface SessionBehaviour<Message, Event = never, Reply = never> {
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }
 
-export function defineSessionBehaviour<Message, Event = never, Reply = never>(
-  behaviour: SessionBehaviour<Message, Event, Reply> | SessionBehaviour<Message, Event, Reply>["receive"],
-): SessionBehaviour<Message, Event, Reply> {
-  return Object.freeze(
-    typeof behaviour === "function" ? { receive: behaviour } : { ...behaviour },
-  );
-}
-
 export type { SessionIdentity } from "./resources.js";
 
 export { createSessionDatabase } from "./session-database.js";

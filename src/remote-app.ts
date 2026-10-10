@@ -28,6 +28,8 @@ type IDFactory = () => string;
 
 export interface RemoteAppOptions {
   readonly fetch?: RuntimeFetch;
+  /** Internal integration adapter: share lazy resolution between Workspace Sessions. */
+  readonly resolveWorkspace?: (config: SessionOpenConfig) => Promise<string>;
   /** Reserved for the CLI local runtime. Hosted clients leave this unset. */
   readonly localDatabaseOrigin?: string;
   readonly sessionId?: IDFactory;
@@ -65,7 +67,7 @@ export function createRemoteApp<Input = unknown, Reply = unknown>(
     assertKeepAliveSeconds(config.keepAliveSeconds);
     const id = config.id ?? sessionId();
     assertSessionID(id);
-    return createRemoteSession<Input, Reply>(id, config, runtimeFetch, messageId);
+    return createRemoteSession<Input, Reply>(id, config, runtimeFetch, messageId, options.resolveWorkspace);
   }
 
   const sessions = Object.freeze({ open: openSession });
@@ -98,9 +100,11 @@ function createRemoteSession<Input, Reply>(
   config: SessionOpenConfig,
   runtimeFetch: RuntimeFetch,
   messageId: IDFactory,
+  workspaceResolver?: (config: SessionOpenConfig) => Promise<string>,
 ): Session<Input, Reply> {
   let workspaceRequest: Promise<string> | undefined;
   const resolveWorkspaceId = (): Promise<string> => {
+    if (workspaceResolver !== undefined) return workspaceResolver(config);
     if (config.workspaceId !== undefined) return Promise.resolve(config.workspaceId);
     workspaceRequest ??= requestJSON(runtimeFetch, "/__cantelop/v1/workspaces/open", {
       method: "POST",
@@ -261,7 +265,7 @@ function readMessageRef(
   });
 }
 
-function readMessageStatus(envelope: unknown, expectedMessage: string): MessageStatus {
+export function readMessageStatus(envelope: unknown, expectedMessage: string): MessageStatus {
   if (!isRecord(envelope) || envelope.id !== expectedMessage ||
       typeof envelope.state !== "string") {
     throw new RemoteAppError("invalid_message_status_response", 0);
@@ -320,7 +324,7 @@ interface RequestOptions {
   readonly signal?: AbortSignal;
 }
 
-async function requestJSON(
+export async function requestJSON(
   runtimeFetch: RuntimeFetch,
   path: string,
   options: RequestOptions,
@@ -363,7 +367,7 @@ async function readEnvelope(response: Response): Promise<unknown> {
   }
 }
 
-function readWorkspace(value: unknown, runtimeFetch: RuntimeFetch, localDatabaseOrigin?: string): Workspace {
+export function readWorkspace(value: unknown, runtimeFetch: RuntimeFetch, localDatabaseOrigin?: string): Workspace {
   if (!isRecord(value) ||
       typeof value.id !== "string" || !WORKSPACE_ID_PATTERN.test(value.id) ||
       typeof value.app_id !== "string" ||
