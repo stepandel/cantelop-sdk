@@ -77,3 +77,7 @@ Runtime identity is generated from each App’s bundled implementation, name, st
 Watch follows implementation and type dependencies. Invalid edits preserve the last successful native manifest and repairs resume builds. Schema watching remains independent. Project `db/schema.ts` applies to the selected Apps' isolated Workspace databases.
 
 The unpublished versions stay unchanged: project schema 3, CLI build protocol 6, integration protocol 2, actor protocol 2. CLI adoption must discover/build/select named Apps, provision scoped metadata, honor per-App environment/images, integrate backend compilation, and deploy matching artifacts. Platform adoption must deploy each App hostname and validate its matching identity. Existing production CLI/platform paths cannot deploy this alpha yet.
+
+## Optional webhook implementations
+
+`webhooks` declares exact GET/POST ingress routes on an App. The compiler bundles their handlers and dependencies into Edge, removes them from backend code, and excludes them from the Sandbox. Handlers receive the same typed App through context, with commands executed locally. See [App webhooks](webhooks.md). CLI/platform adoption must synchronize declared Edge secrets and allow provider requests to reach these routes.

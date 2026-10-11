@@ -67,6 +67,6 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 **1.0 gate:** backend integration, generated Edge/native deployment, normal/priority messages, targeted cancellation, durable typed view plus synchronized subscriptions, database integration and migration are complete.
 
-## Customer webhook ownership
+## Optional App webhook ingress
 
-Webhook implementation belongs in the customer's own app: provider authentication/signature checks, payload translation, deduplication, acknowledgment and outbound replies. Their handler calls the same Workspace/Session primitives as any other backend code. SDK Edge handlers, managed trigger configuration, provider webhook adapters and platform webhook rollout are excluded from all phases.
+Apps can declare optional exact webhook routes compiled into the generated Edge Worker. Handlers receive the same typed Workspace/Session interface through a private local connection to the command implementation. Application code owns provider verification, payload mapping, retry IDs, acknowledgement and outbound replies. CLI/platform adoption must synchronize declared Edge secrets and permit provider-authenticated webhook ingress without bypassing authentication on `/commands`. Managed provider registration/adapters and an additional durable ingress queue remain follow-ups. See [App webhooks](webhooks.md).

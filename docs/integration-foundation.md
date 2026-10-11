@@ -118,4 +118,4 @@ Project schema 3 uses `definition` to select a module exporting named `cantelop.
 
 The platform must implement private integration-v2 admission/read/cancellation routes, credentials/defaults, actor capability negotiation and durable view storage before production rollout. Existing Node/Bun runtime behavior is preserved in this foundation rather than advertising unsupported new capabilities.
 
-Webhook handlers, provider signature validation, delivery deduplication and provider acknowledgment belong to the customer's own app. They invoke these same primitives. No SDK Edge webhook routes, provider adapters, managed trigger configuration or platform webhook rollout are planned.
+Apps may define optional webhook ingress routes alongside their runtime. Handlers receive the same typed App interface and invoke commands locally on Edge; existing customer backend routes can continue using the SDK over HTTP. Provider verification, delivery ID mapping, acknowledgement and outbound replies remain application code. See [App webhooks](webhooks.md) for compilation and deployment boundaries.

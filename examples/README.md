@@ -37,3 +37,5 @@ Each deployment example has one `tsconfig.json` covering its application and run
 Run `pnpm check:examples` from the SDK root to type-check backend clients and runtimes and qualify their runtime-only artifacts. [Application-owned queue](application-queue/README.md) and [supervised activity](supervised-activity/README.md) examples retain persistence, recovery, and subprocess behavior.
 
 [The multi-App example](multi-app/README.md) declares two independently typed Apps on one client and builds separate Edge/Sandbox artifacts.
+
+[Headless GitHub issue agent](github/README.md) defines an optional App webhook route that verifies signed deliveries and dispatches to a repository Workspace and issue Session. Its runtime generates an answer and posts a GitHub comment.
