@@ -3,7 +3,20 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "check": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "@cantelop/sdk": "workspace:*" },
-  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.6.3" }
+  "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json",
+    "build": "pnpm check && node build.mjs",
+    "start": "node dist/backend.js"
+  },
+  "dependencies": {
+    "@cantelop/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.3",
+    "esbuild": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
 }

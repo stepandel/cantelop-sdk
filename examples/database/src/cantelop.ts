@@ -7,5 +7,4 @@ const cantelop = new CantelopClient();
 export const app = cantelop.app<TaskMessage, never, TaskReply>({
   name: "database-example",
   runtime: { receive },
-
 });
