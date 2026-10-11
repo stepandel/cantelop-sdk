@@ -34,6 +34,6 @@ This 1.0 prerelease requires CLI build protocol 6 and project manifest schema 3.
 
 Each deployment example has one `tsconfig.json` covering its application and runtime code.
 
-Run `pnpm check:examples` from the SDK root to type-check backend clients and runtimes and qualify their runtime-only artifacts. The [database example](database/README.md) demonstrates backend service functions and runtime operations over the same managed Workspace database. [Application-owned queue](application-queue/README.md) and [supervised activity](supervised-activity/README.md) examples retain persistence, recovery, and subprocess behavior.
+Run `pnpm check:examples` from the SDK root to type-check backend clients and runtimes and qualify their runtime-only artifacts. [Application-owned queue](application-queue/README.md) and [supervised activity](supervised-activity/README.md) examples retain persistence, recovery, and subprocess behavior.
 
 [The multi-App example](multi-app/README.md) declares two independently typed Apps on one client and builds separate Edge/Sandbox artifacts.
