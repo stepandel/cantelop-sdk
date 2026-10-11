@@ -124,7 +124,7 @@ try {
     'new CantelopClient().app({ name: "first-agent", runtime, id: "app_0123456789abcdef0123456789abcdef", slug: "support-agent" });',
     'const home: import("@cantelop/sdk").HomepageHandler<{prompt:string}> = ({app, request}) => new Response(app.name);',
     'new CantelopClient().app<{prompt:string}>({name:"home", runtime, homepage:home});',
-    'const hook: import("@cantelop/sdk").WebhookHandler<{prompt:string}, {text:string}, {answer:string}, {entries:string[]}> = async ({ app, request, secret }) => {',
+    'const hook: import("@cantelop/sdk").WebhookHandler<{prompt:string}, {text:string}, {answer:string}, {entries:string[]}> = async ({ app, request, env }) => {',
     '  const session = app.workspace({ slug: "customer" }).session();',
     '  const reply: {answer:string} = await session.request({prompt:"hello"});',
     '  const state: {entries:string[]} = (await session.view()).state;',

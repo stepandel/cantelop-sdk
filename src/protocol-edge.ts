@@ -1,4 +1,5 @@
 import { App } from "./app.js";
+import { validateAppDeploymentConfiguration, type AppEnvironmentDeclaration } from "./app-definition.js";
 import { RUNTIME_ID } from "./session-runtime-contract.js";
 import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
@@ -11,7 +12,7 @@ export interface ProtocolEdgeOptions {
   readonly appName?: string;
   readonly webhooks?: WebhookRoutes<any, any, any, any>;
   readonly homepage?: HomepageHandler<any, any, any, any>;
-  readonly secretNames?: readonly string[];
+  readonly environment?: Readonly<Record<string, AppEnvironmentDeclaration>>;
   readonly fetch?: (request: Request) => Promise<Response>;
   readonly runtimeOrigin?: string;
 }
@@ -26,6 +27,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
   const origin = options.runtimeOrigin ?? "https://runtime.cantelop.internal";
   const routes = validateWebhookRoutes(options.webhooks);
+  const environment = validateAppDeploymentConfiguration({ environment: options.environment ?? {} }).environment ?? {};
   if (options.homepage !== undefined && typeof options.homepage !== "function") throw new TypeError("Invalid App homepage");
   if ((Object.keys(routes).length || options.homepage) && !options.appName) throw new TypeError("Webhook App name is required");
   async function commands(request: Request, bindings: Readonly<Record<string, unknown>>): Promise<Response> {
@@ -125,18 +127,14 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         const allow = homepage ? "GET, HEAD" : route!.method;
         if (homepage ? !["GET", "HEAD"].includes(request.method) : request.method !== route!.method) return new Response(null, { status: 405, headers: { Allow: allow } });
         try {
+          const env = requestEnvironment(environment, bindings);
           const runtime = { receive() { throw new Error("App runtime executes in the Sandbox"); }, [RUNTIME_ID]: runtimeId };
           const app = new App<any, any, any, any>({ name: options.appName!, runtime, connection: {
             fetch: command => commands(command, bindings),
             ...(typeof bindings.CANTELOP_LOCAL_DATABASE_ORIGIN === "string" ? { localDatabaseOrigin: bindings.CANTELOP_LOCAL_DATABASE_ORIGIN } : {}),
           } }, { env: {} });
           const webhookRequest = await boundedWebhookRequest(request);
-          const response = await handle(Object.freeze({ request: webhookRequest, app,
-            secret(name: string) {
-              if (!options.secretNames?.includes(name) || typeof bindings[name] !== "string" || !bindings[name]) throw new Error("Webhook secret is unavailable");
-              return bindings[name] as string;
-            },
-          }));
+          const response = await handle(Object.freeze({ request: webhookRequest, app, env }));
           if (!(response instanceof Response)) throw new TypeError("Webhook must return a Response");
           if (homepage && request.method === "HEAD") {
             await response.body?.cancel().catch(() => {});
@@ -154,6 +152,18 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
       return commands(request, bindings);
     },
   });
+}
+/** Snapshot declared values only; deployment secrets use the same access as ordinary variables. */
+function requestEnvironment(declarations: Readonly<Record<string, AppEnvironmentDeclaration>>, bindings: Readonly<Record<string, unknown>>): Readonly<Record<string, string | undefined>> {
+  const env: Record<string, string | undefined> = Object.create(null);
+  for (const [name, declaration] of Object.entries(declarations)) {
+    const binding = Object.hasOwn(bindings, name) ? bindings[name] : undefined;
+    const value = binding === undefined ? declaration.default : binding;
+    if (value !== undefined && typeof value !== "string") throw new EdgeFailure("app_environment_invalid", 503);
+    if (declaration.required && (value === undefined || value === "")) throw new EdgeFailure("app_environment_missing", 503);
+    env[name] = value;
+  }
+  return Object.freeze(env);
 }
 /** Preserve exact payload bytes for provider signatures while bounding ingress memory. */
 async function boundedWebhookRequest(request: Request): Promise<Request> {

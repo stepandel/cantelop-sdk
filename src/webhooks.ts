@@ -4,8 +4,8 @@ export interface AppRequestContext<Message = unknown, Event = never, Reply = nev
   readonly request: Request;
   /** The current App, using the same Workspace/Session interface as backend code. */
   readonly app: App<Message, Event, Reply, View>;
-  /** Reads a declared secret from this App's Edge bindings. */
-  secret(name: string): string;
+  /** Declared environment values from this App's Edge bindings, including secrets. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 export type WebhookContext<Message = unknown, Event = never, Reply = never, View = never> = AppRequestContext<Message, Event, Reply, View>;
 export type HomepageHandler<Message = unknown, Event = never, Reply = never, View = never> =

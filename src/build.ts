@@ -134,7 +134,7 @@ export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeAp
   const workerOptions = {
     runtimeId: runtime.definition.id,
     appName: runtime.definition.name,
-    secretNames: Object.entries(runtime.definition.environment ?? {}).filter(([, declaration]) => declaration.secret).map(([name]) => name),
+    environment: runtime.definition.environment ?? {},
     ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }),
   };
   await build({

@@ -14,7 +14,7 @@ const receipt = id => Response.json({ id, status: 'accepted', accepted_at: '2026
 
 test('webhook App uses Workspace ID/slug and every Session method through local commands', async () => {
   const calls = [];
-  const worker = createProtocolWorker({ runtimeId: 'test.v1', appName: 'support', secretNames: ['HOOK_SECRET'],
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', appName: 'support', environment: { HOOK_SECRET: { secret: true, required: true } },
     fetch: async request => {
       calls.push(request);
       const url = new URL(request.url);
@@ -27,10 +27,11 @@ test('webhook App uses Workspace ID/slug and every Session method through local 
       if (request.method === 'DELETE') return new Response(null, { status: 204 });
       throw Error(url.pathname);
     },
-    webhooks: { '/webhooks/provider': { method: 'POST', async handle({ request, app, secret }) {
+    webhooks: { '/webhooks/provider': { method: 'POST', async handle({ request, app, env }) {
       assert.equal(request.headers.get('Authorization'), null);
-      assert.equal(secret('HOOK_SECRET'), 'provider-secret');
-      assert.throws(() => secret('CANTELOP_INTEGRATION_TOKEN'));
+      assert.equal(env.HOOK_SECRET, 'provider-secret');
+      assert.equal(env.CANTELOP_INTEGRATION_TOKEN, undefined);
+      assert.equal(Object.isFrozen(env), true);
       assert.equal(app.name, 'support');
       const session = app.workspace({ slug: 'customer' }).session({ id: 'chat' });
       assert.equal((await session.dispatch('normal', { id: messageId })).id, messageId);
@@ -86,9 +87,9 @@ test('webhook ingress bounds raw bodies and does not acknowledge failed admissio
   assert.doesNotMatch(await response.text(), /private upstream failure/);
 });
 
-test('handler failures and missing secrets never leak bindings or admit messages', async () => {
-  for (const handle of [() => { throw Error(bindings.HOOK_SECRET); }, ({ secret }) => new Response(secret('MISSING')), () => 'invalid']) {
-    const worker = createProtocolWorker({ runtimeId: 'test.v1', appName: 'support', secretNames: ['MISSING'], webhooks: { '/webhooks/fail': { method: 'POST', handle } } });
+test('handler failures never leak bindings or admit messages', async () => {
+  for (const handle of [() => { throw Error(bindings.HOOK_SECRET); }, () => 'invalid']) {
+    const worker = createProtocolWorker({ runtimeId: 'test.v1', appName: 'support', webhooks: { '/webhooks/fail': { method: 'POST', handle } } });
     const response = await worker.fetch(new Request('https://app.example/webhooks/fail', { method: 'POST' }), bindings);
     assert.equal(response.status, 500); assert.deepEqual(await response.json(), { error: { code: 'webhook_failed' } });
   }
@@ -97,14 +98,42 @@ test('handler failures and missing secrets never leak bindings or admit messages
   }
 });
 
+test('env exposes declared ordinary variables and secrets with defaults and validates before handler invocation', async () => {
+  let seen, calls = 0;
+  const options = {runtimeId:'test.v1',appName:'support',environment:{
+    TOKEN:{secret:true,required:true}, LABEL:{default:'default label'}, OPTIONAL:{}, EMPTY:{default:'fallback'},
+  },webhooks:{'/webhooks/env':{method:'POST',handle(context) {
+    calls++; seen=context;
+    return Response.json({token:context.env.TOKEN,label:context.env.LABEL,empty:context.env.EMPTY});
+  }}}};
+  const worker = createProtocolWorker(options);
+  options.environment.LABEL.default = 'mutated declaration';
+  const incoming = {TOKEN:'configured token',EMPTY:'',CANTELOP_INTEGRATION_TOKEN:'private token',UNDECLARED:'hidden'};
+  const response = await worker.fetch(new Request('https://app.example/webhooks/env',{method:'POST'}),incoming);
+  assert.deepEqual(await response.json(),{token:'configured token',label:'default label',empty:''});
+  incoming.TOKEN = 'changed later';
+  assert.equal(seen.env.TOKEN,'configured token'); assert.equal(seen.secret,undefined);
+  assert.equal(seen.env.UNDECLARED,undefined); assert.equal(seen.env.CANTELOP_INTEGRATION_TOKEN,undefined);
+  assert.equal(seen.env.OPTIONAL,undefined); assert.equal(Object.isFrozen(seen.env),true);
+  for (const [bindings,code] of [[{},'app_environment_missing'],[{TOKEN:''},'app_environment_missing'],[{TOKEN:123},'app_environment_invalid']]) {
+    const failure = await worker.fetch(new Request('https://app.example/webhooks/env',{method:'POST'}),bindings);
+    assert.equal(failure.status,503); assert.deepEqual(await failure.json(),{error:{code}});
+  }
+  assert.equal(calls,1);
+  assert.equal((await worker.fetch(new Request('https://app.example/webhooks/env',{method:'POST'}),{TOKEN:'other token',LABEL:'override'})).status,200);
+  assert.equal(seen.env.TOKEN,'other token'); assert.equal(seen.env.LABEL,'override');
+  await worker.fetch(new Request('https://app.example/webhooks/env',{method:'POST'}),{TOKEN:'configured',LABEL:undefined});
+  assert.equal(seen.env.LABEL,'default label');
+});
+
 test('compiler isolates webhook and runtime graphs; webhook edits preserve Session identity', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'cantelop-webhooks-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const definition = path.join(directory, 'cantelop.mts');
   const clientModule = new URL('../dist/client.js', import.meta.url).pathname;
   await writeFile(path.join(directory, 'agent.ts'), 'export function receive() { console.log("sandbox-only-marker"); }');
-  const hook = marker => `export async function handle({ request, app, secret }: any) {
-    if (request.headers.get("provider-token") !== secret("HOOK_SECRET")) return new Response(null, {status:401});
+  const hook = marker => `export async function handle({ request, app, env }: any) {
+    if (request.headers.get("provider-token") !== env.HOOK_SECRET) return new Response(null, {status:401});
     const result = await app.workspace({ id: ${JSON.stringify(workspaceId)} }).session({ id: "chat" }).dispatch({ text: ${JSON.stringify(marker)} }, { id: ${JSON.stringify(messageId)} });
     return Response.json({ id: result.id }, { status: 202 });
   }`;
@@ -176,7 +205,7 @@ test('GitHub example verifies signatures before dispatch and maps retries to sta
   const invoke = async (body, signature, event = 'issues') => {
     const signed = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body)));
     const hash = [...signed].map(b => b.toString(16).padStart(2,'0')).join('');
-    return worker.fetch(new Request('https://app.example/webhooks/github', {method:'POST',body,headers:{'X-Hub-Signature-256':signature ?? `sha256=${hash}`,'X-GitHub-Event':event,'X-GitHub-Delivery':delivery}}), {GITHUB_WEBHOOK_SECRET:'github-secret',CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS:120});
+    return worker.fetch(new Request('https://app.example/webhooks/github', {method:'POST',body,headers:{'X-Hub-Signature-256':signature ?? `sha256=${hash}`,'X-GitHub-Event':event,'X-GitHub-Delivery':delivery}}), {GITHUB_WEBHOOK_SECRET:'github-secret',GITHUB_TOKEN:'github-token',OPENAI_API_KEY:'openai-key',CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS:120});
   };
   const body = JSON.stringify({action:'opened',repository:{id:123,full_name:'owner/repo'},issue:{number:7,title:'Help',body:'An issue'}});
   assert.equal((await invoke(body, 'sha256='+'0'.repeat(64))).status, 401); assert.equal(calls.length, 0);

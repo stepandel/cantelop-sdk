@@ -14,7 +14,7 @@ Repository numeric IDs map to `repo-<id>` Workspace slugs; issue numbers map to 
 
 With a compatible CLI/platform, deploy the generated Edge/Sandbox artifacts and configure:
 
-- `GITHUB_WEBHOOK_SECRET`: the secret configured on the repository webhook; required on Edge.
+- `GITHUB_WEBHOOK_SECRET`: the secret configured on the repository webhook; read as `env.GITHUB_WEBHOOK_SECRET` on Edge. All required App environment values must be provisioned before invoking HTTP handlers.
 - `GITHUB_TOKEN`: a token restricted to the target repository with permission to write issue comments; used by the runtime.
 - `OPENAI_API_KEY`: used by the runtime.
 - `OPENAI_MODEL`: defaults to `gpt-5-mini`.

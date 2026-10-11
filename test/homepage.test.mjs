@@ -12,9 +12,9 @@ import { compileClientDefinition } from '../dist/compiler.js';
 const request = (method = 'GET', path = '/') => new Request(`https://app.example${path}`, { method });
 test('optional homepage serves only root GET/HEAD and shares the typed App request context', async () => {
   let invocations = 0;
-  const worker = createProtocolWorker({runtimeId:'test.v1',appName:'home',secretNames:['SITE_SECRET'],homepage({app,request,secret}) {
+  const worker = createProtocolWorker({runtimeId:'test.v1',appName:'home',environment:{SITE_SECRET:{secret:true,required:true}},homepage({app,request,env}) {
     invocations++;
-    assert.equal(app.name,'home'); assert.equal(secret('SITE_SECRET'),'site-secret');
+    assert.equal(app.name,'home'); assert.equal(env.SITE_SECRET,'site-secret');
     const session = app.workspace({slug:'customer'}).session({id:'chat'});
     assert.equal(session.id,'chat');
     return new Response(`<h1>${app.name}</h1>`, {headers:{'Content-Type':'text/html','X-Query':new URL(request.url).searchParams.get('q') ?? ''}});
@@ -27,6 +27,7 @@ test('optional homepage serves only root GET/HEAD and shares the typed App reque
   const wrong = await worker.fetch(request('POST'),bindings);
   assert.equal(wrong.status,405); assert.equal(wrong.headers.get('Allow'),'GET, HEAD'); assert.equal(invocations,2);
   assert.equal((await worker.fetch(request('GET','/commands'),bindings)).status,401);
+  assert.equal((await worker.fetch(request(),{})).status,503); assert.equal(invocations,2);
 });
 
 test('homepage remains optional and handler errors do not leak secrets', async () => {

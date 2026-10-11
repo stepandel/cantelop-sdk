@@ -5,11 +5,11 @@ function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-export async function handleGitHub({ request, app, secret }: WebhookContext<IssueMessage>): Promise<Response> {
+export async function handleGitHub({ request, app, env }: WebhookContext<IssueMessage>): Promise<Response> {
   const signature = request.headers.get("X-Hub-Signature-256");
   if (!signature || !/^sha256=[a-f0-9]{64}$/.test(signature)) return new Response(null, { status: 401 });
   const body = await request.arrayBuffer();
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret("GITHUB_WEBHOOK_SECRET")), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.GITHUB_WEBHOOK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
   const digest = Uint8Array.from(signature.slice(7).match(/../g)!, byte => parseInt(byte, 16));
   if (!await crypto.subtle.verify("HMAC", key, digest, body)) return new Response(null, { status: 401 });
 

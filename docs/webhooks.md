@@ -20,8 +20,8 @@ export const support = cantelop.app<Message, Event, Reply, View>({
 Handlers receive a typed `WebhookContext<Message, Event, Reply, View>` and return a standard `Response`, synchronously or asynchronously:
 
 ```ts
-async function handleGitHub({ request, app, secret }: WebhookContext<Message, Event, Reply, View>) {
-  const event = await verifyAndParseGitHub(request, secret("GITHUB_WEBHOOK_SECRET"));
+async function handleGitHub({ request, app, env }: WebhookContext<Message, Event, Reply, View>) {
+  const event = await verifyAndParseGitHub(request, env.GITHUB_WEBHOOK_SECRET);
   await app.workspace({ slug: event.workspaceSlug })
     .session({ id: event.sessionId })
     .dispatch(event.message, { id: event.messageId, signal: request.signal });
@@ -45,7 +45,7 @@ export const support = cantelop.app<Message>({
 });
 ```
 
-`homepage` accepts an inline or imported function, a method, or a shorthand property. Its `AppRequestContext<Message, Event, Reply, View>` supplies the same typed App, Request and declared-secret access as webhooks. `HomepageHandler` is exported for separately typed functions. The handler returns a standard Response and chooses its headers/content type.
+`homepage` accepts an inline or imported function, a method, or a shorthand property. Its `AppRequestContext<Message, Event, Reply, View>` supplies the same typed App, Request and declared environment values as webhooks. `HomepageHandler` is exported for separately typed functions. The handler returns a standard Response and chooses its headers/content type.
 
 A configured homepage is public at the App hostname's root. GET invokes it normally; HEAD invokes it and returns status/headers with no body. Other methods return 405 with `Allow: GET, HEAD`. Unexpected errors return a generic `homepage_failed` 500. If omitted, no root route is added and existing protocol routing behavior remains unchanged.
 
@@ -64,7 +64,7 @@ Handlers must use the context's App rather than capture/import the enclosing App
 - Routes are exact paths beneath `/webhooks/`, with one `GET` or `POST` method per path. They do not support wildcards, path parameters, middleware registration or a general API router. `/commands` is reserved.
 - Routes receive the original headers, URL/query and exact body bytes. Bodies are limited to 1 MiB before the handler runs; larger bodies receive 413. Wrong methods receive 405 with `Allow`.
 - Each handler verifies its provider's authentication before using the App. Cantelop does not authenticate provider requests automatically. URL challenges and ignored events can return directly without activating a Session.
-- `secret(name)` exposes only environment declarations marked `secret: true`, from the current App's Edge bindings. Missing/undeclared secrets fail the request. Ordinary configuration can be captured as code literals; secret values belong in deployment bindings.
+- `env` is a frozen snapshot of the App’s declared environment values, including both ordinary variables and secrets. Explicit bindings override declared defaults. Optional unset values are `undefined`; undeclared values and reserved Cantelop bindings are excluded. Missing/empty required values return `app_environment_missing` (503), and non-string values return `app_environment_invalid` (503), before invoking the handler. `secret: true` describes deployment storage; it does not change how a value is accessed.
 - A webhook should acknowledge after `dispatch`/`steer` admission, not after agent completion. Failed admission must not return success. There is no additional durable ingress queue or SDK provider retry scheduler; the upstream provider's deadline must allow command admission.
 - Map retry deliveries to stable Workspace, Session and message IDs. The SDK's `msg_` IDs require 32 hexadecimal characters; hash provider delivery IDs into that format. Idempotent admission does not guarantee exactly-once outbound side effects.
 - Agent replies to GitHub, Slack or Telegram are separate outbound API calls from the runtime. The webhook Response is only the provider acknowledgement.
