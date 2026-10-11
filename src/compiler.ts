@@ -1,10 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { validateWebhookRoutes } from "./webhooks.js";
 import { validateAppDeploymentConfiguration } from "./app-definition.js";
+import { SLUG_PATTERN } from "./integration-protocol.js";
 import ts from "typescript";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { build, transform, type Plugin } from "esbuild";
+
+const canonicalPath = (filename: string) => ts.sys.realpath?.(filename) ?? path.resolve(filename);
 
 export class RuntimeContractError extends TypeError {
   constructor(message: string, readonly watchFiles: readonly string[]) { super(message); }
@@ -37,7 +40,7 @@ function contractFingerprint(checker: ts.TypeChecker, types: readonly ts.Type[],
 }
 
 /** Static definitions are split without importing or evaluating application code. */
-export async function compileAppDefinitions(filename: string) {
+export async function compileAppDefinitions(filename: string, compileOptions: { readonly webhooks?: boolean } = {}) {
   filename = path.resolve(filename);
   const configPath = ts.findConfigFile(path.dirname(filename), ts.sys.fileExists);
   let configured: ts.CompilerOptions = {};
@@ -50,8 +53,9 @@ export async function compileAppDefinitions(filename: string) {
   }
   delete configured.rootDir;
   delete configured.outDir;
+  // Strict checking is a default only; an explicit project setting (including strict: false or checkJs) wins.
   const options: ts.CompilerOptions = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    ...configured, noEmit: true, strict: true, skipLibCheck: true, allowJs: true, checkJs: true,
+    strict: true, ...configured, noEmit: true, skipLibCheck: true, allowJs: true,
     noImplicitAny: configured.noImplicitAny ?? Boolean(configured.strict), allowImportingTsExtensions: true };
   const program = ts.createProgram([filename], options);
   const checker = program.getTypeChecker();
@@ -74,7 +78,6 @@ export async function compileAppDefinitions(filename: string) {
   const fileSymbol = checker.getSymbolAtLocation(file);
   if (!fileSymbol) return fail("Export at least one named App definition");
   const resolveSymbol = (symbol: ts.Symbol) => symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-  const canonicalPath = (filename: string) => ts.sys.realpath?.(filename) ?? path.resolve(filename);
   const isSDKType = (symbol: ts.Symbol | undefined, name: string, module: string) => symbol?.declarations?.some(d =>
     ts.isClassDeclaration(d) && d.name?.text === name && canonicalPath(d.getSourceFile().fileName) === canonicalPath(fileURLToPath(new URL(`./${module}.d.ts`, import.meta.url))));
   const topStatement = (node: ts.Node): ts.Statement | undefined => {
@@ -168,7 +171,7 @@ export async function compileAppDefinitions(filename: string) {
     const nameProperty = property("name");
     if (!nameProperty || !ts.isPropertyAssignment(nameProperty) || !ts.isStringLiteral(nameProperty.initializer)) return fail("App name must be a string literal");
     const name = nameProperty.initializer.text;
-    if (!/^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name)) return fail("Invalid App name");
+    if (!SLUG_PATTERN.test(name)) return fail("Invalid App name");
     if (names.has(name)) return fail(`Duplicate App name: ${name}`);
     names.add(name);
     const deployment: Record<string, unknown> = {};
@@ -221,9 +224,13 @@ export async function compileAppDefinitions(filename: string) {
     const webhookStatements = collect([...(webhookExpression ? [webhookExpression] : []), ...(homepageProperty ? [homepageProperty] : [])], true);
     for (const dependency of webhookStatements) allStatements.add(dependency);
     const webhookSource = selectedSource(webhookStatements) + "\nexport default { webhooks: " + (webhookExpression ? print(webhookExpression) : "{}") + (homepageProperty ? ", " + print(homepageProperty) : "") + " };\n";
-    const webhookBundle = await build({ stdin: { contents: webhookSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, bundle: true, platform: "browser", format: "esm", target: "es2022", write: false, metafile: true, logLevel: "silent", plugins: [rejectDefinitionImport] });
-    const webhookModule = webhookBundle.outputFiles![0]!.text;
-    for (const input of Object.keys(webhookBundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(input));
+    // Only Edge artifacts consume the webhook bundle; backend and Sandbox builds skip it.
+    let webhookModule = "";
+    if (compileOptions.webhooks !== false) {
+      const webhookBundle = await build({ stdin: { contents: webhookSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, bundle: true, platform: "browser", format: "esm", target: "es2022", write: false, metafile: true, logLevel: "silent", plugins: [rejectDefinitionImport] });
+      webhookModule = webhookBundle.outputFiles![0]!.text;
+      for (const input of Object.keys(webhookBundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(input));
+    }
     const runtimeStatements = collect([runtime], true);
     for (const dependency of runtimeStatements) allStatements.add(dependency);
     for (const dependency of collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty && p !== webhookProperty && p !== homepageProperty)], false)) {
@@ -261,8 +268,8 @@ export async function compileAppDefinitions(filename: string) {
 }
 
 /** Select an App for an Edge/Sandbox artifact; multiple Apps require an explicit name. */
-export async function compileClientDefinition(filename: string, app?: string) {
-  const result = await compileAppDefinitions(filename);
+export async function compileClientDefinition(filename: string, app?: string, options: { readonly webhooks?: boolean } = {}) {
+  const result = await compileAppDefinitions(filename, options);
   const selected = app === undefined && result.apps.length === 1 ? result.apps[0] : result.apps.find(value => value.definition.name === app);
   if (!selected) throw new RuntimeContractError(app === undefined ? "Multiple Apps: select an App by name" : `App not found: ${app}`, result.watchFiles);
   return { ...selected, backendSource: result.backendSource, watchFiles: result.watchFiles };
@@ -270,12 +277,12 @@ export async function compileClientDefinition(filename: string, app?: string) {
 
 /** Use in the application's backend esbuild pipeline to exclude all Sandbox dependencies. */
 export function createCantelopCompilerPlugin(options: { readonly definition: string }): Plugin {
-  const definition = path.resolve(options.definition);
+  const definition = canonicalPath(path.resolve(options.definition));
   return { name: "cantelop-app-compiler", setup(builder) {
     builder.onLoad({ filter: /\.[cm]?[jt]s$/ }, async args => {
-      if (path.resolve(args.path) !== definition) return;
+      if (canonicalPath(args.path) !== definition) return;
       try {
-        const compiled = await compileAppDefinitions(definition);
+        const compiled = await compileAppDefinitions(definition, { webhooks: false });
         return { contents: compiled.backendSource, loader: "ts", resolveDir: path.dirname(definition), watchFiles: compiled.watchFiles };
       } catch (error) {
         return { errors: [{ text: error instanceof Error ? error.message : String(error) }], watchFiles: error instanceof RuntimeContractError ? [...error.watchFiles] : [definition] };

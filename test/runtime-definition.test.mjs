@@ -24,17 +24,16 @@ test("Apps require handler implementations, reject developer identity, and freez
   assert.equal(client.runtime.receive, receive);
   assert.equal(Object.isFrozen(client.runtime), true);
 });
-test('Edge rejects missing or different runtime identity on every method before private routing', async () => {
+test('Edge rejects missing or different runtime identity on every Session method before private routing', async () => {
   let calls = 0;
   const worker = createProtocolWorker({ runtimeId: "chat.v1", fetch: async () => { calls++; return Response.json({}); } });
   const commands = [
     { type: 'dispatch', message: 'hello' }, { type: 'steer', message: 'hello' },
     { type: 'request', message: 'hello', timeoutMs: 1000 }, { type: 'cancel', messageId },
     { type: 'status', messageId }, { type: 'stop' }, { type: 'view' }, { type: 'stream' },
-    { type: 'workspace.resolve' }, { type: 'workspace.database' },
   ];
   for (const value of commands) {
-    const body = { ...command(), session: value.type.startsWith('workspace.') ? null : { id: 'chat' }, command: value };
+    const body = { ...command(), session: { id: 'chat' }, command: value };
     for (const id of [undefined, 'other.v1']) {
       const response = await worker.fetch(request(body, id), { CANTELOP_INTEGRATION_TOKEN: 'scoped' });
       assert.equal(response.status, 409);
@@ -42,6 +41,11 @@ test('Edge rejects missing or different runtime identity on every method before 
     }
   }
   assert.equal(calls, 0);
+  // Workspace commands never touch the Sandbox runtime, so they do not require its identity.
+  for (const type of ['workspace.resolve', 'workspace.database']) {
+    const response = await worker.fetch(request({ ...command(), session: null, command: { type } }, undefined), { CANTELOP_INTEGRATION_TOKEN: 'scoped' });
+    assert.notEqual((await response.json()).error?.code, 'session_runtime_mismatch');
+  }
 });
 
 

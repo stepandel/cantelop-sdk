@@ -119,7 +119,12 @@ export interface EdgeApiArtifact {
 
 /** Generates the protocol-owned App Worker; there is no customer API entrypoint. */
 export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeApiArtifact> {
-  const runtime = await readRuntimeDefinition(path.resolve(options.definition), options.app);
+  return writeEdgeApi(await readRuntimeDefinition(path.resolve(options.definition), options.app), options);
+}
+
+type CompiledApp = Awaited<ReturnType<typeof readRuntimeDefinition>>;
+
+async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions): Promise<EdgeApiArtifact> {
   const outdir = path.resolve(options.outdir);
   if (options.runtimeOrigin !== undefined) {
     const url = new URL(options.runtimeOrigin);
@@ -225,7 +230,11 @@ export async function buildSessionRuntime(
   options: BuildSessionRuntimeOptions,
 ): Promise<SessionRuntimeArtifact> {
   const definitionPath = path.resolve(options.definition);
-  let runtime = await readRuntimeDefinition(definitionPath, options.app);
+  return writeSessionRuntime(await readRuntimeDefinition(definitionPath, options.app, { webhooks: false }), definitionPath, options);
+}
+
+async function writeSessionRuntime(compiled: CompiledApp, definitionPath: string, options: BuildSessionRuntimeOptions): Promise<SessionRuntimeArtifact> {
+  let runtime = compiled;
   const entrypoint = runtime.entrypoint;
   const outdir = path.resolve(options.outdir);
   if (entrypoint === outdir || path.dirname(entrypoint) === outdir) {
@@ -236,7 +245,8 @@ export async function buildSessionRuntime(
   await mkdir(outdir, { recursive: true });
 
   const mainModule = path.join(outdir, SESSION_RUNTIME_MAIN_MODULE);
-  await build(sessionRuntimeBuildOptions(definitionPath, mainModule, value => { runtime = value; }, options.app));
+  // One-shot builds reuse the definition compiled above instead of recompiling in onLoad.
+  await build(sessionRuntimeBuildOptions(definitionPath, mainModule, value => { runtime = value; }, async () => compiled));
   const schemaPath = await projectSchemaPath(runtime.entrypoint, options.projectRoot);
   const manifest = await writeSessionManifest(outdir, schemaPath, runtime.definition.id, runtime.definition.name, runtime.definition);
   return Object.freeze({
@@ -245,7 +255,7 @@ export async function buildSessionRuntime(
   });
 }
 
-function sessionRuntimeBuildOptions(definitionPath: string, mainModule: string, onDefinition: (value: Awaited<ReturnType<typeof readRuntimeDefinition>>) => void, app?: string): BuildOptions {
+function sessionRuntimeBuildOptions(definitionPath: string, mainModule: string, onDefinition: (value: CompiledApp) => void, compile: () => Promise<CompiledApp>): BuildOptions {
   let watchFiles: readonly string[] = [definitionPath];
   let runtimeModule = "";
   return {
@@ -256,7 +266,7 @@ function sessionRuntimeBuildOptions(definitionPath: string, mainModule: string, 
       builder.onResolve({ filter: /^cantelop:session-bootstrap$/ }, () => ({ path: "bootstrap", namespace: "cantelop-runtime" }));
       builder.onLoad({ filter: /.*/, namespace: "cantelop-runtime" }, async () => {
         try {
-          const runtime = await readRuntimeDefinition(definitionPath, app);
+          const runtime = await compile();
           watchFiles = runtime.watchFiles;
           onDefinition(runtime);
           runtimeModule = runtime.runtimeModule;
@@ -310,7 +320,7 @@ export async function watchLocalProject(
   options: WatchLocalProjectOptions,
 ): Promise<LocalProjectWatcher> {
   const sessionDefinition = path.resolve(options.sessionDefinition);
-  let runtime = await readRuntimeDefinition(sessionDefinition, options.app);
+  let runtime = await readRuntimeDefinition(sessionDefinition, options.app, { webhooks: false });
   let buildingRuntime = runtime;
   const sessionEntrypoint = runtime.entrypoint;
   const sessionRuntimeOutdir = path.resolve(options.sessionRuntimeOutdir);
@@ -331,7 +341,7 @@ export async function watchLocalProject(
           sessionDefinition,
           path.join(sessionRuntimeOutdir, SESSION_RUNTIME_MAIN_MODULE),
           value => { buildingRuntime = value; },
-          options.app,
+          () => readRuntimeDefinition(sessionDefinition, options.app, { webhooks: false }),
         ),
         options.onBuild,
         async () => { runtime = buildingRuntime; return writeSessionManifest(sessionRuntimeOutdir, schemaPath, runtime.definition.id, runtime.definition.name, runtime.definition); },
@@ -429,7 +439,10 @@ export async function buildDatabaseSchema(entrypoint = path.resolve("db/schema.t
 
 /** Generate a backend client module with the Sandbox dependency graph removed. */
 export async function buildBackendClient(options: { readonly definition: string; readonly outdir: string }) {
-  const compiled = await compileAppDefinitions(path.resolve(options.definition));
+  return writeBackendClient(await compileAppDefinitions(path.resolve(options.definition), { webhooks: false }), options);
+}
+
+async function writeBackendClient(compiled: Awaited<ReturnType<typeof compileAppDefinitions>>, options: { readonly definition: string; readonly outdir: string }) {
   const directory = path.resolve(options.outdir);
   await mkdir(directory, { recursive: true });
   const mainModule = path.join(directory, "client.mjs");
@@ -442,16 +455,17 @@ export async function buildBackendClient(options: { readonly definition: string;
 
 /** Build each named App into its own deployment directory plus the shared backend module. */
 export async function buildAppArtifacts(options: { readonly definition: string; readonly outdir: string; readonly projectRoot?: string }) {
-  const compiled = await compileAppDefinitions(path.resolve(options.definition));
+  // Compile once so every artifact shares one consistent App identity.
+  const definitionPath = path.resolve(options.definition);
+  const compiled = await compileAppDefinitions(definitionPath);
   const apps = [];
   for (const app of compiled.apps) {
     const outdir = path.join(path.resolve(options.outdir), app.definition.name);
-    const edge = await buildEdgeApi({ definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "edge") });
-    const runtime = await buildSessionRuntime({ definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "runtime"), ...(options.projectRoot === undefined ? {} : { projectRoot: options.projectRoot }) });
-    if (edge.manifest.session_runtime_id !== runtime.manifest.session_runtime_id) throw new Error("App definition changed during build; rebuild artifacts");
+    const runtimeDefinition = { ...app, backendSource: compiled.backendSource, watchFiles: compiled.watchFiles };
+    const edge = await writeEdgeApi(runtimeDefinition, { definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "edge") });
+    const runtime = await writeSessionRuntime(runtimeDefinition, definitionPath, { definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "runtime"), ...(options.projectRoot === undefined ? {} : { projectRoot: options.projectRoot }) });
     apps.push({ name: app.definition.name, edge, runtime });
   }
-  const backend = await buildBackendClient({ definition: options.definition, outdir: path.join(path.resolve(options.outdir), "backend") });
-  for (const app of apps) if (backend.manifest.apps.find(record => record.name === app.name)?.session_runtime_id !== app.runtime.manifest.session_runtime_id) throw new Error("App definition changed during build; rebuild artifacts");
+  const backend = await writeBackendClient(compiled, { definition: options.definition, outdir: path.join(path.resolve(options.outdir), "backend") });
   return { apps, backend };
 }

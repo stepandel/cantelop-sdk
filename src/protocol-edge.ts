@@ -38,7 +38,6 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
       let envelope: AppCommandEnvelope;
       try { envelope = validateCommand(await readJSON(request)); }
       catch (error) { if (error instanceof EdgeFailure) throw error; throw new EdgeFailure("invalid_command", 400); }
-      if (request.headers.get("X-Cantelop-Session-Runtime") !== runtimeId) throw new EdgeFailure("session_runtime_mismatch", 409);
       const { workspace, session, command } = envelope;
       async function invoke(path: string, method: "GET" | "POST" | "DELETE", body?: unknown, stream = false): Promise<Response> {
         // Caller auth/context headers never cross this boundary. Outbound routing binds the App.
@@ -49,7 +48,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         }));
         if (stream) return response;
         if (response.status === 204) return Response.json({ protocolVersion: 2, id: envelope.id });
-        const value = await readJSON(response);
+        const value = await readPlatformJSON(response);
         if (!response.ok) return Response.json(value, { status: response.status });
         if (!record(value)) throw new EdgeFailure("invalid_platform_response", 502);
         return Response.json({ ...value, protocolVersion: 2 }, { status: response.status });
@@ -58,7 +57,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         if (workspace.id !== undefined) return workspace.id;
         const response = await invoke("/__cantelop/v1/workspaces/open", "POST", { slug: workspace.slug });
         if (!response.ok) throw await remoteFailure(response);
-        const value = await readJSON(response);
+        const value = await readPlatformJSON(response);
         if (!record(value) || typeof value.id !== "string" || !/^wsp_[0-9a-f]{32}$/.test(value.id) || value.slug !== workspace.slug) throw new EdgeFailure("invalid_platform_response", 502);
         return value.id;
       }
@@ -66,12 +65,14 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         switch (command.type) {
           case "workspace.resolve":
             return workspace.id === undefined
-              ? invoke("/__cantelop/v1/workspaces/open", "POST", { slug: workspace.slug })
-              : invoke(`/__cantelop/v1/workspaces/${workspace.id}`, "GET");
+              ? await invoke("/__cantelop/v1/workspaces/open", "POST", { slug: workspace.slug })
+              : await invoke(`/__cantelop/v1/workspaces/${workspace.id}`, "GET");
           case "workspace.database":
-            return invoke("/__cantelop/v1/workspaces/database/credentials", "POST", { workspace_id: await resolveWorkspace() });
+            return await invoke("/__cantelop/v1/workspaces/database/credentials", "POST", { workspace_id: await resolveWorkspace() });
         }
       }
+      // Only Session commands depend on Sandbox runtime compatibility.
+      if (request.headers.get("X-Cantelop-Session-Runtime") !== runtimeId) throw new EdgeFailure("session_runtime_mismatch", 409);
       const scopedPath = (suffix = "") => sessionPath(session!.id, workspace, suffix);
       // Each operation owns its semantics here; no client-selected private path is forwarded.
       const sessionCommand = command as SessionCommand;
@@ -83,7 +84,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           try { assertKeepAlive(keepAliveSeconds); if (keepAliveSeconds === undefined) throw new TypeError(); }
           catch { throw new EdgeFailure("keep_alive_not_configured", 503); }
           const workspaceId = await resolveWorkspace();
-          return invoke(`/__cantelop/integration/v2/${submission.type === "request" ? "requests" : "messages"}`, "POST", {
+          return await invoke(`/__cantelop/integration/v2/${submission.type === "request" ? "requests" : "messages"}`, "POST", {
             session: { id: session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds },
             message: { id: envelope.id, payload: submission.message },
             priority: submission.type === "steer" ? "priority" : "normal",
@@ -92,14 +93,14 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         }
         case "cancel": {
           const cancel = sessionCommand;
-          return invoke(scopedPath(`/messages/${cancel.messageId}/cancel`), "POST", { id: envelope.id });
+          return await invoke(scopedPath(`/messages/${cancel.messageId}/cancel`), "POST", { id: envelope.id });
         }
         case "status": {
           const status = sessionCommand;
-          return invoke(scopedPath(`/messages/${status.messageId}`), "GET");
+          return await invoke(scopedPath(`/messages/${status.messageId}`), "GET");
         }
-        case "stop": return invoke(scopedPath(), "DELETE");
-        case "view": return invoke(scopedPath("/view"), "GET");
+        case "stop": return await invoke(scopedPath(), "DELETE");
+        case "view": return await invoke(scopedPath("/view"), "GET");
         case "stream": {
           const stream = sessionCommand;
           const url = new URL(scopedPath("/events"), origin);
@@ -107,7 +108,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
             url.searchParams.set("stream_id", stream.after.streamId);
             url.searchParams.set("after", String(stream.after.sequence));
           }
-          return invoke(url.pathname + url.search, "GET", undefined, true);
+          return await invoke(url.pathname + url.search, "GET", undefined, true);
         }
       }
       throw new EdgeFailure("invalid_command", 400);
@@ -216,8 +217,16 @@ async function readJSON(source: Request | Response): Promise<unknown> {
     return JSON.parse(text + decoder.decode());
   } finally { if (!done) await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
+/** Platform response failures are never the caller's fault; report them as upstream errors. */
+async function readPlatformJSON(response: Response): Promise<unknown> {
+  try { return await readJSON(response); }
+  catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new EdgeFailure("invalid_platform_response", 502);
+  }
+}
 async function remoteFailure(response: Response): Promise<EdgeFailure> {
-  const value = await readJSON(response);
+  const value = await readPlatformJSON(response);
   return new EdgeFailure(record(value) && record(value.error) && typeof value.error.code === "string" ? value.error.code : "workspace_resolution_failed", response.status);
 }
 function failure(code: string, status: number): Response { return Response.json({ error: { code } }, { status }); }

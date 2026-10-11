@@ -7,7 +7,7 @@ import path from "node:path";
 import { AppConfigurationError, parseAppConfiguration, type AppConfigurationDocument } from "./app-config.js";
 const MAX_BYTES = 1024 * 1024;
 
-export async function loadNodeAppConfiguration(env: Readonly<Record<string, string | undefined>>, _options: { readonly directory?: string } = {}): Promise<{ document?: AppConfigurationDocument }> {
+export async function loadNodeAppConfiguration(env: Readonly<Record<string, string | undefined>>): Promise<{ document?: AppConfigurationDocument }> {
   const configured = env.CANTELOP_INTEGRATION_CONFIG;
   const configDirectory = process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support")
     : process.platform === "win32" ? env.APPDATA : env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config");

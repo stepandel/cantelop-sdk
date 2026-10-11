@@ -6,7 +6,7 @@ import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionO
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
-import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, validateCommand, workspaceSelector } from "./integration-protocol.js";
+import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** A named App with a typed runtime and its own Workspace namespace. */
 export class App<Message = unknown, Event = never, Reply = never, View = never> {
@@ -20,7 +20,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = never> 
   get runtime(): SessionRuntime<Message, Event, Reply> { return this.#sessionRuntime; }
 
   constructor(options: AppOptions<Message, Event, Reply, View>, context: ConfigurationContext, profile?: string) {
-    if (!options || typeof options.name !== "string" || !/^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(options.name)) throw new TypeError("A valid App name is required");
+    if (!options || typeof options.name !== "string" || !SLUG_PATTERN.test(options.name)) throw new TypeError("A valid App name is required");
     this.#name = options.name;
     assertSessionRuntime(options.runtime);
     this.#sessionRuntime = Object.freeze({ ...options.runtime });

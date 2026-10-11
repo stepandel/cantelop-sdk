@@ -1,12 +1,13 @@
 import { validateWebhookRoutes } from "./webhooks.js";
 import { validateAppDeploymentConfiguration } from "./app-definition.js";
 import type { AppSelector, AppOptions } from "./integration.js";
+import { SLUG_PATTERN } from "./integration-protocol.js";
 
 /** Reserved CLI/runtime injection point. Never includes control-plane login credentials. */
 export const APP_CONFIGURATION_CONTEXT_KEY = "dev.cantelop.sdk.app-config.v1";
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const APP_ID = /^app_[0-9a-f]{32}$/;
-const APP_SLUG = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const APP_SLUG = SLUG_PATTERN;
 
 export class AppConfigurationError extends Error {
   constructor(readonly code: "app_configuration_missing" | "app_configuration_invalid" | "app_not_configured" | "app_credentials_expired") {
@@ -38,7 +39,6 @@ export interface AppConfigurationDocument {
 }
 export interface ConfigurationContext {
   readonly env: Readonly<Record<string, string | undefined>>;
-  readonly directory?: string;
   readonly injected?: AppConfigurationDocument;
   readonly localDatabaseOrigin?: string;
   /** Test seam; production resolves this through the separate Node-only adapter. */
@@ -95,14 +95,14 @@ function parseJSON(text: string): AppConfigurationDocument {
 
 /** Capture runtime/environment values once so a reference cannot silently switch Apps. */
 export function captureConfigurationContext(): ConfigurationContext {
-  const runtime = globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined>; cwd?: () => string } };
+  const runtime = globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined> } };
   const source = runtime.process?.env ?? {};
   const env: Record<string, string | undefined> = {};
   for (const name of ["CANTELOP_APP_CONFIG", "CANTELOP_APP_ID", "CANTELOP_APP_SLUG", "CANTELOP_INTEGRATION_TOKEN", "CANTELOP_EDGE_URL", "CANTELOP_SESSION_RUNTIME_ID", "CANTELOP_PROFILE", "CANTELOP_INTEGRATION_CONFIG", "CANTELOP_CONFIG", "APPDATA", "XDG_CONFIG_HOME"]) env[name] = source[name];
   const injection = Reflect.get(globalThis, Symbol.for(APP_CONFIGURATION_CONTEXT_KEY)) as unknown;
   const injected = injection === undefined ? undefined : parseAppConfiguration(injection);
   const localDatabaseOrigin = source.CANTELOP_LOCAL_DATABASE_ORIGIN;
-  return Object.freeze({ env: Object.freeze(env), ...(runtime.process?.cwd === undefined ? {} : { directory: runtime.process.cwd() }), ...(injected === undefined ? {} : { injected }), ...(localDatabaseOrigin === undefined ? {} : { localDatabaseOrigin }) });
+  return Object.freeze({ env: Object.freeze(env), ...(injected === undefined ? {} : { injected }), ...(localDatabaseOrigin === undefined ? {} : { localDatabaseOrigin }) });
 }
 
 /** Resolve identity and matching credentials independently; never borrow another App's token. */
@@ -135,6 +135,8 @@ export async function resolveAppConfiguration(options: { readonly id?: string; r
     const token = context.env.CANTELOP_INTEGRATION_TOKEN;
     if (token !== undefined) {
       if (!token.trim() || /[\r\n]/.test(token) || environmentSelector === undefined) return invalid();
+      // Named Apps select by slug; an ID-only environment cannot be matched to one, so reject it rather than ignore it.
+      if (envSlug === undefined && selected?.slug !== undefined) return invalid();
       // Environment credentials have an explicit App identity, not an unscoped global token.
       if (match({ ...(envID === undefined ? {} : { id: envID }), ...(envSlug === undefined ? {} : { slug: envSlug }) })) {
         const edgeUrl = context.env.CANTELOP_EDGE_URL ?? (envSlug === undefined ? undefined : `https://${envSlug}.cantelop.dev`);
@@ -148,7 +150,7 @@ export async function resolveAppConfiguration(options: { readonly id?: string; r
   if (configured) return configured;
   const runtime = globalThis as typeof globalThis & { process?: { versions?: { node?: string } } };
   const local = context.loadLocal !== undefined ? await context.loadLocal() : runtime.process?.versions?.node !== undefined
-    ? await (await import("#cantelop-app-config")).loadNodeAppConfiguration(context.env, { ...(context.directory === undefined ? {} : { directory: context.directory }) })
+    ? await (await import("#cantelop-app-config")).loadNodeAppConfiguration(context.env)
     : {};
   if (local.document !== undefined) documents.push(local.document);
   selected ??= (local.document === undefined ? undefined : profileFor(local.document).defaultApp);

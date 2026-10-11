@@ -3,6 +3,8 @@ import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./in
 export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
 export const APP_COMMAND_PATH = "/commands";
 export const MAX_COMMAND_BYTES = 1024 * 1024;
+/** Shared by App names and App-scoped Workspace slugs. */
+export const SLUG_PATTERN = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 export const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`;
 export function assertMessageID(id: unknown): asserts id is string {
   if (typeof id !== "string" || !/^msg_[0-9a-f]{32}$/.test(id)) throw new TypeError("Invalid Cantelop Message ID");
@@ -18,7 +20,7 @@ export function workspaceSelector(value: unknown): WorkspaceSelector {
     if (typeof value.id !== "string" || !/^wsp_[0-9a-f]{32}$/.test(value.id)) throw new TypeError("Invalid Cantelop Workspace ID");
     return Object.freeze({ id: value.id });
   }
-  if (typeof value.slug !== "string" || !/^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value.slug)) throw new TypeError("Invalid Cantelop Workspace slug");
+  if (typeof value.slug !== "string" || !SLUG_PATTERN.test(value.slug)) throw new TypeError("Invalid Cantelop Workspace slug");
   return Object.freeze({ slug: value.slug });
 }
 export function assertSessionID(id: unknown): asserts id is string {

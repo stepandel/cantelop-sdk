@@ -1,5 +1,6 @@
 import type { SessionEvent, SessionStreamOptions } from "./integration.js";
 import { RemoteAppError } from "./remote-app.js";
+import { assertCursor, record } from "./integration-protocol.js";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const encoder = new TextEncoder();
@@ -12,9 +13,7 @@ export async function* streamSessionEvents<Event>(
 ): AsyncGenerator<SessionEvent<Event>> {
   const cursor = options.after === undefined ? undefined : { ...options.after };
   const signal = options.signal;
-  if (cursor !== undefined && (!/^[0-9a-f]{32}$/.test(cursor.streamId) || !Number.isSafeInteger(cursor.sequence) || cursor.sequence < 0)) {
-    throw new TypeError("An event cursor requires a stream ID and non-negative safe integer sequence");
-  }
+  if (cursor !== undefined) assertCursor(cursor);
   const controller = new AbortController();
   const abort = () => controller.abort(signal?.reason);
   signal?.addEventListener("abort", abort, { once: true });
@@ -58,7 +57,7 @@ export async function* streamSessionEvents<Event>(
           let document: unknown;
           try { document = JSON.parse(data.join("\n")); } catch { throw invalidStream(); }
           if (eventType === "error") {
-            const code = isRecord(document) && typeof document.code === "string" && document.code ? document.code : "event_stream_failed";
+            const code = record(document) && typeof document.code === "string" && document.code ? document.code : "event_stream_failed";
             throw new RemoteAppError(code, 200);
           }
           if (eventType !== "" && eventType !== "message") throw invalidStream();
@@ -138,7 +137,7 @@ async function* readLines(body: ReadableStream<Uint8Array>, signal: AbortSignal)
 }
 
 function readEvent<Event>(value: unknown, id: string, sessionId: string): SessionEvent<Event> {
-  if (!isRecord(value) || typeof value.stream_id !== "string" || !/^[0-9a-f]{32}$/.test(value.stream_id) ||
+  if (!record(value) || typeof value.stream_id !== "string" || !/^[0-9a-f]{32}$/.test(value.stream_id) ||
       !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 1 || value.session_id !== sessionId ||
       typeof value.message_id !== "string" || !/^msg_[0-9a-f]{32}$/.test(value.message_id) ||
       typeof value.created_at !== "string" || !("data" in value) || id !== `${value.stream_id}:${value.sequence}`) throw invalidStream();
@@ -150,7 +149,4 @@ function readEvent<Event>(value: unknown, id: string, sessionId: string): Sessio
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 function invalidStream(): RemoteAppError { return new RemoteAppError("invalid_event_stream", 0); }
