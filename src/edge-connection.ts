@@ -40,7 +40,7 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
 }
 
 /** Capture configuration at construction; resolve files lazily on first operation. */
-export function resolveEdgeConnection(options: AppOptions<any, any, any>, context: ConfigurationContext, profile?: string): AppConnection {
+export function resolveEdgeConnection(options: AppOptions<any, any, any, any>, context: ConfigurationContext, profile?: string): AppConnection {
   assertAppOptions(options);
   if (options.connection !== undefined) return options.connection;
   if (options.edgeUrl !== undefined) return createEdgeConnection(options);

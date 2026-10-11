@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { validateWebhookRoutes } from "./webhooks.js";
 import { validateAppDeploymentConfiguration } from "./app-definition.js";
 import ts from "typescript";
 import path from "node:path";
@@ -80,6 +81,11 @@ export async function compileAppDefinitions(filename: string) {
     while (node.parent && node.parent !== file) node = node.parent;
     return node.parent === file ? node as ts.Statement : undefined;
   };
+  const rejectDefinitionImport: Plugin = { name: "cantelop-definition-boundary", setup(builder) {
+    builder.onLoad({ filter: /\.[cm]?[jt]s$/ }, args => {
+      if (canonicalPath(args.path) === canonicalPath(filename)) return { errors: [{ text: "Runtime and webhook dependencies cannot import their enclosing App definition; use the supplied context" }] };
+    });
+  } };
   const exports = checker.getExportsOfModule(fileSymbol);
   const appExports = new Set<ts.Symbol>();
   const aliasDeclarations = new Set<ts.VariableDeclaration>();
@@ -115,8 +121,8 @@ export async function compileAppDefinitions(filename: string) {
       if (ts.isIdentifier(node)) {
         const symbol = ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node ? checker.getShorthandAssignmentValueSymbol(node.parent) : checker.getSymbolAtLocation(node);
         const typeSymbol = symbol && checker.getTypeOfSymbolAtLocation(symbol, node).getSymbol();
-        if (sandbox && symbol?.valueDeclaration?.getSourceFile() === file &&
-          (isSDKType(typeSymbol, "App", "app") || isSDKType(typeSymbol, "CantelopClient", "client"))) fail("App runtime cannot capture an App or CantelopClient instance");
+        if (sandbox && symbol?.declarations?.some(d => ts.isVariableDeclaration(d) && ts.isVariableDeclarationList(d.parent) && ts.isVariableStatement(d.parent.parent) && d.parent.parent.parent === file) &&
+          (isSDKType(typeSymbol, "App", "app") || isSDKType(typeSymbol, "CantelopClient", "client"))) fail("App runtime or webhook cannot capture an App or CantelopClient instance");
         for (const d of symbol?.declarations ?? []) {
           if (d.getSourceFile() !== file) continue;
           const statement = topStatement(d);
@@ -190,22 +196,52 @@ export async function compileAppDefinitions(filename: string) {
         if (actualParameter && !checker.isTypeAssignableTo(checker.getTypeOfSymbolAtLocation(parameter, runtime), checker.getTypeOfSymbolAtLocation(actualParameter, runtime))) fail(`Invalid Session runtime ${property.name} parameter`);
       });
     }
+    const webhookProperty = property("webhooks");
+    const webhookExpression = webhookProperty && ts.isPropertyAssignment(webhookProperty) ? webhookProperty.initializer : undefined;
+    if (webhookProperty && (!webhookExpression || !ts.isObjectLiteralExpression(webhookExpression))) fail("App webhooks must be an inline route object");
+    const webhookRoutes: { path: string; method: "GET" | "POST" }[] = [];
+    if (webhookExpression && ts.isObjectLiteralExpression(webhookExpression)) {
+      for (const route of webhookExpression.properties) {
+        if (!ts.isPropertyAssignment(route) || !ts.isStringLiteral(route.name) || !ts.isObjectLiteralExpression(route.initializer)) return fail("Webhook routes must use literal paths and inline options");
+        const path = route.name.text;
+        const fields = route.initializer.properties;
+        if (fields.some(field => !field.name || !(ts.isIdentifier(field.name) || ts.isStringLiteral(field.name)) || !["method", "handle"].includes(field.name.text))) return fail("Invalid App webhook route");
+        const methodField = fields.find(field => field.name && (ts.isIdentifier(field.name) || ts.isStringLiteral(field.name)) && field.name.text === "method");
+        const handler = fields.find(field => field.name && (ts.isIdentifier(field.name) || ts.isStringLiteral(field.name)) && field.name.text === "handle");
+        if (!methodField || !ts.isPropertyAssignment(methodField) || !ts.isStringLiteral(methodField.initializer) || !handler) return fail("Webhook routes require a literal method and handler");
+        const method = methodField.initializer.text;
+        try { validateWebhookRoutes({ [path]: { method: method as "GET" | "POST", handle: () => new Response() } }); }
+        catch { return fail("Invalid App webhook route"); }
+        webhookRoutes.push({ path, method: method as "GET" | "POST" });
+      }
+    }
+    const webhookStatements = webhookExpression ? collect([webhookExpression], true) : new Set<ts.Statement>();
+    for (const dependency of webhookStatements) allStatements.add(dependency);
+    const webhookSource = selectedSource(webhookStatements) + "\nexport default " + (webhookExpression ? print(webhookExpression) : "{}") + ";\n";
+    const webhookBundle = await build({ stdin: { contents: webhookSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, bundle: true, platform: "browser", format: "esm", target: "es2022", write: false, metafile: true, logLevel: "silent", plugins: [rejectDefinitionImport] });
+    const webhookModule = webhookBundle.outputFiles![0]!.text;
+    for (const input of Object.keys(webhookBundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(input));
     const runtimeStatements = collect([runtime], true);
     for (const dependency of runtimeStatements) allStatements.add(dependency);
-    for (const dependency of collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty)], false)) {
+    for (const dependency of collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty && p !== webhookProperty)], false)) {
       backendStatements.add(dependency); allStatements.add(dependency);
     }
     const runtimeSource = selectedSource(runtimeStatements) + "\nexport default " + print(runtime) + ";\n";
-    const bundle = await build({ stdin: { contents: runtimeSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, bundle: true, platform: "node", format: "esm", target: "esnext", conditions: ["bun", "node", "import", "default"], external: ["bun:*"], write: false, metafile: true, minify: false, logLevel: "silent" });
+    const bundle = await build({ stdin: { contents: runtimeSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, bundle: true, platform: "node", format: "esm", target: "esnext", conditions: ["bun", "node", "import", "default"], external: ["bun:*"], write: false, metafile: true, minify: false, logLevel: "silent", plugins: [rejectDefinitionImport] });
     const runtimeModule = bundle.outputFiles![0]!.text;
     for (const input of Object.keys(bundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(input));
     const contract = contractFingerprint(checker, checker.getTypeArguments(checker.getTypeAtLocation(expression) as ts.TypeReference), expression, program);
     const id = "rt_" + createHash("sha256").update(name).update((await transform(runtimeModule, { minify: true, legalComments: "none", target: "esnext" })).code).update(contract).update(JSON.stringify(configuration)).digest("hex");
     const replacement = `{receive() { throw new Error("App runtime executes in the Sandbox"); }, [Symbol.for("dev.cantelop.sdk.compiled-runtime.v1")]: ${JSON.stringify(id)}}`;
     const statementText = statement.getText(file);
-    const start = runtime.getStart(file) - statement.getStart(file);
-    replacements.set(statement, statementText.slice(0, start) + replacement + statementText.slice(runtime.end - statement.getStart(file)));
-    apps.push({ definition: { id, name, ...configuration }, entrypoint: filename, runtimeModule });
+    const edits = [{ node: runtime, text: replacement }, ...(webhookExpression ? [{ node: webhookExpression, text: "{}" }] : [])];
+    let backendStatement = statementText;
+    for (const edit of edits.sort((a, b) => b.node.getStart(file) - a.node.getStart(file))) {
+      const start = edit.node.getStart(file) - statement.getStart(file);
+      backendStatement = backendStatement.slice(0, start) + edit.text + backendStatement.slice(edit.node.end - statement.getStart(file));
+    }
+    replacements.set(statement, backendStatement);
+    apps.push({ definition: { id, name, ...configuration }, entrypoint: filename, runtimeModule, webhookModule, webhookRoutes });
   }
   for (const statement of file.statements) {
     if (ts.isImportDeclaration(statement) && !statement.importClause || ts.isExpressionStatement(statement)) fail("App definitions cannot contain top-level side effects; move them into a runtime dependency");

@@ -15,7 +15,7 @@ export class CantelopClient {
     this.#context = captureConfigurationContext();
   }
 
-  app<Message = unknown, Event = never, Reply = never, View = never>(options: AppOptions<Message, Event, Reply>): App<Message, Event, Reply, View> {
+  app<Message = unknown, Event = never, Reply = never, View = never>(options: AppOptions<Message, Event, Reply, View>): App<Message, Event, Reply, View> {
     if (this.#names.has(options?.name)) throw new TypeError(`Duplicate App name: ${options.name}`);
     const app = new App<Message, Event, Reply, View>(options, this.#context, this.#profile);
     this.#names.add(app.name);

@@ -1,3 +1,4 @@
+import { validateWebhookRoutes } from "./webhooks.js";
 import { validateAppDeploymentConfiguration } from "./app-definition.js";
 import type { AppSelector, AppOptions } from "./integration.js";
 
@@ -52,9 +53,10 @@ function selector(value: unknown): AppSelector {
   if (typeof value.slug === "string" && APP_SLUG.test(value.slug)) return { slug: value.slug };
   return invalid();
 }
-export function assertAppOptions(value: AppOptions<any, any, any>): void {
-  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
+export function assertAppOptions(value: AppOptions<any, any, any, any>): void {
+  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
   validateAppDeploymentConfiguration(value);
+  validateWebhookRoutes(value.webhooks);
   if (value.connection !== undefined) {
     if (typeof value.connection.fetch !== "function" || value.edgeUrl !== undefined || value.accessToken !== undefined) throw new TypeError("An App connection cannot be combined with other transport configuration");
   } else if (value.edgeUrl !== undefined || value.accessToken !== undefined) {

@@ -19,7 +19,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = never> 
 
   get runtime(): SessionRuntime<Message, Event, Reply> { return this.#sessionRuntime; }
 
-  constructor(options: AppOptions<Message, Event, Reply>, context: ConfigurationContext, profile?: string) {
+  constructor(options: AppOptions<Message, Event, Reply, View>, context: ConfigurationContext, profile?: string) {
     if (!options || typeof options.name !== "string" || !/^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(options.name)) throw new TypeError("A valid App name is required");
     this.#name = options.name;
     assertSessionRuntime(options.runtime);

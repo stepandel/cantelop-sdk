@@ -112,6 +112,7 @@ export interface EdgeApiArtifact {
     session_runtime_id: string;
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS";
+    webhooks: readonly { readonly path: string; readonly method: "GET" | "POST" }[];
   }>;
 }
 
@@ -129,9 +130,19 @@ export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeAp
   await mkdir(outdir, { recursive: true });
   const mainModule = path.join(outdir, "worker.mjs");
   const adapter = fileURLToPath(new URL("./protocol-edge.js", import.meta.url));
+  const workerOptions = {
+    runtimeId: runtime.definition.id,
+    appName: runtime.definition.name,
+    secretNames: Object.entries(runtime.definition.environment ?? {}).filter(([, declaration]) => declaration.secret).map(([name]) => name),
+    ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }),
+  };
   await build({
-    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nexport default createProtocolWorker(${JSON.stringify({ runtimeId: runtime.definition.id, ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }) })});`, resolveDir: outdir },
+    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nimport webhooks from "cantelop:webhooks";\nexport default createProtocolWorker({ ...${JSON.stringify(workerOptions)}, webhooks });`, resolveDir: outdir },
     bundle: true, platform: "browser", format: "esm", target: "es2022", outfile: mainModule, logLevel: "silent",
+    plugins: [{ name: "cantelop-webhook-artifact", setup(builder) {
+      builder.onResolve({ filter: /^cantelop:webhooks$/ }, () => ({ path: "webhooks", namespace: "cantelop" }));
+      builder.onLoad({ filter: /.*/, namespace: "cantelop" }, () => ({ contents: runtime.webhookModule, loader: "js" }));
+    } }],
   });
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
     schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
@@ -140,6 +151,7 @@ export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeAp
     ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS",
+    webhooks: Object.freeze(runtime.webhookRoutes.map(route => Object.freeze({ ...route }))),
   });
   const manifestFile = path.join(outdir, "cantelop-edge.json");
   await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");

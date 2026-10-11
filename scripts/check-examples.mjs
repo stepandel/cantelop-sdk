@@ -11,7 +11,7 @@ try {
   const schema = JSON.parse(await readFile(path.join(root, "schemas/app-v3.json"), "utf8"));
   assert.deepEqual(schema.required, ["schema_version", "definition"]);
   assert.equal("api" in schema.properties, false);
-  for (const name of ["openai", "anthropic", "pi", "opencode", "web-chat"]) {
+  for (const name of ["openai", "anthropic", "pi", "opencode", "web-chat", "github"]) {
     const projectRoot = path.join(root, "examples", name);
     const manifest = JSON.parse(await readFile(path.join(projectRoot, "cantelop.json"), "utf8"));
     assert.equal(manifest.schema_version, 3);
@@ -31,7 +31,13 @@ try {
       outdir: path.join(temporary, name),
     });
     const edge = await buildEdgeApi({ definition: path.join(projectRoot, session), outdir: path.join(temporary, name, 'edge') });
-    assert.equal(edge.manifest.definition_runtime_id, artifact.manifest.definition_runtime_id);
+    assert.equal(edge.manifest.session_runtime_id, artifact.manifest.session_runtime_id);
+    if (name === "github") {
+      assert.deepEqual(edge.manifest.webhooks, [{ path: "/webhooks/github", method: "POST" }]);
+      assert.doesNotMatch(await readFile(artifact.mainModule, "utf8"), /X-Hub-Signature-256/);
+      assert.match(await readFile(edge.mainModule, "utf8"), /X-Hub-Signature-256/);
+      assert.doesNotMatch(await readFile(edge.mainModule, "utf8"), /Suggest a concise, helpful next step/);
+    }
     assert.equal(edge.manifest.kind, "cantelop-protocol-edge");
     assert.equal(edge.manifest.integration_protocol_version, 2);
     assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);

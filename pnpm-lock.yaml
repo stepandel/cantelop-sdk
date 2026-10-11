@@ -44,6 +44,22 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  examples/github:
+    dependencies:
+      '@cantelop/sdk':
+        specifier: workspace:*
+        version: link:../..
+      '@openai/agents':
+        specifier: ^0.17.0
+        version: 0.17.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   examples/multi-app:
     dependencies:
       '@cantelop/sdk':

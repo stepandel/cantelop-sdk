@@ -1,3 +1,4 @@
+import type { WebhookRoutes } from "./webhooks.js";
 import type { AppDeploymentConfiguration } from "./app-definition.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import type { WorkspaceDatabase } from "./database.js";
@@ -32,9 +33,10 @@ export interface CantelopClientOptions {
 }
 
 /** A named App owns its runtime and Workspace namespace. */
-export type AppOptions<Message = unknown, Event = never, Reply = never> = {
+export type AppOptions<Message = unknown, Event = never, Reply = never, View = never> = {
   readonly name: string;
   readonly runtime: SessionRuntime<Message, Event, Reply>;
+  readonly webhooks?: WebhookRoutes<Message, Event, Reply, View>;
 } & AppDeploymentConfiguration & (
   | { readonly connection?: never; readonly edgeUrl?: never; readonly accessToken?: never }
   | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never }

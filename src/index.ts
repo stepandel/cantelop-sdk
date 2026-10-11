@@ -19,3 +19,5 @@ export type { SessionRuntime } from "./session-runtime-contract.js";
 
 export type { App } from "./app.js";
 export type { AppDeploymentConfiguration, AppEnvironmentDeclaration } from "./app-definition.js";
+
+export type { WebhookContext, WebhookHandler, WebhookRoute, WebhookRoutes } from "./webhooks.js";
