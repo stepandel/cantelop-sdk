@@ -1,6 +1,6 @@
 import { App } from "./app.js";
 import { RUNTIME_ID } from "./session-runtime-contract.js";
-import { validateWebhookRoutes, type WebhookRoutes } from "./webhooks.js";
+import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
@@ -10,6 +10,7 @@ export interface ProtocolEdgeOptions {
   readonly runtimeId: string;
   readonly appName?: string;
   readonly webhooks?: WebhookRoutes<any, any, any, any>;
+  readonly homepage?: HomepageHandler<any, any, any, any>;
   readonly secretNames?: readonly string[];
   readonly fetch?: (request: Request) => Promise<Response>;
   readonly runtimeOrigin?: string;
@@ -25,7 +26,8 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
   const origin = options.runtimeOrigin ?? "https://runtime.cantelop.internal";
   const routes = validateWebhookRoutes(options.webhooks);
-  if (Object.keys(routes).length && !options.appName) throw new TypeError("Webhook App name is required");
+  if (options.homepage !== undefined && typeof options.homepage !== "function") throw new TypeError("Invalid App homepage");
+  if ((Object.keys(routes).length || options.homepage) && !options.appName) throw new TypeError("Webhook App name is required");
   async function commands(request: Request, bindings: Readonly<Record<string, unknown>>): Promise<Response> {
     try {
       const url = new URL(request.url);
@@ -115,9 +117,13 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
   }
   return Object.freeze({
     async fetch(request: Request, bindings: Readonly<Record<string, unknown>> = {}): Promise<Response> {
-      const route = routes[new URL(request.url).pathname];
-      if (route) {
-        if (request.method !== route.method) return new Response(null, { status: 405, headers: { Allow: route.method } });
+      const path = new URL(request.url).pathname;
+      const homepage = path === "/" ? options.homepage : undefined;
+      const route = routes[path];
+      const handle = homepage ?? route?.handle;
+      if (handle) {
+        const allow = homepage ? "GET, HEAD" : route!.method;
+        if (homepage ? !["GET", "HEAD"].includes(request.method) : request.method !== route!.method) return new Response(null, { status: 405, headers: { Allow: allow } });
         try {
           const runtime = { receive() { throw new Error("App runtime executes in the Sandbox"); }, [RUNTIME_ID]: runtimeId };
           const app = new App<any, any, any, any>({ name: options.appName!, runtime, connection: {
@@ -125,18 +131,22 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
             ...(typeof bindings.CANTELOP_LOCAL_DATABASE_ORIGIN === "string" ? { localDatabaseOrigin: bindings.CANTELOP_LOCAL_DATABASE_ORIGIN } : {}),
           } }, { env: {} });
           const webhookRequest = await boundedWebhookRequest(request);
-          const response = await route.handle(Object.freeze({ request: webhookRequest, app,
+          const response = await handle(Object.freeze({ request: webhookRequest, app,
             secret(name: string) {
               if (!options.secretNames?.includes(name) || typeof bindings[name] !== "string" || !bindings[name]) throw new Error("Webhook secret is unavailable");
               return bindings[name] as string;
             },
           }));
           if (!(response instanceof Response)) throw new TypeError("Webhook must return a Response");
+          if (homepage && request.method === "HEAD") {
+            await response.body?.cancel().catch(() => {});
+            return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers });
+          }
           return response;
         } catch (error) {
           if (error instanceof EdgeFailure) return failure(error.code, error.status);
           if (request.signal.aborted) throw request.signal.reason;
-          return failure("webhook_failed", 500);
+          return failure(homepage ? "homepage_failed" : "webhook_failed", 500);
         }
       }
       try { await authenticate(request, bindings.CANTELOP_INTEGRATION_TOKEN); }

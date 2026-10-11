@@ -113,6 +113,7 @@ export interface EdgeApiArtifact {
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS";
     webhooks: readonly { readonly path: string; readonly method: "GET" | "POST" }[];
+    homepage: boolean;
   }>;
 }
 
@@ -137,7 +138,7 @@ export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeAp
     ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }),
   };
   await build({
-    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nimport webhooks from "cantelop:webhooks";\nexport default createProtocolWorker({ ...${JSON.stringify(workerOptions)}, webhooks });`, resolveDir: outdir },
+    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nimport ingress from "cantelop:webhooks";\nexport default createProtocolWorker({ ...${JSON.stringify(workerOptions)}, ...ingress });`, resolveDir: outdir },
     bundle: true, platform: "browser", format: "esm", target: "es2022", outfile: mainModule, logLevel: "silent",
     plugins: [{ name: "cantelop-webhook-artifact", setup(builder) {
       builder.onResolve({ filter: /^cantelop:webhooks$/ }, () => ({ path: "webhooks", namespace: "cantelop" }));
@@ -152,6 +153,7 @@ export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeAp
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS",
     webhooks: Object.freeze(runtime.webhookRoutes.map(route => Object.freeze({ ...route }))),
+    homepage: runtime.hasHomepage,
   });
   const manifestFile = path.join(outdir, "cantelop-edge.json");
   await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");

@@ -1,12 +1,15 @@
 import type { App } from "./app.js";
 
-export interface WebhookContext<Message = unknown, Event = never, Reply = never, View = never> {
+export interface AppRequestContext<Message = unknown, Event = never, Reply = never, View = never> {
   readonly request: Request;
   /** The current App, using the same Workspace/Session interface as backend code. */
   readonly app: App<Message, Event, Reply, View>;
   /** Reads a declared secret from this App's Edge bindings. */
   secret(name: string): string;
 }
+export type WebhookContext<Message = unknown, Event = never, Reply = never, View = never> = AppRequestContext<Message, Event, Reply, View>;
+export type HomepageHandler<Message = unknown, Event = never, Reply = never, View = never> =
+  (context: AppRequestContext<Message, Event, Reply, View>) => Response | Promise<Response>;
 export type WebhookHandler<Message = unknown, Event = never, Reply = never, View = never> =
   (context: WebhookContext<Message, Event, Reply, View>) => Response | Promise<Response>;
 export interface WebhookRoute<Message = unknown, Event = never, Reply = never, View = never> {

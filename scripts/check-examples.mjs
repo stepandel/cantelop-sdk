@@ -33,6 +33,7 @@ try {
     const edge = await buildEdgeApi({ definition: path.join(projectRoot, session), outdir: path.join(temporary, name, 'edge') });
     assert.equal(edge.manifest.session_runtime_id, artifact.manifest.session_runtime_id);
     if (name === "github") {
+      assert.equal(edge.manifest.homepage, true);
       assert.deepEqual(edge.manifest.webhooks, [{ path: "/webhooks/github", method: "POST" }]);
       assert.doesNotMatch(await readFile(artifact.mainModule, "utf8"), /X-Hub-Signature-256/);
       assert.match(await readFile(edge.mainModule, "utf8"), /X-Hub-Signature-256/);

@@ -1,5 +1,6 @@
 import { CantelopClient } from "@cantelop/sdk";
 import { receive } from "./agent.js";
+import { homepage } from "./homepage.js";
 import { handleGitHub } from "./github.js";
 import type { IssueMessage } from "./contracts.js";
 
@@ -8,6 +9,7 @@ const cantelop = new CantelopClient();
 export const app = cantelop.app<IssueMessage>({
   name: "github-agent",
   runtime: { receive },
+  homepage,
   webhooks: {
     "/webhooks/github": { method: "POST", handle: handleGitHub },
   },

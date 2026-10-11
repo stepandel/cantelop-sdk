@@ -122,6 +122,8 @@ try {
     'new CantelopClient().app({ name: "first-agent", runtime, connection });',
     '// @ts-expect-error App selectors require exactly one ID or slug.',
     'new CantelopClient().app({ name: "first-agent", runtime, id: "app_0123456789abcdef0123456789abcdef", slug: "support-agent" });',
+    'const home: import("@cantelop/sdk").HomepageHandler<{prompt:string}> = ({app, request}) => new Response(app.name);',
+    'new CantelopClient().app<{prompt:string}>({name:"home", runtime, homepage:home});',
     'const hook: import("@cantelop/sdk").WebhookHandler<{prompt:string}, {text:string}, {answer:string}, {entries:string[]}> = async ({ app, request, secret }) => {',
     '  const session = app.workspace({ slug: "customer" }).session();',
     '  const reply: {answer:string} = await session.request({prompt:"hello"});',

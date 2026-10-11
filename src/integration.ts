@@ -1,4 +1,4 @@
-import type { WebhookRoutes } from "./webhooks.js";
+import type { HomepageHandler, WebhookRoutes } from "./webhooks.js";
 import type { AppDeploymentConfiguration } from "./app-definition.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import type { WorkspaceDatabase } from "./database.js";
@@ -37,6 +37,8 @@ export type AppOptions<Message = unknown, Event = never, Reply = never, View = n
   readonly name: string;
   readonly runtime: SessionRuntime<Message, Event, Reply>;
   readonly webhooks?: WebhookRoutes<Message, Event, Reply, View>;
+  /** Optional GET/HEAD handler for the App root. */
+  readonly homepage?: HomepageHandler<Message, Event, Reply, View>;
 } & AppDeploymentConfiguration & (
   | { readonly connection?: never; readonly edgeUrl?: never; readonly accessToken?: never }
   | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never }

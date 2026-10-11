@@ -4,6 +4,7 @@ GitHub sends newly opened issues directly to the App's `/webhooks/github` route.
 
 - `src/cantelop.ts` defines the App, webhook route, Session runtime and environment declarations.
 - `src/github.ts` verifies and translates GitHub deliveries. It uses the same `app.workspace(...).session(...).dispatch(...)` contract as backend code.
+- `src/homepage.ts` serves a small public description at `/`, configured with the optional `homepage` property.
 - `src/agent.ts` contains the runtime and outbound comment operation. OpenAI dependencies stay out of the Edge and backend artifacts.
 - `src/contracts.ts` defines the shared message type.
 

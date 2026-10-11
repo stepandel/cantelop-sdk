@@ -80,4 +80,4 @@ The unpublished versions stay unchanged: project schema 3, CLI build protocol 6,
 
 ## Optional webhook implementations
 
-`webhooks` declares exact GET/POST ingress routes on an App. The compiler bundles their handlers and dependencies into Edge, removes them from backend code, and excludes them from the Sandbox. Handlers receive the same typed App through context, with commands executed locally. See [App webhooks](webhooks.md). CLI/platform adoption must synchronize declared Edge secrets and allow provider requests to reach these routes.
+`webhooks` declares exact GET/POST ingress routes on an App; optional `homepage` serves GET/HEAD at `/`. The compiler bundles their handlers and dependencies into Edge, removes them from backend code, and excludes them from the Sandbox. Handlers receive the same typed App through context, with commands executed locally. See [App webhooks](webhooks.md). CLI/platform adoption must synchronize declared Edge secrets and allow provider requests to reach these routes.

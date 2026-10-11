@@ -215,15 +215,18 @@ export async function compileAppDefinitions(filename: string) {
         webhookRoutes.push({ path, method: method as "GET" | "POST" });
       }
     }
-    const webhookStatements = webhookExpression ? collect([webhookExpression], true) : new Set<ts.Statement>();
+    const homepageProperty = property("homepage");
+    if (homepageProperty && !(ts.isMethodDeclaration(homepageProperty) || ts.isShorthandPropertyAssignment(homepageProperty) || ts.isPropertyAssignment(homepageProperty) &&
+      (ts.isIdentifier(homepageProperty.initializer) || ts.isArrowFunction(homepageProperty.initializer) || ts.isFunctionExpression(homepageProperty.initializer)))) fail("App homepage must be an inline or imported handler");
+    const webhookStatements = collect([...(webhookExpression ? [webhookExpression] : []), ...(homepageProperty ? [homepageProperty] : [])], true);
     for (const dependency of webhookStatements) allStatements.add(dependency);
-    const webhookSource = selectedSource(webhookStatements) + "\nexport default " + (webhookExpression ? print(webhookExpression) : "{}") + ";\n";
+    const webhookSource = selectedSource(webhookStatements) + "\nexport default { webhooks: " + (webhookExpression ? print(webhookExpression) : "{}") + (homepageProperty ? ", " + print(homepageProperty) : "") + " };\n";
     const webhookBundle = await build({ stdin: { contents: webhookSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, bundle: true, platform: "browser", format: "esm", target: "es2022", write: false, metafile: true, logLevel: "silent", plugins: [rejectDefinitionImport] });
     const webhookModule = webhookBundle.outputFiles![0]!.text;
     for (const input of Object.keys(webhookBundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(input));
     const runtimeStatements = collect([runtime], true);
     for (const dependency of runtimeStatements) allStatements.add(dependency);
-    for (const dependency of collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty && p !== webhookProperty)], false)) {
+    for (const dependency of collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty && p !== webhookProperty && p !== homepageProperty)], false)) {
       backendStatements.add(dependency); allStatements.add(dependency);
     }
     const runtimeSource = selectedSource(runtimeStatements) + "\nexport default " + print(runtime) + ";\n";
@@ -234,14 +237,14 @@ export async function compileAppDefinitions(filename: string) {
     const id = "rt_" + createHash("sha256").update(name).update((await transform(runtimeModule, { minify: true, legalComments: "none", target: "esnext" })).code).update(contract).update(JSON.stringify(configuration)).digest("hex");
     const replacement = `{receive() { throw new Error("App runtime executes in the Sandbox"); }, [Symbol.for("dev.cantelop.sdk.compiled-runtime.v1")]: ${JSON.stringify(id)}}`;
     const statementText = statement.getText(file);
-    const edits = [{ node: runtime, text: replacement }, ...(webhookExpression ? [{ node: webhookExpression, text: "{}" }] : [])];
+    const edits = [{ node: runtime, text: replacement }, ...(webhookExpression ? [{ node: webhookExpression, text: "{}" }] : []), ...(homepageProperty ? [{ node: homepageProperty, text: "homepage: undefined" }] : [])];
     let backendStatement = statementText;
     for (const edit of edits.sort((a, b) => b.node.getStart(file) - a.node.getStart(file))) {
       const start = edit.node.getStart(file) - statement.getStart(file);
       backendStatement = backendStatement.slice(0, start) + edit.text + backendStatement.slice(edit.node.end - statement.getStart(file));
     }
     replacements.set(statement, backendStatement);
-    apps.push({ definition: { id, name, ...configuration }, entrypoint: filename, runtimeModule, webhookModule, webhookRoutes });
+    apps.push({ definition: { id, name, ...configuration }, entrypoint: filename, runtimeModule, webhookModule, webhookRoutes, hasHomepage: !!homepageProperty });
   }
   for (const statement of file.statements) {
     if (ts.isImportDeclaration(statement) && !statement.importClause || ts.isExpressionStatement(statement)) fail("App definitions cannot contain top-level side effects; move them into a runtime dependency");

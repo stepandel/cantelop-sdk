@@ -114,7 +114,7 @@ The platform deploys the generated Edge Worker through the existing dispatcher/o
 
 ## Examples and development
 
-[The multi-App example](examples/multi-app/README.md) shows two Apps under one client. [Provider examples](examples/README.md) have backend `src/cantelop.ts` and native `src/agent.ts`. [Workspace database documentation](docs/workspace-databases.md) covers renewal and transaction behavior. [App webhooks](docs/webhooks.md) enable headless integrations; the [GitHub example](examples/github/README.md) verifies deliveries and dispatches through the same App interface.
+[The multi-App example](examples/multi-app/README.md) shows two Apps under one client. [Provider examples](examples/README.md) have backend `src/cantelop.ts` and native `src/agent.ts`. [Workspace database documentation](docs/workspace-databases.md) covers renewal and transaction behavior. [App webhooks and optional homepages](docs/webhooks.md) enable headless integrations with a public landing page; the [GitHub example](examples/github/README.md) verifies deliveries and dispatches through the same App interface.
 
 ```sh
 pnpm install --frozen-lockfile

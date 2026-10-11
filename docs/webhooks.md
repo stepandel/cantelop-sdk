@@ -31,6 +31,26 @@ async function handleGitHub({ request, app, secret }: WebhookContext<Message, Ev
 
 `verifyAndParseGitHub` above is application code, not an SDK helper. See the [GitHub example](../examples/github/README.md) for an implementation.
 
+## Optional homepage
+
+An App can also provide a homepage handler for `/`:
+
+```ts
+export const support = cantelop.app<Message>({
+  name: "support-agent",
+  runtime: { receive },
+  homepage: ({ app }) => new Response(`<h1>${app.name}</h1>`, {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  }),
+});
+```
+
+`homepage` accepts an inline or imported function, a method, or a shorthand property. Its `AppRequestContext<Message, Event, Reply, View>` supplies the same typed App, Request and declared-secret access as webhooks. `HomepageHandler` is exported for separately typed functions. The handler returns a standard Response and chooses its headers/content type.
+
+A configured homepage is public at the App hostname's root. GET invokes it normally; HEAD invokes it and returns status/headers with no body. Other methods return 405 with `Allow: GET, HEAD`. Unexpected errors return a generic `homepage_failed` 500. If omitted, no root route is added and existing protocol routing behavior remains unchanged.
+
+The compiler includes homepage dependencies only in Edge and removes the handler from backend definitions. Homepage-only edits preserve Session identity. This does not add static asset serving or a general route surface; inline assets or independently hosted assets can be used. CLI/platform adoption must permit public root requests to reach the generated Worker, alongside provider-authenticated webhook ingress.
+
 ## Execution boundaries
 
 The compiler extracts webhook functions and their dependencies into the generated Edge Worker. It extracts `runtime` handlers into the Sandbox artifact. The backend transform removes both implementations and preserves the named App handles and their exports. Imports and closures shared between implementations follow their respective dependency graphs.

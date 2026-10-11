@@ -54,9 +54,10 @@ function selector(value: unknown): AppSelector {
   return invalid();
 }
 export function assertAppOptions(value: AppOptions<any, any, any, any>): void {
-  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
+  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "homepage", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
   validateAppDeploymentConfiguration(value);
   validateWebhookRoutes(value.webhooks);
+  if (value.homepage !== undefined && typeof value.homepage !== "function") throw new TypeError("Invalid App homepage");
   if (value.connection !== undefined) {
     if (typeof value.connection.fetch !== "function" || value.edgeUrl !== undefined || value.accessToken !== undefined) throw new TypeError("An App connection cannot be combined with other transport configuration");
   } else if (value.edgeUrl !== undefined || value.accessToken !== undefined) {
