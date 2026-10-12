@@ -206,9 +206,13 @@ test("multiple named Apps build isolated runtimes and matching deployment identi
   assert.doesNotMatch(compiled.apps[1].runtimeModule,/support-only-runtime/);
   await assert.rejects(buildEdgeApi({definition,outdir}),/Multiple Apps: select an App by name/);
   await assert.rejects(buildSessionRuntime({definition,outdir,app:'missing'}),/App not found/);
-  const artifacts=await buildAppArtifacts({definition,outdir});
+  const artifacts=await buildAppArtifacts({definition,outdir,runtimeOrigin:"http://127.0.0.1:8080"});
+  assert.ok(artifacts.watchFiles.includes(definition));
+  assert.ok(artifacts.watchFiles.includes(path.join(directory,"support.ts")));
+  assert.ok(artifacts.watchFiles.includes(path.join(directory,"research.ts")));
   assert.equal(artifacts.apps.length,2);
   for(const app of artifacts.apps){
+    assert.match(await readFile(app.edge.mainModule,"utf8"), /http:\/\/127\.0\.0\.1:8080/);
     assert.equal(app.edge.manifest.app_name,app.name);
     assert.equal(app.runtime.manifest.app_name,app.name);
     assert.equal(app.edge.manifest.session_runtime_id,app.runtime.manifest.session_runtime_id);

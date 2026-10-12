@@ -460,7 +460,13 @@ async function writeBackendClient(compiled: Awaited<ReturnType<typeof compileApp
 }
 
 /** Build each named App into its own deployment directory plus the shared backend module. */
-export async function buildAppArtifacts(options: { readonly definition: string; readonly outdir: string; readonly projectRoot?: string }) {
+export async function buildAppArtifacts(options: {
+  readonly definition: string;
+  readonly outdir: string;
+  readonly projectRoot?: string;
+  /** Local CLI only: a numeric loopback Session bridge origin. */
+  readonly runtimeOrigin?: string;
+}) {
   // Compile once so every artifact shares one consistent App identity.
   const definitionPath = path.resolve(options.definition);
   const compiled = await compileAppDefinitions(definitionPath);
@@ -468,10 +474,12 @@ export async function buildAppArtifacts(options: { readonly definition: string; 
   for (const app of compiled.apps) {
     const outdir = path.join(path.resolve(options.outdir), app.definition.name);
     const runtimeDefinition = { ...app, backendSource: compiled.backendSource, watchFiles: compiled.watchFiles };
-    const edge = await writeEdgeApi(runtimeDefinition, { definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "edge") });
+    const edge = await writeEdgeApi(runtimeDefinition, { definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "edge"), ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }) });
     const runtime = await writeSessionRuntime(runtimeDefinition, definitionPath, { definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "runtime"), ...(options.projectRoot === undefined ? {} : { projectRoot: options.projectRoot }) });
     apps.push({ name: app.definition.name, edge, runtime });
   }
   const backend = await writeBackendClient(compiled, { definition: options.definition, outdir: path.join(path.resolve(options.outdir), "backend") });
-  return { apps, backend };
+  // The definition graph includes ingress, runtime and type dependencies.
+  // Automatically discovered Workspace schemas are watched independently.
+  return { apps, backend, watchFiles: [...new Set(compiled.watchFiles)] };
 }
