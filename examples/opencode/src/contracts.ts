@@ -6,29 +6,3 @@ export type SessionEvent =
   | { type: "text_delta"; delta: string }
   | { type: "done"; answer: string }
   | { type: "error"; message: string };
-
-export interface ChatRequest {
-  sessionId?: string;
-  workspaceSlug: string;
-  keepAliveSeconds: number;
-  prompt: string;
-}
-
-export interface SteerRequest {
-  sessionId: string;
-  workspaceSlug: string;
-  keepAliveSeconds: number;
-  prompt: string;
-}
-
-export interface CancelRequest {
-  sessionId: string;
-  workspaceSlug: string;
-  keepAliveSeconds: number;
-}
-
-export interface EventsRequest {
-  sessionId: string;
-  workspaceSlug: string;
-  keepAliveSeconds: number;
-}

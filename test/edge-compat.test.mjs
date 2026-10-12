@@ -9,14 +9,14 @@ const repositoryRoot = path.resolve(
   "..",
 );
 
-test("the Edge API modules have no native Session runtime dependencies", async () => {
+test("the backend integration modules have no native Session runtime dependencies", async () => {
   const files = [
-    "api.js",
-    "edge.js",
+    "client.js",
+    "stream.js",
+    "integration-protocol.js",
     "index.js",
     "remote-app.js",
     "resources.js",
-    "router.js",
   ];
 
   for (const file of files) {
@@ -48,15 +48,15 @@ test("only native Session behaviour exposes event output", async () => {
   assert.doesNotMatch(runtimeContract, /defineSessionBehaviour/);
 });
 
-test("provider API entrypoints do not import native dependencies", async () => {
+test("provider client entrypoints do not import native dependencies", async () => {
   const files = [
-    "examples/openai/src/api.ts",
+    "examples/openai/src/cantelop.ts",
     "examples/openai/src/contracts.ts",
-    "examples/anthropic/src/api.ts",
+    "examples/anthropic/src/cantelop.ts",
     "examples/anthropic/src/contracts.ts",
-    "examples/pi/src/api.ts",
+    "examples/pi/src/cantelop.ts",
     "examples/pi/src/contracts.ts",
-    "examples/opencode/src/api.ts",
+    "examples/opencode/src/cantelop.ts",
     "examples/opencode/src/contracts.ts",
   ];
 

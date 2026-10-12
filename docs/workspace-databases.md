@@ -1,14 +1,14 @@
 # Workspace databases
 
 Cantelop automatically provisions a remote Turso/libSQL database for each
-Workspace. The API and Sessions in that Workspace share the same database.
+Workspace. The application backend and Sessions in that Workspace share the same database.
 Provisioning is asynchronous; opening the database can report
 `database_not_ready` while registration is pending.
 
-## API
+## Application backend
 
 ```ts
-const workspace = await app.workspaces.open({ slug: "default" });
+const workspace = app.workspace({ slug: "default" });
 const db = await workspace.database();
 await db.execute({
   sql: "INSERT INTO metadata (session_id, value) VALUES (?, ?)",
@@ -45,7 +45,7 @@ Renew before `expiresAt`, and do not log either token.
 Clients support parameterized `execute`, atomic `batch`, `executeMultiple`, and
 interactive `transaction`. Application code owns its schema definitions. Compatible CLI/platform versions
 automatically generate and apply application migrations from `db/schema.ts`.
-API and Session code receive ordinary Workspace credentials, including schema
+Backend and Session code receive ordinary Workspace credentials, including schema
 operations. Both surfaces connect directly to the same Workspace database.
 
 ```ts
@@ -73,9 +73,9 @@ already issued credentials remain valid until expiry.
 
 ## Local development
 
-With a compatible CLI and SDK, `cantelop dev` implements these same database
+With a CLI implementing the new build/integration protocols, `cantelop dev` implements these same database
 interfaces using disposable SQLite files under `.cantelop/dev/databases/`.
-The API and all Sessions in a Workspace share one database, in native and
+The application backend and all Sessions in a Workspace share one database, in native and
 container mode. Data survives rebuilds and runner restarts. Stop the runner and
 remove that directory to reset local databases; Workspace files are retained.
 Local data is never synchronized with hosted databases, and no login or Turso
@@ -120,8 +120,8 @@ const tasks = await db.query.tasks.findMany();
 
 The CLI runs builds from the project root and discovers `db/schema.ts`. Restart
 `cantelop dev` if you add that file to a project that did not have it at startup. A build
-contains a deterministic schema snapshot, with no system tables, in a version 4
-API manifest. Projects without this file retain their version 3 manifest. The
+contains a deterministic schema snapshot, with no system tables, in the version 1
+Session runtime manifest. Projects without this file omit its database schema. The
 schema file is evaluated in a bounded build subprocess, never in the platform.
 Generated SQL is retained in the Workspace migration history; generated migration
 files do not need to be reviewed or committed. `cantelop dev` applies changes
@@ -177,8 +177,8 @@ managed tables in a fresh Workspace or keep existing tables under their current
 migration mechanism until an explicit baseline workflow is available. Do not
 remove populated tables or fabricate ledger rows to bypass this check.
 
-Deploy the updated platform/CLI support before applications emit version 4
-schema manifests. The application-owned in-memory mailbox remains the sole runtime;
+Deploy compatible platform/CLI support for build protocol 6 before applications emit
+1.0 Session runtime manifests. The application-owned in-memory mailbox remains the sole runtime;
 the retired DB mailbox adapters are absent. SDK and platform schema validation and migration generation
 must stay aligned. Projects without `db/schema.ts` keep runtime-controlled SQL
 and their existing credential behavior.

@@ -336,8 +336,8 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
  * Starts the Session runtime server on the port injected by Cantelop. Customer
  * code never supplies a deployment port.
  */
-export function serveSessionRuntime<Input, Event = never>(
-  behaviour: SessionBehaviour<Input, Event>,
+export function serveSessionRuntime<Input, Event = never, Reply = never>(
+  behaviour: SessionBehaviour<Input, Event, Reply>,
 ): SessionRuntimeServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
@@ -647,9 +647,9 @@ export async function readRequestEnvelope(request: IncomingMessage): Promise<unk
   }
 }
 
-function invokeBehaviour<Input, Event>(
-  behaviour: SessionBehaviour<Input, Event>,
-  context: SessionContext<Input, Event>,
+function invokeBehaviour<Input, Event, Reply>(
+  behaviour: SessionBehaviour<Input, Event, Reply>,
+  context: SessionContext<Input, Event, Reply>,
 ): void | Promise<void> {
   return behaviour.receive(context);
 }

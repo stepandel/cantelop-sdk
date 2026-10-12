@@ -1,9 +1,4 @@
 {
-  "app": "openai",
-  "api": "src/api.ts",
-  "session": "src/session.ts",
-  "environment": {
-    "OPENAI_MODEL": {"default": "gpt-5-mini"},
-    "OPENAI_API_KEY": {"secret": true, "required": true}
-  }
+  "schema_version": 3,
+  "definition": "src/cantelop.ts"
 }

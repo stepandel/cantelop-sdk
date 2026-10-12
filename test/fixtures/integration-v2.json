@@ -1,0 +1,88 @@
+{
+  "protocolVersion": 2,
+  "id": "msg_11111111111111111111111111111111",
+  "workspace": {
+    "slug": "customer"
+  },
+  "workspaceId": "wsp_22222222222222222222222222222222",
+  "session": {
+    "id": "primary"
+  },
+  "dispatch": {
+    "protocolVersion": 2,
+    "id": "msg_11111111111111111111111111111111",
+    "workspace": {
+      "slug": "customer"
+    },
+    "session": {
+      "id": "primary"
+    },
+    "command": {
+      "type": "dispatch",
+      "message": {
+        "prompt": "hello"
+      }
+    }
+  },
+  "steer": {
+    "protocolVersion": 2,
+    "id": "msg_11111111111111111111111111111111",
+    "workspace": {
+      "slug": "customer"
+    },
+    "session": {
+      "id": "primary"
+    },
+    "command": {
+      "type": "steer",
+      "message": {
+        "prompt": "hello"
+      }
+    }
+  },
+  "cancel": {
+    "protocolVersion": 2,
+    "id": "msg_11111111111111111111111111111111",
+    "workspace": {
+      "slug": "customer"
+    },
+    "session": {
+      "id": "primary"
+    },
+    "command": {
+      "type": "cancel",
+      "messageId": "msg_11111111111111111111111111111111"
+    }
+  },
+  "accepted": {
+    "protocolVersion": 2,
+    "id": "msg_11111111111111111111111111111111",
+    "status": "accepted",
+    "accepted_at": "2026-10-09T00:00:00Z"
+  },
+  "handled": {
+    "protocolVersion": 2,
+    "id": "msg_11111111111111111111111111111111",
+    "state": "handled",
+    "accepted_at": "2026-10-09T00:00:00Z",
+    "started_at": "2026-10-09T00:00:01Z",
+    "handled_at": "2026-10-09T00:00:02Z"
+  },
+  "view": {
+    "protocolVersion": 2,
+    "sessionId": "primary",
+    "workspaceId": "wsp_22222222222222222222222222222222",
+    "revision": "7",
+    "updatedAt": "2026-10-09T00:00:02.000Z",
+    "state": {
+      "entries": [
+        "hello"
+      ],
+      "inbox": []
+    },
+    "cursor": {
+      "streamId": "33333333333333333333333333333333",
+      "sequence": 7
+    }
+  }
+}
