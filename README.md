@@ -61,7 +61,7 @@ await session.dispatch({ type: "prompt", prompt: "Continue" });
 
 Dispatch and steer accept the same message type and return an ID/status reference. Dispatch queues normal work; steer prioritizes its message at the next safe scheduling boundary. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
 
-`cancel(messageId)` targets one queued/running message. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Actor priority, cancellation attribution and view publication/storage still require coordinated platform/runtime support; runtime artifacts advertise those capabilities as false.
+`cancel(messageId)` targets one queued/running message. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Steering and targeted cancellation are coordinated by the SDK runtime; the platform delivers their envelopes as ordinary messages. Durable views require the coordinated platform implementation.
 
 ## Stream output
 
@@ -133,12 +133,34 @@ For a runnable browser and server integration, see [the web chat example](exampl
 
 ### Priority intake and durable Session views
 
-`session.steer(message)` gives queued intake priority while preserving FIFO within
-each priority. Active intake continues. Both dispatch and steer return a message
-reference; use its ID with `session.cancel(id)` to cancel queued intake or request
-cooperative cancellation of running intake. A `requested` receipt acknowledges
-the request, while `cancelled` or `settled` describe terminal intake. Detached
-activity and Session stop keep their existing lifecycles.
+Dispatch, steer and cancel share ordinary delivery. The platform treats their
+SDK command payloads as opaque and acknowledges delivery independently of work
+completion. It does not prioritize or execute steering/cancellation.
+
+The SDK serializes dispatch work, including activity started by that dispatch.
+Define an optional native steering hook in the same App runtime:
+
+```ts
+const app = cantelop.app({
+  name: "assistant",
+  runtime: {
+    receive(context) { /* start the harness through context.activity */ },
+    steer(context) { return harness.steer(context.message.payload); },
+  },
+});
+```
+
+The hook runs in the same process while work is active. Without it, `steer`
+prioritizes work in the SDK queue, preserving FIFO within each priority.
+`context.command.type` retains dispatch/steer intent. An SDK activity slot admits
+one harness run; steering never creates a second Session runtime.
+
+Use the ID returned by dispatch/steer with `session.cancel(id)`. The SDK removes
+queued work or signals running intake and the activity owned by that message.
+Other work is unaffected. Cancellation must first reach the Sandbox; it is not
+an immediate host-side queue withdrawal. A `requested` receipt is acceptance,
+while `cancelled` or `settled` describe the target's current state. `stop` remains
+an infrastructure lifecycle operation.
 
 The runtime explicitly commits the application's read model:
 

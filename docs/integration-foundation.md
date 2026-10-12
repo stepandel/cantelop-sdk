@@ -72,23 +72,47 @@ All operations use `POST {app_url}/commands`, including streaming. The URL is un
 
 Each operation has its own Edge handler. There is no client-selected private path or URL. Authentication happens before parsing/routing. The Worker strips client authorization and identity headers; the outbound Worker derives trusted App identity. Private handlers must enforce App ownership and Session/Workspace binding on every operation, including reads and cancellation.
 
-## Admission, priority and keep-alive
+## Delivery, SDK work coordination and keep-alive
 
-Dispatch queues behind normal work when busy. Steer takes priority over queued normal messages at the next safe scheduling boundary, with FIFO ordering within each priority. It does not forcibly interrupt a running handler. Idle steering admits the same message normally. No separate control payload or provider-specific steering schema is introduced.
+Dispatch, steer and cancellation use generic actor delivery. Edge wraps SDK
+intent in `message.payload` with marker `__cantelop_command: 2`. The platform
+stores/forwards that JSON without inspecting its type. It preserves FIFO delivery
+and acknowledges a Sandbox reservation separately from handling completion.
+Requests additionally use the existing reply wait and `timeout_ms`.
 
-Keep-alive is optional on the Session reference and on dispatch/steer options. A method value overrides the reference value; omission delegates to the App default. Edge resolves that default from reserved `CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS`, supplied by the platform/local CLI. It fails closed before provisioning if the default is missing/invalid. Explicit zero is preserved. Existing keep-alive/quiescence lifecycle rules remain owned by the actor platform; control/read operations do not renew a lease.
+The SDK serializes ordinary work, holding its queue while an owned activity runs.
+An optional `runtime.steer(context)` hook forwards input to a live harness in the
+same process. Without that hook, steer receives priority in the SDK work queue.
+`context.command.type` preserves intent in either handler. Queueing remains SDK
+behavior, not delivery behavior. Legacy raw actor payloads retain ordinary intake
+behavior for direct adapter integrations.
 
-The Edge translates submissions into private integration-v2 admission (`messages` or `requests`) with the existing `{ session, message }` actor data plus enforced `priority: "normal" | "priority"`. Request additionally supplies `timeout_ms`. These are new private admission contracts requiring platform support, not a silent fallback to the old FIFO endpoint. The gateway must negotiate actor support before delivering priority work.
+Keep-alive is optional on the reference and on dispatch/steer. Cancellation uses
+the reference/default value when delivering its SDK control command. Edge resolves
+the reserved App default, preserving explicit zero and failing closed when invalid.
+Read operations do not activate the Sandbox; stop retains platform ownership.
 
-Acceptance means durable admission, not completion. Successful `receive()` still acknowledges intake; application work can outlive it. Caller timeout/disconnect ends waiting without proving execution stopped. Dispatch/steer accept an optional stable `id` for retries; request retains its retry options. Ambiguous failures expose the identity via `RemoteAppError.messageId`, with `command_outcome_unknown` for transport uncertainty. No operation is automatically retried. Platform admission must deduplicate same-ID/same-command/same-payload retries and reject conflicting reuse, including dispatch-versus-steer changes.
+Acceptance means durable delivery admission, not work completion. Successful
+`receive` acknowledges intake; its owned activity can outlive that acknowledgment.
+A caller timeout/disconnect only stops waiting. Stable IDs deduplicate the opaque
+command payload; conflicting reuse fails. SDK cancellation uses its own reply
+command ID, separate from its target ID.
 
 ## Message-targeted cancellation
 
 `session.cancel(messageId, { id?, signal? })` returns `{ messageId, state, status? }`. `requested` means cooperative cancellation was admitted; `cancelled` means queued work was withdrawn; `settled` reports an existing terminal message outcome in the required `status` field. Unknown targets are errors. A cancellation operation's retry ID is separate from its target ID.
 
-The platform must serialize cancellation against admission/start/settlement, persist withdrawal so recovery cannot resurrect queued work, and retain completed outcomes. Running cancellation must follow ownership from message intake to activity and descendants, even after intake was acknowledged. Shared work cannot be attributed by merely canceling whichever activity happens to be running. Canceling a steering contribution does not undo already-applied effects or automatically cancel an unrelated parent run.
+Cancellation interpretation lives in the Sandbox SDK. It removes queued intake,
+aborts the running message signal, or aborts the activity owned by that target ID.
+It does not stop another message's activity. SDK queues and activity ownership
+belong to the actor incarnation; durable delivery/status and generic recovery
+remain platform responsibilities. Application-managed work outside SDK activity
+must implement its own ownership and recovery.
 
-Private cancellation/status/stop/view/events routes are under `/__cantelop/integration/v2/sessions/{id}` and carry exactly one Workspace selector in their query. Cancellation targets `/messages/{messageId}/cancel`; its body carries the cancellation command ID. Read/stop handlers must resolve slugs read-only. Stop retains existing errors for unmaterialized Sessions and permits later reactivation; it is distinct from message cancellation.
+Cancellation uses ordinary private request delivery, not a private cancellation
+route. The generated Edge checks existing message/Workspace scope without opening
+missing Workspaces. The command must reach the Sandbox before it takes effect.
+Stop, status, view and event reads retain their selector-bound private routes.
 
 ## Durable application view
 
@@ -104,7 +128,7 @@ Required runtime/platform support:
 4. Writer incarnation checks that reject updates from replaced Sandboxes, authorization on reads/writes, and bounded snapshot/event sizes.
 5. Explicit replay expiry/reset behavior, slow-consumer bounds, and snapshot refresh after reconnect gaps. Do not claim exactly-once delivery or application durability from transport acceptance alone.
 
-The SDK does not currently supply the runtime publication primitive or external view store; this PR qualifies the public contract and Edge routing. Current runtime artifacts advertise `priority`, `messageCancellation` and `durableView` as false until these implementations and recovery tests exist.
+The runtime supplies `context.view.commit(state)` (also on activity contexts). The platform persists encrypted projections and event boundaries before acknowledging them. Native metadata advertises SDK `steering`, `messageCancellation`, and `durableView` support.
 
 ## Streams
 
@@ -116,6 +140,6 @@ CLI build protocol 6 generates `worker.mjs` plus `cantelop-edge.json` with `buil
 
 Project schema 3 uses `definition` to select a module exporting named `cantelop.app({ name, runtime })` definitions. App identity and deployment declarations live in code; the manifest does not duplicate them. The compiler extracts each App's runtime without executing customer code, generates per-App identity and strips all runtime-only dependencies from the shared backend. CLI adoption must discover/select named Apps, build/upload matching artifacts, honor per-App environment/images, integrate backend compilation, retain dispatcher/outbound routing, and update init/doctor/dev/watch/dry-run/deploy. The unpublished protocol/schema versions are unchanged.
 
-The platform must implement private integration-v2 admission/read/cancellation routes, credentials/defaults, actor capability negotiation and durable view storage before production rollout. Existing Node/Bun runtime behavior is preserved in this foundation rather than advertising unsupported new capabilities.
+Deploy with the companion platform implementation for generic integration-v2 admission, reply/status/read routes, generated credentials/defaults, and durable view storage. Validate the hosted provider and state migration before rollout.
 
 Apps may define optional webhook ingress routes alongside their runtime. Handlers receive the same typed App interface and invoke commands locally on Edge; existing customer backend routes can continue using the SDK over HTTP. Provider verification, delivery ID mapping, acknowledgement and outbound replies remain application code. See [App webhooks](webhooks.md) for compilation and deployment boundaries.

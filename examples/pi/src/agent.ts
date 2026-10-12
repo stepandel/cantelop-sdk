@@ -7,11 +7,8 @@ type Context = SessionContext<SessionMessage, SessionEvent>;
 
 const models = builtinModels();
 let agent: Agent | undefined;
-const promptQueue: string[] = [];
 
-function sessionAgent(
-  { session, env }: Context,
-): Agent {
+function sessionAgent({ session, env }: Context): Agent {
   if (agent !== undefined) return agent;
 
   const provider = env.PI_PROVIDER ?? "anthropic";
@@ -37,33 +34,31 @@ export function receive(context: Context): void {
   const command = context.message.payload;
 
   if (command.type === "cancel") {
-    promptQueue.length = 0;
     agent?.clearAllQueues();
     context.activity.cancel();
-    return;
-  }
-
-  if (command.type === "steer" && context.activity.active && agent !== undefined) {
-    agent.steer({
-      role: "user",
-      content: command.prompt,
-      timestamp: Date.now(),
-    });
-    return;
-  }
-
-  if (context.activity.active) {
-    promptQueue.push(command.prompt);
     return;
   }
 
   startPrompt(context, command.prompt);
 }
 
+export function steer(context: Context): void {
+  const command = context.message.payload;
+  if (command.type === "cancel" || agent === undefined || !context.activity.active) {
+    receive(context);
+    return;
+  }
+  agent.steer({
+    role: "user",
+    content: command.prompt,
+    timestamp: Date.now(),
+  });
+}
+
 function startPrompt(context: Context, prompt: string): void {
   const currentAgent = sessionAgent(context);
 
-  context.activity.start(async ({ signal, send, output }) => {
+  context.activity.start(async ({ signal, output }) => {
     let answer = "";
     let pendingOutput = Promise.resolve();
     const unsubscribe = currentAgent.subscribe((event) => {
@@ -74,7 +69,7 @@ function startPrompt(context: Context, prompt: string): void {
         const delta = event.assistantMessageEvent.delta;
         answer += delta;
         pendingOutput = pendingOutput.then(() =>
-          output.send({ type: "text_delta", delta })
+          output.send({ type: "text_delta", delta }),
         );
       }
     });
@@ -88,10 +83,6 @@ function startPrompt(context: Context, prompt: string): void {
     } finally {
       signal.removeEventListener("abort", abort);
       unsubscribe();
-      const nextPrompt = promptQueue.shift();
-      if (!signal.aborted && nextPrompt !== undefined) {
-        send({ type: "prompt", prompt: nextPrompt });
-      }
     }
   });
 }

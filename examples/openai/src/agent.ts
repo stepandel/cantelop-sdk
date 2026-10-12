@@ -6,19 +6,12 @@ type Context = SessionContext<SessionMessage, SessionEvent>;
 
 let agent: Agent | undefined;
 let conversation: MemorySession | undefined;
-const promptQueue: string[] = [];
 
 export function receive(context: Context): void {
   const command = context.message.payload;
 
   if (command.type === "cancel") {
-    promptQueue.length = 0;
     context.activity.cancel();
-    return;
-  }
-
-  if (context.activity.active) {
-    promptQueue.push(command.prompt);
     return;
   }
 
@@ -39,26 +32,19 @@ function startPrompt(context: Context, prompt: string): void {
   const currentAgent = agent;
   const currentConversation = conversation;
 
-  context.activity.start(async ({ signal, send, output }) => {
-    try {
-      const result = await run(currentAgent, prompt, {
-        session: currentConversation,
-        signal,
-        stream: true,
-      });
+  context.activity.start(async ({ signal, output }) => {
+    const result = await run(currentAgent, prompt, {
+      session: currentConversation,
+      signal,
+      stream: true,
+    });
 
-      let answer = "";
-      for await (const delta of result.toTextStream()) {
-        answer += delta;
-        await output.send({ type: "text_delta", delta });
-      }
-      await result.completed;
-      await output.send({ type: "done", answer: result.finalOutput ?? answer });
-    } finally {
-      const nextPrompt = promptQueue.shift();
-      if (!signal.aborted && nextPrompt !== undefined) {
-        send({ type: "prompt", prompt: nextPrompt });
-      }
+    let answer = "";
+    for await (const delta of result.toTextStream()) {
+      answer += delta;
+      await output.send({ type: "text_delta", delta });
     }
+    await result.completed;
+    await output.send({ type: "done", answer: result.finalOutput ?? answer });
   });
 }
