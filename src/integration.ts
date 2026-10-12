@@ -2,6 +2,7 @@ import type { HomepageHandler, WebhookRoutes } from "./webhooks.js";
 import type { AppDeploymentConfiguration } from "./app-definition.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import type { WorkspaceDatabase } from "./database.js";
+import type { NativeAuthCommand, NativeAuthResult } from "./native-auth.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 
 /** Exactly one canonical ID or App-scoped slug. */
@@ -50,8 +51,19 @@ export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = 
   /** Resolves/provisions a slug, or retrieves an existing canonical ID. */
   resolve(): Promise<Workspace>;
   database(): Promise<WorkspaceDatabase>;
+  /** Native CLI authentication shared by Sessions in this Workspace. */
+  auth(): WorkspaceAuthRef;
   /** A lazy reference; omitting id generates a fresh App-scoped identity. */
   session(options?: IntegrationSessionOptions): SessionRef<Message, Event, Reply, View>;
+}
+
+export interface WorkspaceAuthRef {
+  methods(options?: SessionCommandOptions): Promise<readonly string[]>;
+  status(options?: SessionCommandOptions): Promise<boolean>;
+  login(options: { readonly method: string; readonly force?: boolean } & SessionCommandOptions): Promise<Extract<NativeAuthResult, { type: "login" | "status" }>>;
+  submit(options: { readonly attemptId: string; readonly code: string } & SessionCommandOptions): Promise<Extract<NativeAuthResult, { type: "status" }>>;
+  cancel(options: { readonly attemptId: string } & SessionCommandOptions): Promise<void>;
+  logout(options?: SessionCommandOptions): Promise<boolean>;
 }
 
 export interface SessionRef<Message, Event = unknown, Reply = unknown, View = unknown> {
@@ -98,6 +110,7 @@ export interface SessionView<View = unknown> {
 
 /** Public App ↔ Edge command protocol. Edge ↔ Sandbox remains the actor protocol. */
 export type SessionCommand<Message = unknown> =
+  | { readonly type: "auth"; readonly auth: NativeAuthCommand; readonly timeoutMs: number; readonly keepAliveSeconds?: number }
   | { readonly type: "dispatch" | "steer"; readonly message: Message; readonly keepAliveSeconds?: number }
   | { readonly type: "request"; readonly message: Message; readonly keepAliveSeconds?: number; readonly timeoutMs: number }
   | { readonly type: "cancel"; readonly keepAliveSeconds?: number }

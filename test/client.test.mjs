@@ -5,6 +5,22 @@ const workspaceId = 'wsp_' + '1'.repeat(32);
 const workspace = { id: workspaceId, app_id: 'app_' + '2'.repeat(32), slug: 'customer', hostname: 'customer--agent.app.cantelop.dev', created_at: '2026-10-09T00:00:00Z', updated_at: '2026-10-09T00:00:00Z' };
 const accepted = body => Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
 
+test('Workspace native auth uses a reserved Session and preserves retry IDs', async () => {
+  const calls = [], id = 'msg_' + 'a'.repeat(32);
+  const auth = new CantelopClient().app({ name: 'first-agent', runtime: { create: () => ({ run() {} }) },
+    connection: { async fetch(request) {
+      const body = await request.json(); calls.push(body);
+      return Response.json({ protocolVersion: 2, id: body.id, reply: body.command.auth.type === 'status'
+        ? { type: 'status', authenticated: false }
+        : { type: 'login', method: 'browser-code', attemptId: 'b'.repeat(36), url: 'https://claude.ai/login', expiresAt: '2026-10-12T00:00:00Z' } });
+    } } }).workspace({ slug: 'customer' }).auth();
+  assert.equal(await auth.status({ id }), false);
+  assert.equal((await auth.login({ method: 'browser-code' })).type, 'login');
+  assert.equal(calls[0].id, id);
+  assert.ok(calls.every(call => call.session.id === 'cantelop-native-auth' && call.command.type === 'auth'));
+  assert.equal(calls[0].command.keepAliveSeconds, 900);
+});
+
 test('references remain lazy, immutable and capture selectors/options; submissions share a payload type', async () => {
   const calls = [];
   const connection = { async fetch(request) {

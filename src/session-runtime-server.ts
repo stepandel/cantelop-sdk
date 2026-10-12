@@ -37,6 +37,7 @@ import {
 import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
 import { FollowupMessages, InMemoryActivity, type ActivityLifecycle } from "./activity.js";
 import { decodeRuntimeCommand, type RuntimeCommand } from "./runtime-command.js";
+import { NATIVE_AUTH_SESSION_ID } from "./native-auth.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
 import { SessionOutputBuffer } from "./output.js";
@@ -137,12 +138,14 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
   let harness: SessionHarness<Input, Event, Reply, View> | undefined;
   let pendingControls = 0;
   const harnessOperations = new Map<string, HarnessOperation>();
+  let activeAuth = 0;
   const activate = (session: SessionIdentity, messageId: string): Promise<void> => {
     activation ??= Promise.resolve().then(async () => {
       if ("create" in behaviour) {
         harness = await behaviour.create(Object.freeze({ signal: lifetime.signal, session, env: options.env ?? process.env, database }));
         if (!harness || ["queue", "steer", "cancel"].some(method =>
-          typeof harness![method as keyof typeof harness] !== "function")) throw new TypeError("Invalid Session harness");
+          typeof harness![method as keyof typeof harness] !== "function") ||
+          harness.auth !== undefined && typeof harness.auth !== "function") throw new TypeError("Invalid Session harness");
         return;
       }
       await behaviour.onActivate?.(Object.freeze({
@@ -207,6 +210,10 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     const sequence = nextIntakeSequence++;
     const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
     let replied = false;
+    if (session.id === NATIVE_AUTH_SESSION_ID && command.type !== "auth") {
+      started();
+      return Object.freeze({ generation, settled: Promise.reject(new TypeError("Reserved native auth Session requires an auth command")), ...(replyHolder ? { reply: replyHolder } : {}) });
+    }
     if (command.type === "cancel") {
       const control = async () => {
         signal.throwIfAborted();
@@ -223,7 +230,31 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
         : (started(), pendingControls++, control().finally(() => { pendingControls--; quiescence.changed(); }));
       return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
     }
-
+    if (command.type === "auth") {
+      const settled = mailbox.enqueue(message.id, async () => {
+        signal.throwIfAborted();
+        started();
+        if (session.id !== NATIVE_AUTH_SESSION_ID || !replyHolder || !("create" in behaviour)) throw new TypeError("Invalid native auth request");
+        await activate(session, message.id);
+        if (!harness?.auth) throw new TypeError("Session harness does not support native auth");
+        signal.throwIfAborted();
+        const result = await harness.auth(command.auth, Object.freeze({
+          signal: lifetime.signal,
+          hold(completion: Promise<unknown>) {
+            activeAuth++;
+            quiescence.changed();
+            void Promise.resolve(completion).then(
+              () => { activeAuth--; quiescence.changed(); },
+              () => { activeAuth--; quiescence.changed(); },
+            );
+          },
+        }));
+        const encoded = JSON.stringify(result);
+        if (encoded === undefined || Buffer.byteLength(encoded) > 64 * 1024) throw new TypeError("Invalid native auth reply");
+        replyHolder.value = JSON.parse(encoded);
+      });
+      return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
+    }
     let workCompletion: Promise<void> | undefined;
     const settled = mailbox.enqueue(message.id, async () => {
       signal.throwIfAborted();
@@ -429,7 +460,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     () => quiescence.changed(),
     (messageId, state, signal) => outputBuffer.publish(messageId, state, AbortSignal.any([signal, AbortSignal.timeout(30_000)]), true),
   );
-  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle && harnessOperations.size === 0 && pendingControls === 0);
+  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle && harnessOperations.size === 0 && pendingControls === 0 && activeAuth === 0);
   const supervisedWork = {
     get active() { return activity.active || harnessOperations.size > 0; },
     snapshot() {
@@ -615,7 +646,7 @@ async function handleRequest<Input>(
   } catch {
     throw new ProtocolError(400, "invalid_sdk_command");
   }
-  const input = command.type === "cancel" ? message : { ...message, payload: command.message };
+  const input = command.type === "cancel" || command.type === "auth" ? message : { ...message, payload: command.message };
   const result = messages.admit(message.id, { message, session, reply: replyRequested }, (signal, started) => receiveMessage(input, session, trace, signal, started, replyRequested, command), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
   writeJSON(response, 202, result.receipt);
 }

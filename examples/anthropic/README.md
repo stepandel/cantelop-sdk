@@ -21,7 +21,22 @@ Cancellation sends SIGTERM and escalates to SIGKILL after one second. Cleanup al
 
 ## Native authentication and state
 
-Use Claude Code's own login in the user's Workspace, for example `CLAUDE_CONFIG_DIR=/workspace/.claude HOME=/workspace claude auth login`. The adapter does not collect tokens or inject inherited API keys. Native provider credentials and configuration remain provider-owned. The child environment is scoped to the Workspace; the host's auth/config environment is unchanged.
+The App exposes the stock Claude Code login through `workspace.auth()`. Resolve the Workspace from your verified user identity, then offer the returned URL and accept the code in your own API/UI:
+
+```ts
+const auth = app.workspace({ slug: verifiedUserWorkspace }).auth();
+const methods = await auth.methods(); // ["browser-code"]
+const authenticated = await auth.status();
+const attempt = await auth.login({ method: "browser-code" });
+if (attempt.type === "login") {
+  // Show attempt.url, then collect the code from the user.
+  await auth.submit({ attemptId: attempt.attemptId, code });
+}
+```
+
+`auth.login()` returns `{ type: "status", authenticated: true }` when the user is already signed in. Use `auth.cancel({ attemptId })` to stop an unfinished login and `auth.logout()` to run the native logout and verify its result. An attempt expires after ten minutes and is lost if its Sandbox is replaced; start another login in that case. The SDK uses one reserved auth Session per Workspace, so agent Sessions share the resulting credentials. Retrying an ambiguous call with the same `{ id }` preserves its command identity.
+
+The adapter invokes Claude's own `auth status`, `auth login`, and `auth logout`. A private PTY relay supports interactive login; raw terminal output and code input are never published as Session events. The adapter does not collect tokens or inject inherited API keys. Native credentials remain under the Workspace's `.claude` directory. The child environment is scoped to the Workspace; the host's auth/config environment is unchanged.
 
 Claude owns `/workspace/.claude`, including native login and conversation files. The adapter allocates a native conversation UUID, saves it, and marks it resumable when Claude emits `system/init`. Subsequent turns use `--resume` for that same conversation.
 
