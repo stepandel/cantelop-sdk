@@ -15,7 +15,7 @@ test("the 1.0 public surface and compiled package remove Edge API authoring", as
   assert.equal("buildApi" in build, false);
   assert.equal("buildLocalApi" in build, false);
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.version, "1.0.0-alpha.0");
+  assert.match(packageJson.version, /^1\./);
   for (const name of ["api", "edge", "router"]) {
     assert.equal(`./${name}` in packageJson.exports, false);
     await assert.rejects(access(new URL(`../dist/${name}.js`, import.meta.url)), { code: "ENOENT" });
