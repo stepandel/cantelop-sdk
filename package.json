@@ -1,6 +1,6 @@
 {
   "name": "@cantelop/sdk",
-  "version": "1.0.0-alpha.0",
+  "version": "1.0.0-alpha.1",
   "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {

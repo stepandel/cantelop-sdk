@@ -85,6 +85,17 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     return node.parent === file ? node as ts.Statement : undefined;
   };
   const rejectDefinitionImport: Plugin = { name: "cantelop-definition-boundary", setup(builder) {
+    const resolving = {};
+    // Resolve before loading: esbuild can reuse the stdin module for an import
+    // of its sourcefile, bypassing onLoad on platforms without path aliases.
+    builder.onResolve({ filter: /.*/ }, async args => {
+      if (args.pluginData === resolving) return;
+      const resolved = await builder.resolve(args.path, { kind: args.kind, resolveDir: args.resolveDir, pluginData: resolving });
+      if (resolved.path && canonicalPath(resolved.path) === canonicalPath(filename)) {
+        return { errors: [{ text: "Runtime and webhook dependencies cannot import their enclosing App definition; use the supplied context" }] };
+      }
+      // Let normal resolution preserve optional imports and package metadata.
+    });
     builder.onLoad({ filter: /\.[cm]?[jt]s$/ }, args => {
       if (canonicalPath(args.path) === canonicalPath(filename)) return { errors: [{ text: "Runtime and webhook dependencies cannot import their enclosing App definition; use the supplied context" }] };
     });
