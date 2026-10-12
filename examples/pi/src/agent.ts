@@ -50,7 +50,7 @@ export function create({ session, env, signal: lifetime }: SessionHarnessContext
         await pendingOutput;
       }
     },
-    steer(message) {
+    steering(message) {
       agent.steer({ role: "user", content: message.prompt, timestamp: Date.now() });
     },
     cancel() { agent.abort(); },

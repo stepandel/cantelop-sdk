@@ -63,6 +63,18 @@ let text=''; process.stdin.on('data',chunk=>text+=chunk); process.stdin.on('end'
 }
 const run = (native, turn) => native.run({ type: "prompt", prompt: turn.text }, { signal: turn.signal, output: { send: turn.emit } });
 const turn = (text, events, signal = new AbortController().signal) => ({ text, signal, emit: async event => { events.push(event); } });
+async function assertToolExited(pid) {
+  // Group termination closes the pipes before the host necessarily reaps an
+  // orphaned tool. Wait for OS bookkeeping before asserting that its PID is gone.
+  const deadline = Date.now() + 2000;
+  while (true) {
+    try { process.kill(pid, 0); }
+    catch (error) { if (error.code === "ESRCH") return; throw error; }
+    assert.ok(Date.now() < deadline, "native tool PID was not reaped after termination");
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
+
 
 for (const [name, Native] of providers) {
   test(`${name} wraps the stock CLI command, keeps prompts on stdin, and resumes after replacement`, async t => {
@@ -105,7 +117,7 @@ for (const [name, Native] of providers) {
     } });
     await assert.rejects(execution, /abort/i);
     assert.ok(Date.now() - abortedAt >= 900);
-    assert.throws(() => process.kill(toolPid, 0), error => error.code === "ESRCH");
+    await assertToolExited(toolPid);
   });
 
   test(`${name} output failure cleans up before returning; native failures never become success`, async t => {
@@ -114,7 +126,7 @@ for (const [name, Native] of providers) {
     await assert.rejects(run(native, { text: "wait", signal: new AbortController().signal, emit: async event => {
       if (event.type === "tool.ready") { toolPid = event.pid; throw new Error("handoff failed"); }
     } }), /handoff failed/);
-    assert.throws(() => process.kill(toolPid, 0), error => error.code === "ESRCH");
+    await assertToolExited(toolPid);
     for (const prompt of ["fail", "missing", "malformed"]) await assert.rejects(run(native, turn(prompt, [])));
   });
 }

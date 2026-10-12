@@ -116,19 +116,22 @@ export interface SessionHarnessContext {
 
 /** Capabilities belong to one execution and close when it settles. */
 export interface SessionHarnessWorkContext<Message, Event = never, View = unknown>
-  extends SessionHarnessContext {
+  extends SessionHarnessContext, SessionActivityContext<Message, Event, View> {
   readonly message: Readonly<{ id: string; sequence: number; payload: Message }>;
-  readonly output: SessionOutput<Event>;
-  readonly view: SessionViewWriter<View>;
-  send(message: Message): void;
 }
 
+/** A native input handler, or the SDK scheduling strategy for steering input. */
+export type SessionHarnessSteering<Message> =
+  | ((message: Message) => Awaitable<void>)
+  | "queue"
+  | "interrupt";
+
 export interface SessionHarness<Message, Event = never, Reply = never, View = unknown> {
-  /** Native injection, priority queueing, or interrupt-and-queue; native is the default. */
-  readonly steering?: "native" | "queue" | "interrupt";
+  /** Omit when unsupported. A function injects input into the active native run. */
+  readonly steering?: SessionHarnessSteering<Message>;
   /** Resolves after execution and cleanup; its return value supplies request replies. */
   run(message: Message, context: SessionHarnessWorkContext<Message, Event, View>): Awaitable<[Reply] extends [never] ? void : Reply>;
-  steer?(message: Message): Awaitable<void>;
+  /** Interrupts the active operation; execution and cleanup retain the work slot. */
   cancel?(): Awaitable<void>;
 }
 

@@ -57,7 +57,7 @@ test("one harness handles FIFO queue, live steering and run-wide cancellation wi
           started.push(message);
           if (message === "first") { signal = work.signal; await workExit.promise; }
         },
-        steer: message => steering.push(message),
+        steering: message => { steering.push(message); },
         async cancel() { cancels++; await cancelExit.promise; },
       };
     },
@@ -90,7 +90,7 @@ test("request waits for run return while steering and cancellation intake remain
   let active, steered = false;
   const f = await fixture(t, { create: () => ({
     async run(message, work) { active = work.signal; await exit.promise; return { answer: message }; },
-    steer() { steered = true; },
+    steering() { steered = true; },
   }) });
   await f.send(1, { type: "dispatch", message: "answer" }, true);
   await until(() => active);
@@ -200,7 +200,6 @@ test("interrupt steering admits priority input, aborts the current run and waits
       started.push(message);
       if (message === "hold") { signal = work.signal; await exit.promise; }
     },
-    steer() { throw new Error("Interrupt mode must not inject native input"); },
     async cancel() { cancels++; await cleanup.promise; },
   }) });
   await f.send(1, { type: "dispatch", message: "hold" }); await f.settled(1);
@@ -244,4 +243,23 @@ test("invalid harness steering declarations fail activation before executing inp
   }
   assert.equal(runs, 0);
   assert.equal(creates, 1);
+});
+
+
+test("native steering is one capability, retains its receiver, and queues input while idle", async t => {
+  const exit = deferred();
+  const runs = [], adjustments = [];
+  const f = await fixture(t, { create: () => new class {
+    marker = "native:";
+    async run(message) { runs.push(message); if (message === "hold") await exit.promise; }
+    steering(message) { adjustments.push(this.marker + message); }
+  } });
+  await f.send(1, { type: "steer", message: "idle" }); await f.settled(1);
+  await until(() => runs.length === 1);
+  await f.send(2, { type: "dispatch", message: "hold" }); await f.settled(2);
+  await until(() => runs.length === 2);
+  await f.send(3, { type: "steer", message: "adjust" }); await f.settled(3);
+  assert.deepEqual(runs, ["idle", "hold"]);
+  assert.deepEqual(adjustments, ["native:adjust"]);
+  exit.resolve();
 });

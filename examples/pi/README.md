@@ -26,4 +26,4 @@ Run `pnpm check:examples` from the SDK root to type-check the backend client and
 
 ## Runtime behavior
 
-The harness factory creates one Pi Agent per runtime incarnation. The SDK queues prompts and routes steering to the adapter's native `steer` method. `cancel()` aborts the active Agent operation and preserves waiting SDK input. `PI_PROVIDER` and `PI_MODEL` select the model; the manifest defaults to Anthropic and `claude-sonnet-5`. Selecting another provider also requires changing the credential declaration.
+The harness factory creates one Pi Agent per runtime incarnation. The SDK queues prompts and routes steering to the harness’s native `steering(message)` capability. `cancel()` aborts the active Agent operation and preserves waiting SDK input. `PI_PROVIDER` and `PI_MODEL` select the model; the manifest defaults to Anthropic and `claude-sonnet-5`. Selecting another provider also requires changing the credential declaration.

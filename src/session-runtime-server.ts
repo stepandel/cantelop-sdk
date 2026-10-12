@@ -131,9 +131,9 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
       if ("create" in behaviour) {
         harness = await behaviour.create(Object.freeze({ signal: lifetime.signal, session, env: options.env ?? process.env, database }));
         if (!harness || typeof harness.run !== "function" ||
-            harness.steer !== undefined && typeof harness.steer !== "function" ||
             harness.cancel !== undefined && typeof harness.cancel !== "function" ||
-            harness.steering !== undefined && !["native", "queue", "interrupt"].includes(harness.steering)) throw new TypeError("Invalid Session harness");
+            harness.steering !== undefined && typeof harness.steering !== "function" &&
+            harness.steering !== "queue" && harness.steering !== "interrupt") throw new TypeError("Invalid Session harness");
         return;
       }
       await behaviour.onActivate?.(Object.freeze({
@@ -256,11 +256,12 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
           await observer.span("session.receive", async () => {
             if ("receive" in behaviour) return behaviour.receive(context);
             const adapter = harness!;
-            if (command.type === "steer" && activity.active && (adapter.steering ?? "native") === "native") {
+            const steering = adapter.steering;
+            if (command.type === "steer" && steering === undefined) throw new Error("Session harness does not support steering");
+            if (command.type === "steer" && activity.active && typeof steering === "function") {
               await activity.steer(message.payload);
               return;
             }
-            if (command.type === "steer" && !adapter.steer && (adapter.steering ?? "native") === "native") throw new Error("Session harness does not support steering");
             workCompletion = activity.queue(message.id, async work => {
               const result = await adapter.run(message.payload, Object.freeze({
                 signal: work.signal, output: work.output, view: work.view, send: work.send,
@@ -275,13 +276,13 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
                 replyHolder!.value = JSON.parse(encoded);
               }
             }, {
-              ...(adapter.steer ? { onSteer: input => adapter.steer!(input) } : {}),
+              ...(typeof steering === "function" ? { onSteer: input => steering.call(adapter, input) } : {}),
               ...(adapter.cancel ? { onCancel: () => adapter.cancel!() } : {}),
               priority: command.type === "steer",
             }, event => observer.recordActivity(event));
             // Admit priority input before interrupting. A rejected admission must
             // not stop unrelated work; cleanup holds the slot until it can run.
-            if (command.type === "steer" && adapter.steering === "interrupt") activity.cancel();
+            if (command.type === "steer" && steering === "interrupt") activity.cancel();
           });
         });
         if ("receive" in behaviour && replyRequested && !replied) throw new Error("Session request completed without a reply");

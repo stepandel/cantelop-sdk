@@ -235,11 +235,12 @@ test("compiler extracts typed session-scoped harness factories without executing
     '{create() { return {run(message,work) {work.output.send({wrong:true});}};}}',
     '{create() { return {run(message,work) {work.view.commit({wrong:true});}};}}',
     '{create() { return {run() {return {answer:42};}};}}',
-    '{create() { return {run() {},steer(message) {message.wrong;}};}}',
+    '{create() { return {run() {},steering(message) {message.wrong;}};}}',
     '{create() { return {run() {},cancel(message) {}};}}',
     '{create() {return {run() {}};},receive() {}}',
     '{create() {return {run() {}};},steering:"interrupt"}',
     '{create() {return {run() {},steering:"silent"};}}',
+    '{create() {return {run() {return {answer:"ok"};},steering:"native"};}}',
     '{create() {return {run() {return {answer:"ok"};}};},onRecover(context) {context.view.commit({wrong:true});}}',
     '{receive(context) {context.activity.queue(work => work.view.commit({wrong:true}));}}',
     '{receive() {},onActivate(context) {context.view.commit({wrong:true});}}',
@@ -257,7 +258,7 @@ test("compiler extracts typed session-scoped harness factories without executing
           await work.view.commit({entries:[marker]});
           return {answer:message.prompt};
         },
-        steer(message) {console.log(message.prompt, context.session.id);},
+        steering(message) {console.log(message.prompt, context.session.id);},
         cancel() {},
       };
     }
