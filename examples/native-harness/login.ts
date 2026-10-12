@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { AuthContext, AuthTerminalProcess } from "@cantelop/sdk/session";
-import { nativeEnvironment } from "./cli.js";
+import { nativeEnvironment } from "./cli.ts";
 
 const exec = promisify(execFile);
 

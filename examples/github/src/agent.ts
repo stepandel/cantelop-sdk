@@ -1,6 +1,6 @@
 import { Agent, run } from "@openai/agents";
 import type { SessionContext } from "@cantelop/sdk/session";
-import type { IssueMessage } from "./contracts.js";
+import type { IssueMessage } from "./contracts.ts";
 
 export function receive(context: SessionContext<IssueMessage>): void {
   const issue = context.message.payload;

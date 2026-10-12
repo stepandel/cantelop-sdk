@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { TurnQueue } from "../harness/queue.js";
+import { TurnQueue } from "../harness/queue.ts";
 import type { SessionHarness, SessionHarnessWorkContext } from "@cantelop/sdk/session";
 
 export type NativeEvent = Readonly<Record<string, unknown>>;

@@ -20,7 +20,7 @@ cantelop.json     Definition module selection
 Each provider example exports a named `app` on an App-agnostic client with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider CLIs/SDKs stay in the runtime; native authentication remains in the user's Workspace. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
 
 ```ts
-import { app } from "./src/cantelop.js";
+import { app } from "./src/cantelop.ts";
 
 const workspace = app.workspace({ slug: "customer-123" });
 const session = workspace.session({ id: "conversation-456" });
@@ -38,7 +38,7 @@ Codex, Claude and OpenCode forward native JSON events, fragmenting oversized fra
 
 This 1.0 prerelease requires the coordinated CLI/platform implementation with CLI build protocol 6 and project manifest schema 3. Generated Edge/native deployment and App credential provisioning are handled by that implementation.
 
-Each deployment example has one `tsconfig.json` covering its application and runtime code.
+Each deployment example has one `tsconfig.json` covering its application and runtime code. Relative imports use `.ts` to reference the source files directly; TypeScript checks them without emitting files, and the Cantelop compiler bundles deployment artifacts.
 
 Run `pnpm check:examples` from the SDK root to type-check backend clients and runtimes and qualify their runtime-only artifacts. [Application-owned queue](application-queue/README.md) and [supervised activity](supervised-activity/README.md) examples retain persistence, recovery, and subprocess behavior.
 

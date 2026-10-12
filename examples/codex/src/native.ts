@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
+import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.ts";
 
 /** Stock codex exec, resumed by its native thread ID; no replacement agent loop. */
 export class NativeCodex extends CliHarness {

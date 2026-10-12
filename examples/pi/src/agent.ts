@@ -1,8 +1,8 @@
-import { TurnQueue } from "../../harness/queue.js";
+import { TurnQueue } from "../../harness/queue.ts";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { SessionHarnessContext, SessionHarness } from "@cantelop/sdk/session";
-import type { SessionEvent, SessionMessage } from "./contracts.js";
+import type { SessionEvent, SessionMessage } from "./contracts.ts";
 const models = builtinModels();
 export function create({ session, env, signal: lifetime }: SessionHarnessContext): SessionHarness<SessionMessage, SessionEvent> {
   const provider = env.PI_PROVIDER ?? "anthropic";

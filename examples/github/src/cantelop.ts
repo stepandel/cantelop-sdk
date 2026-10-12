@@ -1,8 +1,8 @@
 import { CantelopClient } from "@cantelop/sdk";
-import { receive } from "./agent.js";
-import { homepage } from "./homepage.js";
-import { handleGitHub } from "./github.js";
-import type { IssueMessage } from "./contracts.js";
+import { receive } from "./agent.ts";
+import { homepage } from "./homepage.ts";
+import { handleGitHub } from "./github.ts";
+import type { IssueMessage } from "./contracts.ts";
 
 const cantelop = new CantelopClient();
 

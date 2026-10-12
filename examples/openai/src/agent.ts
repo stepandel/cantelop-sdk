@@ -1,7 +1,7 @@
-import { TurnQueue } from "../../harness/queue.js";
+import { TurnQueue } from "../../harness/queue.ts";
 import { Agent, MemorySession, run } from "@openai/agents";
 import type { SessionHarnessContext, SessionHarness } from "@cantelop/sdk/session";
-import type { SessionEvent, SessionMessage } from "./contracts.js";
+import type { SessionEvent, SessionMessage } from "./contracts.ts";
 
 export function create(context: SessionHarnessContext): SessionHarness<SessionMessage, SessionEvent> {
   if (!context.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");

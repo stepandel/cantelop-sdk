@@ -18,7 +18,7 @@ The files follow the application flow:
 The integration is in [src/server.ts](src/server.ts):
 
 ```ts
-import { app } from "./cantelop.js";
+import { app } from "./cantelop.ts";
 const workspace = app.workspace({ slug: "web-chat-demo" });
 const session = workspace.session({ id: conversationId, keepAliveSeconds: 300 });
 const message = await session.dispatch(

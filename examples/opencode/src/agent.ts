@@ -1,5 +1,5 @@
 import type { SessionHarnessContext } from "@cantelop/sdk/session";
-import { NativeOpenCode } from "./native.js";
+import { NativeOpenCode } from "./native.ts";
 
 export function create(context: SessionHarnessContext) {
   context.signal.throwIfAborted();

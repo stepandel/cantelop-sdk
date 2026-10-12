@@ -3,7 +3,7 @@
 [src/cantelop.ts](src/cantelop.ts) declares two Apps on one pure `CantelopClient`. Support emits a typed event; research returns a typed reply. They require no external provider and demonstrate the integration boundary rather than an LLM agent.
 
 ```ts
-import { support, research } from "./src/cantelop.js";
+import { support, research } from "./src/cantelop.ts";
 
 await support.workspace({ slug: "customer-123" }).session().dispatch({ prompt: "Help" });
 const result = await research.workspace({ slug: "customer-123" }).session().request({ topic: "Agents" });

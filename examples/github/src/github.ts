@@ -1,5 +1,5 @@
 import type { WebhookContext } from "@cantelop/sdk";
-import type { IssueMessage } from "./contracts.js";
+import type { IssueMessage } from "./contracts.ts";
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);

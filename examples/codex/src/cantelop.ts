@@ -1,7 +1,7 @@
 import { CantelopClient } from "@cantelop/sdk";
-import { create } from "./agent.js";
-import { codexAuth } from "./auth.js";
-import type { SessionMessage, SessionEvent } from "./contracts.js";
+import { create } from "./agent.ts";
+import { codexAuth } from "./auth.ts";
+import type { SessionMessage, SessionEvent } from "./contracts.ts";
 
 export const app = new CantelopClient().app<SessionMessage, SessionEvent>({
   name: "codex",

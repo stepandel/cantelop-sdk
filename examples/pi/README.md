@@ -3,7 +3,7 @@
 `src/cantelop.ts` creates a client and declares a named App with imported handlers from `src/agent.ts`. Application code imports the named `app` handle to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. The [backend compiler transform](../../docs/runtime-definitions.md) excludes provider dependencies from the backend bundle.
 
 ```ts
-import { app } from "./src/cantelop.js";
+import { app } from "./src/cantelop.ts";
 
 const workspace = app.workspace({ slug: "customer-123" });
 const session = workspace.session({

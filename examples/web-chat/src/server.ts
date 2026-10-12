@@ -1,4 +1,4 @@
-import { app } from "./cantelop.js";
+import { app } from "./cantelop.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { once } from "node:events";

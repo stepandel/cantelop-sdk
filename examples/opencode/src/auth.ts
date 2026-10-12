@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { loginTerminal, nativeAuth, runAuthCommand } from "../../native-harness/login.js";
+import { loginTerminal, nativeAuth, runAuthCommand } from "../../native-harness/login.ts";
 import type { AppAuth, AuthContext } from "@cantelop/sdk/session";
 
 /**

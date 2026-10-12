@@ -1,7 +1,7 @@
-import { create } from "./agent.js";
-import { claudeAuth } from "./auth.js";
+import { create } from "./agent.ts";
+import { claudeAuth } from "./auth.ts";
 import { CantelopClient } from "@cantelop/sdk";
-import type { SessionMessage, SessionEvent } from "./contracts.js";
+import type { SessionMessage, SessionEvent } from "./contracts.ts";
 
 const cantelop = new CantelopClient();
 
