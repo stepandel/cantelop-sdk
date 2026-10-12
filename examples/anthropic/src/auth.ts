@@ -68,6 +68,7 @@ export class ClaudeAuth {
     }
     if (command.type === "login") {
       if (command.method !== "browser-code") throw new TypeError("Unsupported Claude auth method");
+      if (command.force) await this.stop();
       if (!this.attempt) {
         await this.settled;
         if (!command.force && await this.authenticated()) return { type: "status", authenticated: true };
@@ -76,16 +77,17 @@ export class ClaudeAuth {
       }
       const attempt = this.attempt;
       await waitFor(attempt, () => !!attempt.url && /paste\s+code/i.test(attempt.text) || attempt.ended);
-      if (!attempt.url) { await this.stop(); throw new Error("Claude login did not return a sign-in URL"); }
+      if (!attempt.url || attempt.ended) { await this.stop(); throw new Error("Claude login did not return a sign-in URL"); }
       return { type: "login", method: "browser-code", attemptId: attempt.id,
         url: attempt.url, expiresAt: new Date(attempt.expiresAt).toISOString() };
     }
     const attempt = this.attempt;
     if (!attempt || attempt.id !== command.attemptId || attempt.ended || !attempt.url) throw new Error("Claude login attempt is not active");
     const prompts = () => (attempt.text.match(/paste\s+code/gi) ?? []).length;
-    const before = prompts();
+    const before = prompts(), offset = attempt.text.length;
+    const rejected = () => prompts() > before || /\b(invalid|error|failed|expired|denied)\b/i.test(attempt.text.slice(offset));
     await attempt.write(command.code);
-    if (!await waitFor(attempt, () => attempt.ended || prompts() > before)) throw new Error("Claude login response timed out");
+    if (!await waitFor(attempt, () => attempt.ended || rejected())) throw new Error("Claude login response timed out");
     if (!attempt.ended) throw new Error("Claude rejected the login code");
     await attempt.done;
     const authenticated = await this.authenticated();

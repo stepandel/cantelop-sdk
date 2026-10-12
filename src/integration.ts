@@ -61,7 +61,7 @@ export interface WorkspaceAuthRef {
   methods(options?: SessionCommandOptions): Promise<readonly string[]>;
   status(options?: SessionCommandOptions): Promise<boolean>;
   login(options: { readonly method: string; readonly force?: boolean } & SessionCommandOptions): Promise<Extract<NativeAuthResult, { type: "login" | "status" }>>;
-  submit(options: { readonly attemptId: string; readonly code: string } & SessionCommandOptions): Promise<NativeAuthResult>;
+  submit(options: { readonly attemptId: string; readonly code: string } & SessionCommandOptions): Promise<Extract<NativeAuthResult, { type: "status" }>>;
   cancel(options: { readonly attemptId: string } & SessionCommandOptions): Promise<void>;
   logout(options?: SessionCommandOptions): Promise<boolean>;
 }

@@ -69,7 +69,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
         const requestAuth = async (auth: NativeAuthCommand, options: SessionCommandOptions = {}): Promise<NativeAuthResult> => {
           const id = options.id ?? messageID(); assertMessageID(id);
           const envelope = prepare({ protocolVersion: 2, id, workspace: selector,
-            session: { id: NATIVE_AUTH_SESSION_ID }, command: { type: "auth", auth, timeoutMs: 45_000, keepAliveSeconds: 900 } });
+            session: { id: NATIVE_AUTH_SESSION_ID }, command: { type: "auth", auth, timeoutMs: 120_000, keepAliveSeconds: 900 } });
           let value: unknown;
           try { value = await send(envelope, options.signal); }
           catch (error) { throw submissionError(error, id, options.signal); }
@@ -90,10 +90,15 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
           },
           async login(options: { readonly method: string; readonly force?: boolean } & SessionCommandOptions) {
             const value = await requestAuth({ type: "login", method: options.method, ...(options.force === undefined ? {} : { force: options.force }) }, options);
-            if (value.type !== "login" && value.type !== "status") throw new RemoteAppError("invalid_auth_response", 0);
+            if (value.type === "status" && typeof value.authenticated === "boolean") return value;
+            if (value.type === "login" && typeof value.attemptId === "string" && typeof value.method === "string" && typeof value.url === "string" && typeof value.expiresAt === "string") return value;
+            throw new RemoteAppError("invalid_auth_response", 0);
+          },
+          async submit(options: { readonly attemptId: string; readonly code: string } & SessionCommandOptions) {
+            const value = await requestAuth({ type: "submit", attemptId: options.attemptId, code: options.code }, options);
+            if (value.type !== "status" || typeof value.authenticated !== "boolean") throw new RemoteAppError("invalid_auth_response", 0);
             return value;
           },
-          submit: (options: { readonly attemptId: string; readonly code: string } & SessionCommandOptions) => requestAuth({ type: "submit", attemptId: options.attemptId, code: options.code }, options),
           async cancel(options: { readonly attemptId: string } & SessionCommandOptions) {
             const value = await requestAuth({ type: "cancel", attemptId: options.attemptId }, options);
             if (value.type !== "cancelled") throw new RemoteAppError("invalid_auth_response", 0);

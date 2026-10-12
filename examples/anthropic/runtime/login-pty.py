@@ -5,11 +5,14 @@ import os
 import pty
 import selectors
 import signal
+import struct
 import sys
 import termios
 import time
 
 master, slave = pty.openpty()
+# Wide columns keep the CLI from wrapping the sign-in URL across lines.
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 4096, 0, 0))
 settings = termios.tcgetattr(slave)
 settings[3] &= ~(termios.ECHO | termios.ECHONL)
 termios.tcsetattr(slave, termios.TCSANOW, settings)

@@ -229,10 +229,12 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     }
     if (command.type === "auth") {
       const settled = mailbox.enqueue(message.id, async () => {
+        signal.throwIfAborted();
         started();
         if (session.id !== NATIVE_AUTH_SESSION_ID || !replyHolder || !("create" in behaviour)) throw new TypeError("Invalid native auth request");
         await activate(session, message.id);
         if (!harness?.auth) throw new TypeError("Session harness does not support native auth");
+        signal.throwIfAborted();
         const result = await harness.auth(command.auth, Object.freeze({
           signal: lifetime.signal,
           hold(completion: Promise<unknown>) {
