@@ -9,15 +9,15 @@ import { streamSessionEvents } from "./stream.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** A named App with a typed runtime and its own Workspace namespace. */
-export class App<Message = unknown, Event = never, Reply = never, View = never> {
+export class App<Message = unknown, Event = never, Reply = never, View = unknown> {
   readonly #name: string;
   get name(): string { return this.#name; }
   readonly #connection: AppConnection;
 
-  readonly #sessionRuntime: SessionRuntime<Message, Event, Reply>;
+  readonly #sessionRuntime: SessionRuntime<Message, Event, Reply, View>;
   readonly #runtimeId: string | undefined;
 
-  get runtime(): SessionRuntime<Message, Event, Reply> { return this.#sessionRuntime; }
+  get runtime(): SessionRuntime<Message, Event, Reply, View> { return this.#sessionRuntime; }
 
   constructor(options: AppOptions<Message, Event, Reply, View>, context: ConfigurationContext, profile?: string) {
     if (!options || typeof options.name !== "string" || !SLUG_PATTERN.test(options.name)) throw new TypeError("A valid App name is required");

@@ -33,9 +33,9 @@ export interface CantelopClientOptions {
 }
 
 /** A named App owns its runtime and Workspace namespace. */
-export type AppOptions<Message = unknown, Event = never, Reply = never, View = never> = {
+export type AppOptions<Message = unknown, Event = never, Reply = never, View = unknown> = {
   readonly name: string;
-  readonly runtime: SessionRuntime<Message, Event, Reply>;
+  readonly runtime: SessionRuntime<Message, Event, Reply, View>;
   readonly webhooks?: WebhookRoutes<Message, Event, Reply, View>;
   /** Optional GET/HEAD handler for the App root. */
   readonly homepage?: HomepageHandler<Message, Event, Reply, View>;

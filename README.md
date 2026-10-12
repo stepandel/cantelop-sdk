@@ -130,3 +130,39 @@ Package qualification checks the actual npm tarball, removed exports/files, gene
 All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope at `POST /commands`. The Edge interprets each operation through its own handler; Edge ↔ Sandbox remains the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
 
 For a runnable browser and server integration, see [the web chat example](examples/web-chat/README.md).
+
+### Priority intake and durable Session views
+
+`session.steer(message)` gives queued intake priority while preserving FIFO within
+each priority. Active intake continues. Both dispatch and steer return a message
+reference; use its ID with `session.cancel(id)` to cancel queued intake or request
+cooperative cancellation of running intake. A `requested` receipt acknowledges
+the request, while `cancelled` or `settled` describe terminal intake. Detached
+activity and Session stop keep their existing lifecycles.
+
+The runtime explicitly commits the application's read model:
+
+```ts
+async function receive(context: SessionContext<Message, Event, Reply, State>) {
+  const state = await updateApplicationState(context.message.payload);
+  await context.view.commit(state);
+  context.reply(state);
+}
+```
+
+`view.commit` resolves after the platform stores the projection and its atomic
+event boundary. Customer code owns application state and recovery; committing a
+view does not replace the application's database or replay its runtime closures.
+
+```ts
+const snapshot = await session.view();
+render(snapshot.state);
+for await (const event of session.stream({ after: snapshot.cursor })) {
+  apply(event.data);
+}
+```
+
+A view read never opens a Workspace or activates a Sandbox. A missing projection
+returns `session_view_not_found`. Views survive stop and host restart; stream
+resume remains subject to the platform's bounded replay retention. Projection
+commits advance the stream cursor without appearing as application events.

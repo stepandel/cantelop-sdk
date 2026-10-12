@@ -61,7 +61,7 @@ export interface SessionRuntimeManifest extends AppDeploymentConfiguration {
   readonly session_runtime_id: string;
   readonly app_name: string;
   /** Advertised only after coordinated actor scheduling, attribution and projection support. */
-  readonly capabilities: Readonly<{ priority: false; messageCancellation: false; durableView: false }>;
+  readonly capabilities: Readonly<{ priority: true; messageCancellation: true; durableView: true }>;
   readonly database_schema?: ApplicationDatabaseSchema;
 }
 
@@ -214,7 +214,7 @@ async function writeSessionManifest(outdir: string, schemaPath: string, runtimeI
     app_name: appName,
     ...(configuration.environment === undefined ? {} : { environment: configuration.environment }),
     ...(configuration.dockerfile === undefined ? {} : { dockerfile: configuration.dockerfile }),
-    capabilities: Object.freeze({ priority: false, messageCancellation: false, durableView: false }),
+    capabilities: Object.freeze({ priority: true, messageCancellation: true, durableView: true }),
     ...(databaseSchema === undefined ? {} : { database_schema: databaseSchema }),
   });
   await writeFile(path.join(outdir, SESSION_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8" });

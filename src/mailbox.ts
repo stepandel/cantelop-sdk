@@ -1,5 +1,5 @@
 /**
- * Activation-local FIFO mailbox. Completed results remain cached for the
+ * Activation-local priority mailbox. Completed results remain cached for the
  * lifetime of the mailbox so retrying the same message ID does not invoke the
  * receiver again.
  */
@@ -32,7 +32,8 @@ type MailboxObserver = (event: MailboxEvent) => void;
 
 export class InMemoryMailbox<Output> {
   private readonly results = new Map<string, Promise<Output>>();
-  private tail: Promise<void> = Promise.resolve();
+  private running = false;
+  private readonly queue: { priority: string; run: () => Promise<void> }[] = [];
   private pending = 0;
   private nextSequence = 1;
 
@@ -41,7 +42,7 @@ export class InMemoryMailbox<Output> {
     private readonly stateChanged: () => void = () => undefined,
   ) {}
 
-  enqueue(id: string, receive: (sequence: number) => Promise<Output>): Promise<Output> {
+  enqueue(id: string, receive: (sequence: number) => Promise<Output>, priority: "normal" | "priority" = "normal"): Promise<Output> {
     const existing = this.results.get(id);
     if (existing !== undefined) {
       this.observe(Object.freeze({ type: "deduplicated", messageId: id }));
@@ -58,7 +59,10 @@ export class InMemoryMailbox<Output> {
       sequence,
       depth: this.pending,
     }));
-    const result = this.tail.then(async () => {
+    let resolve!: (value: Output) => void;
+    let reject!: (error: unknown) => void;
+    const result = new Promise<Output>((yes, no) => { resolve = yes; reject = no; });
+    const run = async () => {
       const startedAt = process.hrtime.bigint();
       this.observe(Object.freeze({
         type: "handling",
@@ -75,7 +79,7 @@ export class InMemoryMailbox<Output> {
           sequence,
           handlingMicroseconds: microsecondsBetween(startedAt, process.hrtime.bigint()),
         }));
-        return output;
+        resolve(output);
       } catch (error) {
         this.observe(Object.freeze({
           type: "failed",
@@ -83,19 +87,25 @@ export class InMemoryMailbox<Output> {
           sequence,
           handlingMicroseconds: microsecondsBetween(startedAt, process.hrtime.bigint()),
         }));
-        throw error;
+        reject(error);
       }
-    });
+    };
     this.results.set(id, result);
-    this.tail = result.then(
-      () => undefined,
-      () => undefined,
-    );
+    this.queue.push({ priority, run });
+    queueMicrotask(() => this.drain());
     void result.then(
       () => this.settle(),
       () => this.settle(),
     );
     return result;
+  }
+
+  private drain(): void {
+    if (this.running || this.queue.length === 0) return;
+    this.running = true;
+    const priorityIndex = this.queue.findIndex(entry => entry.priority === "priority");
+    const entry = this.queue.splice(priorityIndex < 0 ? 0 : priorityIndex, 1)[0]!;
+    void entry.run().finally(() => { this.running = false; this.drain(); });
   }
 
   get isIdle(): boolean {

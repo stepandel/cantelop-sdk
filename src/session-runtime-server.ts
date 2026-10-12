@@ -128,6 +128,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         cancel(reason?: unknown) { return activity.cancel(reason); },
       }),
       // Platform output is Message-addressed; restored work reports under the activating Message.
+      view: Object.freeze({commit:(state: unknown) => outputBuffer.publish(messageId,state,AbortSignal.any([lifetime.signal,AbortSignal.timeout(30_000)]),true)}),
       output: Object.freeze({
         send: (event: Event) => outputBuffer.publish(messageId, event, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)])),
       }),
@@ -149,6 +150,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     signal: AbortSignal,
     started: () => void,
     replyRequested = false,
+    priority: "normal" | "priority" = "normal",
   ): RuntimeDelivery => {
     const generation = quiescence.observeMessage(message.id);
     const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
@@ -202,6 +204,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         const context = Object.freeze({
           signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
           activity: activityCapability, output, reply, send, database,
+          view: Object.freeze({commit:(state: unknown) => { if(!invocationOpen) throw new Error("Session invocation settled");return outputBuffer.publish(message.id,state,AbortSignal.any([signal,AbortSignal.timeout(30_000)]),true); }}),
         });
         await runWithRuntimeLogContext(observer, async () => {
           await activate(session, message.id);
@@ -213,7 +216,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         invocationOpen = false;
         outputOpen = false;
       }
-    });
+    }, priority);
     return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
   };
 
@@ -270,6 +273,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         signal,
         database,
         recovery: Object.freeze({ id: recoveryId, interruptedMessageId }),
+        view: Object.freeze({commit:(state: unknown) => { if(!invocationOpen) throw new Error("Session recovery settled");return outputBuffer.publish(interruptedMessageId,state,AbortSignal.any([signal,AbortSignal.timeout(30_000)]),true); }}),
         session,
         env: options.env ?? process.env,
         activity: activityCapability,
@@ -388,6 +392,7 @@ async function handleRequest<Input>(
     trace: RuntimeTraceContext | undefined,
     signal: AbortSignal, started: () => void,
     replyRequested?: boolean,
+    priority?: "normal" | "priority",
   ) => RuntimeDelivery,
   quiescence: RuntimeQuiescence,
   outputBuffer: SessionOutputBuffer,
@@ -410,7 +415,7 @@ async function handleRequest<Input>(
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
     writeJSON(response, 200, {
       sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
-      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true, redelivery: redeliverySupported },
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true, redelivery: redeliverySupported, priority: true, messageCancellation: true, durableView: true },
       observations: observationBuffer.metadata(), events: outputBuffer.metadata()
     });
     return;
@@ -462,8 +467,9 @@ async function handleRequest<Input>(
   const session = readSession(envelope.session);
   const trace = readObservabilityContext(envelope.observability);
   bindSession(session);
+  if (envelope.priority !== undefined && envelope.priority !== "normal" && envelope.priority !== "priority") throw new ProtocolError(400, "invalid_priority");
   const replyRequested = envelope.reply === true;
-  const result = messages.admit(message.id, { message, session, reply: replyRequested }, (signal, started) => receiveMessage(message, session, trace, signal, started, replyRequested), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
+  const result = messages.admit(message.id, { message, session, reply: replyRequested, priority: envelope.priority ?? "normal" }, (signal, started) => receiveMessage(message, session, trace, signal, started, replyRequested, envelope.priority === "priority" ? "priority" : "normal"), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
   writeJSON(response, 202, result.receipt);
 }
 
@@ -555,6 +561,7 @@ export async function handleOutputRequest(
         cursor: event.cursor,
         message_id: event.messageId,
         event: event.event,
+        ...(event.view === undefined ? {} : {view: event.view}),
       })),
     });
   } catch (error) {
@@ -687,7 +694,7 @@ function isJSONContentType(value: string | undefined): boolean {
 
 function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return keys.every(key => ["session", "message", "observability", "deadline", "reply"].includes(key)) &&
+  return keys.every(key => ["session", "message", "observability", "deadline", "reply", "priority"].includes(key)) &&
     (value.deadline === undefined || typeof value.deadline === "string") &&
     (value.reply === undefined || typeof value.reply === "boolean") &&
     keys.includes("session") && keys.includes("message") &&

@@ -28,7 +28,13 @@ export interface SessionActivity<Message, Event> {
   cancel(reason?: unknown): boolean;
 }
 
-export interface SessionContext<Message, Event = never, Reply = never> {
+export interface SessionViewWriter<View = unknown> {
+  /** Resolves after the platform durably commits state and its event boundary. */
+  commit(state: View): Promise<void>;
+}
+
+export interface SessionContext<Message, Event = never, Reply = never, View = unknown> {
+  readonly view: SessionViewWriter<View>;
   readonly signal: AbortSignal;
   readonly message: Readonly<{
     id: string;
@@ -46,6 +52,7 @@ export interface SessionContext<Message, Event = never, Reply = never> {
 }
 
 export interface SessionRecoveryContext<Message, Event = never> {
+  readonly view: SessionViewWriter;
   readonly signal: AbortSignal;
   readonly recovery: Readonly<{
     id: string;
@@ -64,12 +71,12 @@ export type SessionActivationContext<Message, Event = never> = Omit<
   SessionContext<Message, Event, never>, "message" | "reply"
 >;
 
-export interface SessionBehaviour<Message, Event = never, Reply = never> {
+export interface SessionBehaviour<Message, Event = never, Reply = never, View = unknown> {
   /** Opt in only when intake is idempotent across process loss using message.id. */
   readonly redelivery?: boolean;
   onActivate?(context: SessionActivationContext<Message, Event>): Awaitable<void>;
   /** Successful return acknowledges intake. Commit durable work before returning. */
-  receive(context: SessionContext<Message, Event, Reply>): Awaitable<void>;
+  receive(context: SessionContext<Message, Event, Reply, View>): Awaitable<void>;
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }
 

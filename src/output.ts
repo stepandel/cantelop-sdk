@@ -7,6 +7,7 @@ export interface BufferedOutputEvent {
   readonly cursor: number;
   readonly messageId: string;
   readonly event: unknown;
+  readonly view?: unknown;
 }
 
 interface PendingOutputEvent extends BufferedOutputEvent {
@@ -24,7 +25,7 @@ export class SessionOutputBuffer {
   private delivered = 0;
   private pendingBytes = 0;
 
-  async publish(messageId: string, event: unknown, signal?: AbortSignal): Promise<void> {
+  async publish(messageId: string, event: unknown, signal?: AbortSignal, projection = false): Promise<void> {
     const encoded = encodeEvent(event);
     const bytes = Buffer.byteLength(encoded);
     if (bytes > MAX_EVENT_BYTES) {
@@ -50,7 +51,8 @@ export class SessionOutputBuffer {
       this.events.push({
         cursor: this.nextCursor++,
         messageId,
-        event: JSON.parse(encoded) as unknown,
+        event: projection ? null : JSON.parse(encoded) as unknown,
+        ...(projection ? {view: JSON.parse(encoded)} : {}),
         bytes,
         resolve: () => { signal?.removeEventListener("abort", abort); resolve(); },
       });
@@ -78,8 +80,8 @@ export class SessionOutputBuffer {
         .slice(0, MAX_BATCH_EVENTS);
       if (available.length > 0) {
         this.delivered = Math.max(this.delivered, available.at(-1)!.cursor);
-        return available.map(({ cursor, messageId, event }) =>
-          Object.freeze({ cursor, messageId, event })
+        return available.map(({ cursor, messageId, event, view }) =>
+          Object.freeze({ cursor, messageId, event, ...(view === undefined ? {} : {view}) })
         );
       }
       if (!wait) return [];

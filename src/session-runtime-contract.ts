@@ -1,7 +1,7 @@
 import type { SessionBehaviour } from "./session.js";
 
 /** Handler implementation compiled into the Sandbox artifact. */
-export type SessionRuntime<Message = unknown, Event = never, Reply = never> = SessionBehaviour<Message, Event, Reply>;
+export type SessionRuntime<Message = unknown, Event = never, Reply = never, View = unknown> = SessionBehaviour<Message, Event, Reply, View>;
 
 /** Internal compiler metadata; never a developer supplied runtime option. */
 export const RUNTIME_ID = Symbol.for("dev.cantelop.sdk.compiled-runtime.v1");
