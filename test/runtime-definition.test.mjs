@@ -82,11 +82,11 @@ test("compiler splits imports and closures without executing runtime code; all a
 test("compiler enforces contextual payload, output, lifecycle and reply contracts", async t => {
   const {definition, outdir} = await project(t);
   const prefix = `import { CantelopClient } from ${JSON.stringify(clientModule)}; export default new CantelopClient().app<{prompt:string},{text:string},{answer:string}>({ name: "first-agent",runtime:`;
-  for (const runtime of ['{}', '{receive:42}', '{receive() {}, onActivate:3}', '{receive(ctx) {ctx.output.send({wrong:true});}}', '{receive(ctx) {ctx.reply({wrong:true});}}', '{receive(ctx) {ctx.message.payload.wrong;}}', '{receive(ctx: {message:{payload:{other:number}}}) {}}']) {
+  for (const runtime of ['{}', '{receive:42}', '{receive() {}, steer() {}}', '{receive(ctx) {ctx.activity.queue(() => undefined, {onSteer(message) {message.wrong;}});}}', '{receive(ctx) {ctx.activity.steer({wrong:true});}}', '{receive(ctx) {ctx.activity.queue(({output}) => output.send({wrong:true}));}}', '{receive() {}, onActivate:3}', '{receive(ctx) {ctx.output.send({wrong:true});}}', '{receive(ctx) {ctx.reply({wrong:true});}}', '{receive(ctx) {ctx.message.payload.wrong;}}', '{receive(ctx: {message:{payload:{other:number}}}) {}}']) {
     await writeFile(definition, prefix + runtime + '});');
     await assert.rejects(buildEdgeApi({definition, outdir}), /Invalid Session runtime/);
   }
-  await writeFile(definition, prefix + '{receive(ctx) {ctx.output.send({text:ctx.message.payload.prompt}); ctx.reply({answer:"ok"});}, onActivate() {}, onRecover() {}, redelivery:true}});');
+  await writeFile(definition, prefix + '{receive(ctx) {ctx.output.send({text:ctx.message.payload.prompt}); ctx.reply({answer:"ok"});ctx.activity.queue(({output}) => output.send({text:"queued"}), {onSteer(message) {message.prompt;}});}, onActivate() {}, onRecover() {}, redelivery:true}});');
   await buildSessionRuntime({definition,outdir});
 });
 

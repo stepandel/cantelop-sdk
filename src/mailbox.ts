@@ -1,5 +1,5 @@
 /**
- * Activation-local FIFO work mailbox. Completed results remain cached for the
+ * Activation-local FIFO intake mailbox. Completed results remain cached for the
  * lifetime of the mailbox so retrying the same message ID does not invoke the
  * receiver again.
  */
@@ -35,7 +35,6 @@ export class InMemoryMailbox<Output> {
   private running = false;
   private readonly queue: {
     id: string;
-    priority: boolean;
     reject: (error: unknown) => void;
     run: () => Promise<void>;
   }[] = [];
@@ -50,11 +49,6 @@ export class InMemoryMailbox<Output> {
   enqueue(
     id: string,
     receive: (sequence: number) => Promise<Output>,
-    options: {
-      priority?: boolean;
-      beforeReceive?: () => Promise<void>;
-      afterReceive?: () => Promise<void>;
-    } = {},
   ): Promise<Output> {
     const existing = this.results.get(id);
     if (existing !== undefined) {
@@ -81,12 +75,6 @@ export class InMemoryMailbox<Output> {
       reject = no;
     });
     const run = async () => {
-      try {
-        if (options.beforeReceive) await options.beforeReceive();
-      } catch (error) {
-        reject(error);
-        return;
-      }
       const startedAt = process.hrtime.bigint();
       this.observe(
         Object.freeze({
@@ -111,7 +99,6 @@ export class InMemoryMailbox<Output> {
           }),
         );
         resolve(output);
-        if (options.afterReceive) await options.afterReceive();
       } catch (error) {
         this.observe(
           Object.freeze({
@@ -128,7 +115,7 @@ export class InMemoryMailbox<Output> {
       }
     };
     this.results.set(id, result);
-    this.queue.push({ id, priority: options.priority ?? false, reject, run });
+    this.queue.push({ id, reject, run });
     queueMicrotask(() => this.drain());
     void result.then(
       () => this.settle(),
@@ -148,8 +135,7 @@ export class InMemoryMailbox<Output> {
   private drain(): void {
     if (this.running || this.queue.length === 0) return;
     this.running = true;
-    const index = this.queue.findIndex((entry) => entry.priority);
-    const entry = this.queue.splice(index < 0 ? 0 : index, 1)[0]!;
+    const entry = this.queue.shift()!;
     void entry.run().finally(() => {
       this.running = false;
       this.drain();

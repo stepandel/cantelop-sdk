@@ -22,10 +22,27 @@ export type SessionActivityFunction<Message, Event> = (
   context: SessionActivityContext<Message, Event>,
 ) => Awaitable<void>;
 
+export interface SessionActivityOptions<Message> {
+  readonly timeoutMs?: number;
+  /** Adapter for delivering input to this activity's live harness. */
+  readonly onSteer?: (message: Message) => Awaitable<void>;
+}
+
+export interface SessionActivityQueueOptions<Message> extends SessionActivityOptions<Message> {
+  /** Overtake waiting ordinary work, preserving FIFO within each priority. */
+  readonly priority?: boolean;
+}
+
 export interface SessionActivity<Message, Event> {
   readonly active: boolean;
-  start(work: SessionActivityFunction<Message, Event>, policy?: { timeoutMs?: number }): void;
- extend(timeoutMs: number): void;
+  /** Starts immediately; rejects while another activity or queued work owns the slot. */
+  start(work: SessionActivityFunction<Message, Event>, options?: SessionActivityOptions<Message>): void;
+  /** Schedules owned work without blocking message intake. */
+  queue(work: SessionActivityFunction<Message, Event>, options?: SessionActivityQueueOptions<Message>): void;
+  /** Delivers input through the active activity's onSteer adapter. */
+  steer(message: Message): Promise<void>;
+  extend(timeoutMs: number): void;
+  /** Cooperatively cancels the current activity; does not clear other queued submissions. */
   cancel(reason?: unknown): boolean;
 }
 
@@ -79,8 +96,6 @@ export interface SessionBehaviour<Message, Event = never, Reply = never, View = 
   onActivate?(context: SessionActivationContext<Message, Event>): Awaitable<void>;
   /** Successful return acknowledges intake. Commit durable work before returning. */
   receive(context: SessionContext<Message, Event, Reply, View>): Awaitable<void>;
-  /** Optional native steering hook; otherwise steer joins the SDK work queue with priority. */
-  steer?(context: SessionContext<Message, Event, Reply, View>): Awaitable<void>;
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }
 

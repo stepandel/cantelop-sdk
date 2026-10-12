@@ -3,7 +3,6 @@ export type RuntimeCommand<Message> =
   | {
       readonly type: "dispatch" | "steer";
       readonly message: Message;
-      readonly waitForActivity?: boolean;
     }
   | { readonly type: "cancel"; readonly messageId: string };
 
@@ -47,7 +46,6 @@ export function decodeRuntimeCommand<Message>(
     return {
       type: command.type,
       message: command.message as Message,
-      waitForActivity: true,
     };
   throw new TypeError("Invalid SDK runtime command");
 }

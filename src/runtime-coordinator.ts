@@ -1,3 +1,4 @@
+import type { ActivityCancellation } from "./activity.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeMessages, RuntimeProtocolError } from "./runtime-messages.js";
 
@@ -7,7 +8,7 @@ export function cancelRuntimeWork(
   targetId: string,
   messages: RuntimeMessages,
   queues: readonly InMemoryMailbox<void>[],
-  activity: { cancelMessage(id: string): boolean },
+  activity: { cancelMessage(id: string): ActivityCancellation },
 ): unknown {
   let receipt;
   try {
@@ -37,7 +38,7 @@ export function cancelRuntimeWork(
       id: commandId,
       messageId: targetId,
       state:
-        (removed || receipt?.state === "queued") && !activityCancelled
+        activityCancelled === "cancelled" || ((removed || receipt?.state === "queued") && !activityCancelled)
           ? "cancelled"
           : "requested",
     };
