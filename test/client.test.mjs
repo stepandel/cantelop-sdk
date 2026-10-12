@@ -5,20 +5,37 @@ const workspaceId = 'wsp_' + '1'.repeat(32);
 const workspace = { id: workspaceId, app_id: 'app_' + '2'.repeat(32), slug: 'customer', hostname: 'customer--agent.app.cantelop.dev', created_at: '2026-10-09T00:00:00Z', updated_at: '2026-10-09T00:00:00Z' };
 const accepted = body => Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
 
-test('Workspace native auth uses a reserved Session and preserves retry IDs', async () => {
-  const calls = [], id = 'msg_' + 'a'.repeat(32);
-  const auth = new CantelopClient().app({ name: 'first-agent', runtime: { create: () => ({ run() {} }) },
-    connection: { async fetch(request) {
-      const body = await request.json(); calls.push(body);
-      return Response.json({ protocolVersion: 2, id: body.id, reply: body.command.auth.type === 'status'
-        ? { type: 'status', authenticated: false }
-        : { type: 'login', method: 'browser-code', attemptId: 'b'.repeat(36), url: 'https://claude.ai/login', expiresAt: '2026-10-12T00:00:00Z' } });
-    } } }).workspace({ slug: 'customer' }).auth();
+test('Workspace auth requires an App declaration, uses a reserved Session and returns a browser terminal', async () => {
+  const calls = [], id = 'msg_' + 'a'.repeat(32), terminalId = 'trm_' + 'c'.repeat(32), ticket = 'd'.repeat(64);
+  const connection = { async fetch(request) {
+    const body = await request.json(); calls.push(body);
+    const auth = body.command.auth;
+    return Response.json({ protocolVersion: 2, id: body.id, reply: auth.type === 'terminal'
+      ? { type: 'terminal', terminalId, ticket, expiresAt: '2026-10-12T00:01:00Z', url: `wss://agent.example/__cantelop/auth/workspaces/wsp_${'1'.repeat(32)}/terminals/${terminalId}` }
+      : auth.type === 'close' ? { type: 'closed', terminalId: auth.terminalId }
+      : { type: 'status', authenticated: false } });
+  } };
+  const client = new CantelopClient();
+  const runtime = { create: () => ({ queue() {}, steer() {}, cancel() { return false; } }) };
+  assert.throws(() => client.app({ name: 'no-auth', runtime, connection }).workspace({ slug: 'customer' }).auth(), /does not declare auth/);
+  assert.throws(() => client.app({ name: 'bad-auth', runtime, connection, auth: { status() {} } }), /status, logout and terminal/);
+  const provider = { status() { return true; }, logout() {}, terminal() { throw new Error('Sandbox only'); } };
+  const auth = client.app({ name: 'first-agent', runtime, connection, auth: provider }).workspace({ slug: 'customer' }).auth();
   assert.equal(await auth.status({ id }), false);
-  assert.equal((await auth.login({ method: 'browser-code' })).type, 'login');
+  const terminal = await auth.terminal();
+  assert.deepEqual({ ...terminal, protocols: [...terminal.protocols] }, {
+    terminalId, url: `wss://agent.example/__cantelop/auth/workspaces/wsp_${'1'.repeat(32)}/terminals/${terminalId}`,
+    protocols: ['cantelop-terminal.v1', ticket], expiresAt: new Date('2026-10-12T00:01:00Z'),
+  });
+  await auth.close({ terminalId });
+  await assert.rejects(auth.close({ terminalId: 'bad' }), /Invalid auth terminal ID/);
+  assert.equal(await auth.logout(), false);
   assert.equal(calls[0].id, id);
-  assert.ok(calls.every(call => call.session.id === 'cantelop-native-auth' && call.command.type === 'auth'));
-  assert.equal(calls[0].command.keepAliveSeconds, 900);
+  assert.deepEqual(calls.map(call => call.command.auth), [{ type: 'status' }, { type: 'terminal' }, { type: 'close', terminalId }, { type: 'logout' }]);
+  assert.ok(calls.every(call => call.session.id === 'cantelop-native-auth' && call.command.type === 'auth' && call.command.keepAliveSeconds === 900));
+  // A compiled backend keeps only a marker; the provider itself stays in the Sandbox bundle.
+  const compiled = client.app({ name: 'compiled', runtime, connection, auth: { [Symbol.for('dev.cantelop.sdk.compiled-auth.v1')]: true } });
+  assert.equal(await compiled.workspace({ slug: 'customer' }).auth().status(), false);
 });
 
 test('references remain lazy, immutable and capture selectors/options; submissions share a payload type', async () => {

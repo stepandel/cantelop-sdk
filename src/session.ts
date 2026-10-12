@@ -104,8 +104,7 @@ export interface SessionBehaviour<Message, Event = never, Reply = never, View = 
 export type { SessionIdentity } from "./resources.js";
 
 export { createSessionDatabase } from "./session-database.js";
-export type { NativeAuthCommand, NativeAuthResult } from "./native-auth.js";
-import type { NativeAuthCommand, NativeAuthResult } from "./native-auth.js";
+export type { AppAuth, AuthContext, AuthTerminalProcess } from "./native-auth.js";
 export type { WorkspaceDatabase, DatabaseCredentials } from "./database.js";
 
 /** Session resources available for constructing one harness per incarnation. */
@@ -122,16 +121,8 @@ export interface SessionHarnessWorkContext<Message, Event = never, View = unknow
   readonly message: Readonly<{ id: string; sequence: number; payload: Message }>;
 }
 
-/** Keeps the auth Sandbox active while a native login process awaits user input. */
-export interface SessionNativeAuthContext {
-  readonly signal: AbortSignal;
-  hold(completion: Promise<unknown>): void;
-}
-
 /** One provider implementation owns input ordering, steering and active-operation cancellation. */
 export interface SessionHarness<Message, Event = never, Reply = never, View = unknown> {
-  /** Optional native authentication for this harness's Workspace. */
-  auth?(command: NativeAuthCommand, context: SessionNativeAuthContext): Awaitable<NativeAuthResult>;
   /** Accepts ordinary input; resolves after that submission's execution and cleanup. */
   queue(message: Message, context: SessionHarnessWorkContext<Message, Event, View>): Awaitable<[Reply] extends [never] ? void : Reply>;
   /** Handles redirection using the harness's own semantics and completion boundary. */

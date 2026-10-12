@@ -235,12 +235,16 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
       webhookModule = webhookBundle.outputFiles![0]!.text;
       for (const input of Object.keys(webhookBundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(input));
     }
-    const runtimeStatements = collect([runtime], true);
+    const authProperty = property("auth");
+    if (authProperty && !(ts.isPropertyAssignment(authProperty) || ts.isShorthandPropertyAssignment(authProperty))) fail("App auth must be an inline or imported provider");
+    const authExpression = authProperty && (ts.isShorthandPropertyAssignment(authProperty) ? authProperty.name : ts.isPropertyAssignment(authProperty) ? authProperty.initializer : undefined);
+    // Auth runs only in the Sandbox, beside the runtime; its dependencies never reach backend or Edge builds.
+    const runtimeStatements = collect([runtime, ...(authProperty ? [authProperty] : [])], true);
     for (const dependency of runtimeStatements) allStatements.add(dependency);
-    for (const dependency of collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty && p !== webhookProperty && p !== homepageProperty)], false)) {
+    for (const dependency of collect([expression.expression, ...argument.properties.filter(p => p !== runtimeProperty && p !== webhookProperty && p !== homepageProperty && p !== authProperty)], false)) {
       backendStatements.add(dependency); allStatements.add(dependency);
     }
-    const runtimeSource = selectedSource(runtimeStatements) + "\nexport default " + print(runtime) + ";\n";
+    const runtimeSource = selectedSource(runtimeStatements) + "\nexport default " + print(runtime) + ";\n" + (authExpression ? "export const auth = " + print(authExpression) + ";\n" : "");
     const bundle = await build({ stdin: { contents: runtimeSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, bundle: true, platform: "node", format: "esm", target: "esnext", conditions: ["bun", "node", "import", "default"], external: ["bun:*"], write: false, metafile: true, minify: false, logLevel: "silent", plugins: [rejectDefinitionImport] });
     const runtimeModule = bundle.outputFiles![0]!.text;
     for (const input of Object.keys(bundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(input));
@@ -248,14 +252,15 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     const id = "rt_" + createHash("sha256").update(name).update((await transform(runtimeModule, { minify: true, legalComments: "none", target: "esnext" })).code).update(contract).update(JSON.stringify(configuration)).digest("hex");
     const replacement = `{receive() { throw new Error("App runtime executes in the Sandbox"); }, [Symbol.for("dev.cantelop.sdk.compiled-runtime.v1")]: ${JSON.stringify(id)}}`;
     const statementText = statement.getText(file);
-    const edits = [{ node: runtime, text: replacement }, ...(webhookExpression ? [{ node: webhookExpression, text: "{}" }] : []), ...(homepageProperty ? [{ node: homepageProperty, text: "homepage: undefined" }] : [])];
+    const edits = [{ node: runtime, text: replacement }, ...(webhookExpression ? [{ node: webhookExpression, text: "{}" }] : []), ...(homepageProperty ? [{ node: homepageProperty, text: "homepage: undefined" }] : []),
+      ...(authProperty ? [{ node: authProperty, text: `auth: {[Symbol.for("dev.cantelop.sdk.compiled-auth.v1")]: true}` }] : [])];
     let backendStatement = statementText;
     for (const edit of edits.sort((a, b) => b.node.getStart(file) - a.node.getStart(file))) {
       const start = edit.node.getStart(file) - statement.getStart(file);
       backendStatement = backendStatement.slice(0, start) + edit.text + backendStatement.slice(edit.node.end - statement.getStart(file));
     }
     replacements.set(statement, backendStatement);
-    apps.push({ definition: { id, name, ...configuration }, entrypoint: filename, runtimeModule, webhookModule, webhookRoutes, hasHomepage: !!homepageProperty });
+    apps.push({ definition: { id, name, ...configuration, ...(authProperty ? { auth: true as const } : {}) }, entrypoint: filename, runtimeModule, webhookModule, webhookRoutes, hasHomepage: !!homepageProperty });
   }
   for (const statement of file.statements) {
     if (ts.isImportDeclaration(statement) && !statement.importClause || ts.isExpressionStatement(statement)) fail("App definitions cannot contain top-level side effects; move them into a runtime dependency");

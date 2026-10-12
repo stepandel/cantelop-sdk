@@ -80,3 +80,22 @@ test('Bun SDK process death makes inspection unreachable', {skip:!process.versio
  await assert.rejects(fetch(url+'runtime',{headers}));
  assert.equal(child.signalCode,'SIGKILL');
 });
+
+test('Bun: auth terminal attaches, relays input and ends with the login process',{skip:!process.versions.bun,timeout:10000},async t=>{
+ const {spawn}=await import('node:child_process');
+ const auth={status:()=>false,logout(){},terminal:()=>spawn(process.execPath,['-e',"console.log('login-ready');process.stdin.on('data',d=>{console.log('got:'+String(d).trim());process.exit(0)})"],{stdio:['pipe','pipe','ignore']})};
+ const server=createServer(createSessionRuntimeHandler({receive(){}},{sandboxId:sandbox,auth}));
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ t.after(()=>{server.closeAllConnections();server.close();});
+ const base=`http://127.0.0.1:${server.address().port}`, headers={'X-Cantelop-Sandbox-ID':sandbox};
+ const id='msg_'+'4'.repeat(32);
+ await fetch(`${base}/__cantelop/v2/messages`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({session:{id:'cantelop-native-auth',workspace_id:'wsp_'+'3'.repeat(32),keep_alive_seconds:600},message:{id,payload:{__cantelop_command:2,type:'auth',auth:{type:'terminal'}}},reply:true})});
+ await until(async()=> (await(await fetch(`${base}/__cantelop/v2/messages/${id}`,{headers})).json()).state==='succeeded');
+ const terminal=(await(await fetch(`${base}/__cantelop/v2/messages/${id}/reply`,{headers})).json()).reply;
+ const route=op=>`${base}/__cantelop/v2/runtime/auth/terminals/${terminal.terminalId}/${op}`, ticket={...headers,'X-Cantelop-Terminal-Ticket':terminal.ticket};
+ const attached=await fetch(route('attach'),{method:'POST',headers:ticket});
+ assert.equal(attached.status,200);
+ const reader=attached.body.getReader(); let text='', sent=false;
+ for(;;){const {done,value}=await reader.read(); if(done)break; text+=Buffer.from(value).toString(); if(!sent&&text.includes('login-ready')){sent=true;assert.equal((await fetch(route('input'),{method:'POST',headers:ticket,body:'from-browser\n'})).status,204);}}
+ assert.match(text,/got:from-browser/);
+});

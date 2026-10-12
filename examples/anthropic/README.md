@@ -21,22 +21,19 @@ Cancellation sends SIGTERM and escalates to SIGKILL after one second. Cleanup al
 
 ## Native authentication and state
 
-The App exposes the stock Claude Code login through `workspace.auth()`. Resolve the Workspace from your verified user identity, then offer the returned URL and accept the code in your own API/UI:
+The App declares `auth: claudeAuth` ([src/auth.ts](src/auth.ts)), so each Workspace can sign in to Claude with the user's own subscription. Resolve the Workspace from your verified user identity, then hand the returned terminal to that user's browser:
 
 ```ts
 const auth = app.workspace({ slug: verifiedUserWorkspace }).auth();
-const methods = await auth.methods(); // ["browser-code"]
-const authenticated = await auth.status();
-const attempt = await auth.login({ method: "browser-code" });
-if (attempt.type === "login") {
-  // Show attempt.url, then collect the code from the user.
-  await auth.submit({ attemptId: attempt.attemptId, code });
+if (!await auth.status()) {
+  const { url, protocols } = await auth.terminal();
+  // Browser: new WebSocket(url, protocols), rendered with a terminal such as xterm.js.
 }
 ```
 
-`auth.login()` returns `{ type: "status", authenticated: true }` when the user is already signed in. Use `auth.cancel({ attemptId })` to stop an unfinished login and `auth.logout()` to run the native logout and verify its result. An attempt expires after ten minutes and is lost if its Sandbox is replaced; start another login in that case. The SDK uses one reserved auth Session per Workspace, so agent Sessions share the resulting credentials. Retrying an ambiguous call with the same `{ id }` preserves its command identity.
+The browser shows the stock `claude auth login` in its own PTY. The user opens Anthropic's sign-in page and pastes the code into the CLI. Every sign-in method the CLI offers stays available. Your backend and the Session never see the code or the credentials. Afterwards, `auth.status()` reports the result. `auth.close({ terminalId })` ends an unfinished login, and `auth.logout()` runs the native logout. See [native auth](../../docs/native-auth.md) for the browser snippet, lifecycle and protocol.
 
-The adapter invokes Claude's own `auth status`, `auth login`, and `auth logout`. A private PTY relay supports interactive login; raw terminal output and code input are never published as Session events. The adapter does not collect tokens or inject inherited API keys. Native credentials remain under the Workspace's `.claude` directory. The child environment is scoped to the Workspace; the host's auth/config environment is unchanged.
+The provider runs Claude's own `auth status`, `auth login` and `auth logout` with the Workspace-scoped environment. `runtime/login-pty.py` gives the CLI a real terminal, applies resizes, and relays bytes without recording them. Native credentials remain under the Workspace's `.claude` directory, so every Session in the Workspace uses them. The adapter does not inject inherited API keys, and the host's auth/config environment is unchanged.
 
 Claude owns `/workspace/.claude`, including native login and conversation files. The adapter allocates a native conversation UUID, saves it, and marks it resumable when Claude emits `system/init`. Subsequent turns use `--resume` for that same conversation.
 

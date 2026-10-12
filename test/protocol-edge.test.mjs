@@ -15,23 +15,54 @@ const request = (body, headers = {}) => new Request('https://agent.example/comma
 });
 const accepted = id => Response.json({ id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
 
-test('native auth routes through a Workspace-bound request with a reserved Session', async () => {
-  const calls = [];
-  const worker = createProtocolWorker({ runtimeId: 'test.v1', fetch: async req => {
+test('auth commands route through a Workspace-bound request with a reserved Session', async () => {
+  const calls = [], terminalId = 'trm_' + '3'.repeat(32);
+  const platform = async req => {
     calls.push(req.clone());
     if (req.url.endsWith('/workspaces/open')) return Response.json({ id: workspaceId, slug: 'customer' });
-    return Response.json({ id: messageId, reply: { type: 'status', authenticated: false } });
-  } });
+    const payload = (await req.clone().json()).message.payload;
+    return Response.json({ id: messageId, reply: payload.auth.type === 'terminal'
+      ? { type: 'terminal', terminalId, ticket: '4'.repeat(64), expiresAt: '2026-10-12T00:01:00Z' }
+      : { type: 'status', authenticated: false } });
+  };
   const body = { ...envelope({ type: 'auth', auth: { type: 'status' }, timeoutMs: 45_000, keepAliveSeconds: 900 }), session: { id: 'cantelop-native-auth' } };
+  const undeclared = createProtocolWorker({ runtimeId: 'test.v1', fetch: platform });
+  const refused = await undeclared.fetch(request(body), bindings);
+  assert.equal(refused.status, 404);
+  assert.deepEqual(await refused.json(), { error: { code: 'auth_not_configured' } });
+  assert.equal(calls.length, 0);
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', auth: true, fetch: platform });
   const response = await worker.fetch(request(body), bindings);
   assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).reply, { type: 'status', authenticated: false });
   const delivered = await calls.at(-1).json();
   assert.equal(new URL(calls.at(-1).url).pathname, '/__cantelop/integration/v2/requests');
   assert.deepEqual(delivered.message.payload, { __cantelop_command: 2, type: 'auth', auth: { type: 'status' } });
   assert.equal(delivered.session.workspace_id, workspaceId);
   assert.equal(delivered.session.keep_alive_seconds, 900);
+  const terminal = await worker.fetch(request({ ...body, command: { ...body.command, auth: { type: 'terminal' } } }), bindings);
+  assert.equal((await terminal.json()).reply.url, `wss://agent.example/__cantelop/auth/workspaces/${workspaceId}/terminals/${terminalId}`);
   assert.equal((await worker.fetch(request(envelope(body.command)), bindings)).status, 400);
-  assert.equal((await worker.fetch(request({ ...body, command: { ...body.command, auth: { type: 'submit', attemptId: 'bad', code: 'secret' } } }), bindings)).status, 400);
+  for (const auth of [{ type: 'submit', attemptId: 'bad', code: 'secret' }, { type: 'login', method: 'browser-code' }, { type: 'close', terminalId: 'bad' }])
+    assert.equal((await worker.fetch(request({ ...body, command: { ...body.command, auth } }), bindings)).status, 400);
+});
+
+test('the browser terminal route forwards only the WebSocket handshake to the auth Sandbox', async () => {
+  const calls = [], terminalId = 'trm_' + '5'.repeat(32);
+  const path = `/__cantelop/auth/workspaces/${workspaceId}/terminals/${terminalId}`;
+  const upgrade = (headers = {}) => new Request(`https://agent.example${path}`, { headers: {
+    Upgrade: 'websocket', Connection: 'Upgrade', 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Version': '13',
+    'Sec-WebSocket-Protocol': `cantelop-terminal.v1, ${'6'.repeat(64)}`, Cookie: 'session=browser', Authorization: 'Bearer user', ...headers } });
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', auth: true, fetch: async req => { calls.push(req); return new Response(null, { status: 200 }); } });
+  assert.equal((await worker.fetch(upgrade(), {})).status, 200);
+  const forwarded = calls[0];
+  assert.equal(forwarded.url, `https://runtime.cantelop.internal/__cantelop/integration/v2/sessions/cantelop-native-auth/auth/terminals/${terminalId}?workspace_id=${workspaceId}`);
+  assert.deepEqual([...forwarded.headers.keys()].sort(), ['connection', 'sec-websocket-key', 'sec-websocket-protocol', 'sec-websocket-version', 'upgrade']);
+  assert.equal((await worker.fetch(upgrade({ Upgrade: 'h2c' }), {})).status, 426);
+  assert.equal((await worker.fetch(new Request(`https://agent.example/__cantelop/auth/workspaces/${workspaceId}/terminals/trm_bad`), bindings)).status, 401);
+  const undeclared = createProtocolWorker({ runtimeId: 'test.v1', fetch: async req => { calls.push(req); return new Response(null); } });
+  assert.equal((await undeclared.fetch(upgrade(), {})).status, 404);
+  assert.equal(calls.length, 1);
 });
 
 test('protocol Worker fails closed on auth, old routes, invalid commands and oversized input before private routing', async () => {

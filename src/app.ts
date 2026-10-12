@@ -4,7 +4,7 @@ import { AppConfigurationError, type ConfigurationContext } from "./app-config.j
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
 import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, SessionCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector } from "./integration.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
-import { NATIVE_AUTH_SESSION_ID, type NativeAuthCommand, type NativeAuthResult } from "./native-auth.js";
+import { AUTH_SESSION_ID, AUTH_TERMINAL_PROTOCOL, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
@@ -17,6 +17,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
 
   readonly #sessionRuntime: SessionRuntime<Message, Event, Reply, View>;
   readonly #runtimeId: string | undefined;
+  readonly #auth: boolean;
 
   get runtime(): SessionRuntime<Message, Event, Reply, View> { return this.#sessionRuntime; }
 
@@ -27,6 +28,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
     this.#sessionRuntime = Object.freeze({ ...options.runtime });
     this.#runtimeId = (options.runtime as unknown as Record<symbol, string>)[RUNTIME_ID];
     this.#connection = resolveEdgeConnection(options, context, profile);
+    this.#auth = options.auth !== undefined;
   }
 
   workspace(input: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View> {
@@ -48,6 +50,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
       return validateCommand(JSON.parse(serialized));
     }
     const selector = workspaceSelector(input);
+    const authDeclared = this.#auth;
     let pending: Promise<Workspace> | undefined;
     const workspaceCommand = (type: "workspace.resolve" | "workspace.database", workspace = selector) => send({ protocolVersion: 2, id: messageID(), workspace, session: null, command: { type } });
     function resolve(): Promise<Workspace> {
@@ -66,54 +69,43 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
       selector, resolve,
       async database() { return (await resolve()).database(); },
       auth() {
-        const requestAuth = async (auth: NativeAuthCommand, options: SessionCommandOptions = {}): Promise<NativeAuthResult> => {
+        if (!authDeclared) throw new TypeError("App does not declare auth");
+        const requestAuth = async (auth: AuthCommand, options: SessionCommandOptions = {}): Promise<AuthResult> => {
           const id = options.id ?? messageID(); assertMessageID(id);
           const envelope = prepare({ protocolVersion: 2, id, workspace: selector,
-            session: { id: NATIVE_AUTH_SESSION_ID }, command: { type: "auth", auth, timeoutMs: 120_000, keepAliveSeconds: 900 } });
+            session: { id: AUTH_SESSION_ID }, command: { type: "auth", auth, timeoutMs: 120_000, keepAliveSeconds: 900 } });
           let value: unknown;
           try { value = await send(envelope, options.signal); }
           catch (error) { throw submissionError(error, id, options.signal); }
           if (!record(value) || value.protocolVersion !== 2 || value.id !== id || !record(value.reply) || typeof value.reply.type !== "string")
             throw new RemoteAppError("invalid_auth_response", 0, id);
-          return value.reply as NativeAuthResult;
+          return value.reply as AuthResult;
+        };
+        const status = (value: AuthResult) => {
+          if (value.type !== "status" || typeof value.authenticated !== "boolean") throw new RemoteAppError("invalid_auth_response", 0);
+          return value.authenticated;
         };
         return Object.freeze({
-          async methods(options?: SessionCommandOptions) {
-            const value = await requestAuth({ type: "methods" }, options);
-            if (value.type !== "methods" || !Array.isArray(value.methods) || !value.methods.every(method => typeof method === "string")) throw new RemoteAppError("invalid_auth_response", 0);
-            return value.methods;
+          async status(options?: SessionCommandOptions) { return status(await requestAuth({ type: "status" }, options)); },
+          async terminal(options?: SessionCommandOptions) {
+            const value = await requestAuth({ type: "terminal" }, options) as AuthResult & { url?: unknown };
+            if (value.type !== "terminal" || typeof value.terminalId !== "string" || !TERMINAL_ID_PATTERN.test(value.terminalId) ||
+                typeof value.ticket !== "string" || !TERMINAL_TICKET_PATTERN.test(value.ticket) ||
+                typeof value.url !== "string" || !/^wss?:\/\//.test(value.url) || !Number.isFinite(Date.parse(value.expiresAt))) throw new RemoteAppError("invalid_auth_response", 0);
+            return Object.freeze({ terminalId: value.terminalId, url: value.url, protocols: Object.freeze([AUTH_TERMINAL_PROTOCOL, value.ticket] as const), expiresAt: new Date(value.expiresAt) });
           },
-          async status(options?: SessionCommandOptions) {
-            const value = await requestAuth({ type: "status" }, options);
-            if (value.type !== "status" || typeof value.authenticated !== "boolean") throw new RemoteAppError("invalid_auth_response", 0);
-            return value.authenticated;
+          async close(options: { readonly terminalId: string } & SessionCommandOptions) {
+            if (typeof options?.terminalId !== "string" || !TERMINAL_ID_PATTERN.test(options.terminalId)) throw new TypeError("Invalid auth terminal ID");
+            const value = await requestAuth({ type: "close", terminalId: options.terminalId }, options);
+            if (value.type !== "closed" || value.terminalId !== options.terminalId) throw new RemoteAppError("invalid_auth_response", 0);
           },
-          async login(options: { readonly method: string; readonly force?: boolean } & SessionCommandOptions) {
-            const value = await requestAuth({ type: "login", method: options.method, ...(options.force === undefined ? {} : { force: options.force }) }, options);
-            if (value.type === "status" && typeof value.authenticated === "boolean") return value;
-            if (value.type === "login" && typeof value.attemptId === "string" && typeof value.method === "string" && typeof value.url === "string" && typeof value.expiresAt === "string") return value;
-            throw new RemoteAppError("invalid_auth_response", 0);
-          },
-          async submit(options: { readonly attemptId: string; readonly code: string } & SessionCommandOptions) {
-            const value = await requestAuth({ type: "submit", attemptId: options.attemptId, code: options.code }, options);
-            if (value.type !== "status" || typeof value.authenticated !== "boolean") throw new RemoteAppError("invalid_auth_response", 0);
-            return value;
-          },
-          async cancel(options: { readonly attemptId: string } & SessionCommandOptions) {
-            const value = await requestAuth({ type: "cancel", attemptId: options.attemptId }, options);
-            if (value.type !== "cancelled") throw new RemoteAppError("invalid_auth_response", 0);
-          },
-          async logout(options?: SessionCommandOptions) {
-            const value = await requestAuth({ type: "logout" }, options);
-            if (value.type !== "status" || typeof value.authenticated !== "boolean") throw new RemoteAppError("invalid_auth_response", 0);
-            return value.authenticated;
-          },
+          async logout(options?: SessionCommandOptions) { return status(await requestAuth({ type: "logout" }, options)); },
         });
       },
       session(config: IntegrationSessionOptions = {}) {
         const id = config.id ?? `ses_${crypto.randomUUID().replaceAll("-", "")}`;
         assertSessionID(id); assertKeepAlive(config.keepAliveSeconds);
-        if (id === NATIVE_AUTH_SESSION_ID) throw new TypeError("Reserved native auth Session ID");
+        if (id === AUTH_SESSION_ID) throw new TypeError("Reserved auth Session ID");
         const keepAliveSeconds = config.keepAliveSeconds;
         const envelope = (command: SessionCommand, commandId = messageID()): AppCommandEnvelope => ({ protocolVersion: 2, id: commandId, workspace: selector, session: { id }, command });
         const keepAlive = (options: { readonly keepAliveSeconds?: number }) => {
