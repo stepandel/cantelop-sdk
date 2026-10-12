@@ -31,28 +31,25 @@ interface ActiveActivity<Message> {
   timer?: ReturnType<typeof setTimeout>;
 }
 
-interface QueuedActivity<Message, Event> {
+interface QueuedActivity<Message, Event, View> {
   readonly messageId: string;
-  readonly work: SessionActivityFunction<Message, Event>;
+  readonly work: SessionActivityFunction<Message, Event, View>;
   readonly options: SessionActivityQueueOptions<Message>;
   readonly observe: (event: ActivityLifecycle) => void;
   readonly reject: (reason: unknown) => void;
 }
 
-export type ActivityCancellation = "cancelled" | "requested" | false;
-
 /** One activity slot per runtime incarnation, shared by immediate and queued work. */
-export class InMemoryActivity<Message, Event> {
+export class InMemoryActivity<Message, Event, View = unknown> {
   private current: ActiveActivity<Message> | undefined;
   private readonly flushing = new Set<ActiveActivity<Message>>();
-  private readonly queued: QueuedActivity<Message, Event>[] = [];
-  private readonly cancellations = new Map<string, Exclude<ActivityCancellation, false>>();
+  private readonly queued: QueuedActivity<Message, Event, View>[] = [];
 
   constructor(
     private readonly sendMessage: (payload: Message) => void | Promise<void>,
     private readonly sendOutput: (messageId: string, event: Event, signal: AbortSignal) => Promise<void>,
     private readonly stateChanged: () => void = () => undefined,
-    private readonly commitView: (messageId: string, state: unknown, signal: AbortSignal) => Promise<void> = async () => {
+    private readonly commitView: (messageId: string, state: View, signal: AbortSignal) => Promise<void> = async () => {
       throw new Error("Session view handoff unavailable");
     },
   ) {}
@@ -61,7 +58,7 @@ export class InMemoryActivity<Message, Event> {
 
   start(
     messageId: string,
-    work: SessionActivityFunction<Message, Event>,
+    work: SessionActivityFunction<Message, Event, View>,
     options: SessionActivityOptions<Message> = {},
     observe: (event: ActivityLifecycle) => void = () => undefined,
   ): void {
@@ -72,7 +69,7 @@ export class InMemoryActivity<Message, Event> {
 
   queue(
     messageId: string,
-    work: SessionActivityFunction<Message, Event>,
+    work: SessionActivityFunction<Message, Event, View>,
     options: SessionActivityQueueOptions<Message> = {},
     observe: (event: ActivityLifecycle) => void = () => undefined,
   ): Promise<void> {
@@ -109,12 +106,13 @@ export class InMemoryActivity<Message, Event> {
     try { await delivery; } finally { target.steeringCount--; }
   }
 
-  cancel(reason?: unknown): boolean {
-    const target = this.current;
+  cancel(reason?: unknown, activityId?: string): boolean {
+    const target = activityId === undefined ? this.current
+      : [this.current, ...this.flushing].find(value => value?.id === activityId);
     return target ? this.abort(target, reason) : false;
   }
 
-  cancelMessage(id: string): ActivityCancellation {
+  cancelMessage(id: string): void {
     let removed = false;
     for (let index = this.queued.length - 1; index >= 0; index--) {
       if (this.queued[index]!.messageId === id) {
@@ -127,13 +125,7 @@ export class InMemoryActivity<Message, Event> {
       (target): target is ActiveActivity<Message> => target?.messageId === id,
     );
     for (const target of targets) this.abort(target);
-    const result = targets.length > 0 ? "requested" : removed ? "cancelled" : this.cancellations.get(id) ?? false;
-    if (result) {
-      this.cancellations.set(id, result);
-      if (this.cancellations.size > 4096) this.cancellations.delete(this.cancellations.keys().next().value!);
-      this.stateChanged();
-    }
-    return result;
+    if (removed || targets.length > 0) this.stateChanged();
   }
 
   extend(timeoutMs: number): void {
@@ -156,7 +148,7 @@ export class InMemoryActivity<Message, Event> {
 
   get isIdle(): boolean { return !this.active && this.queued.length === 0 && this.flushing.size === 0; }
 
-  private validate(work: SessionActivityFunction<Message, Event>, options: SessionActivityOptions<Message>): void {
+  private validate(work: SessionActivityFunction<Message, Event, View>, options: SessionActivityOptions<Message>): void {
     if (typeof work !== "function") throw new TypeError("Activity work must be a function");
     validateTimeout(options.timeoutMs ?? 1_800_000);
     if (options.onCancel !== undefined && typeof options.onCancel !== "function") throw new TypeError("Activity onCancel must be a function");
@@ -172,7 +164,7 @@ export class InMemoryActivity<Message, Event> {
 
   private launch(
     messageId: string,
-    work: SessionActivityFunction<Message, Event>,
+    work: SessionActivityFunction<Message, Event, View>,
     options: SessionActivityOptions<Message>,
     observe: (event: ActivityLifecycle) => void,
     reject?: (reason: unknown) => void,
@@ -196,9 +188,9 @@ export class InMemoryActivity<Message, Event> {
         await this.sendOutput(messageId, event, controller.signal);
       },
     });
-    const context: SessionActivityContext<Message, Event> = Object.freeze({
+    const context: SessionActivityContext<Message, Event, View> = Object.freeze({
       signal: controller.signal, output,
-      view: Object.freeze({ commit: async (state: unknown) => {
+      view: Object.freeze({ commit: async (state: View) => {
         if (activity.settled) throw new Error("Session activity settled");
         await this.commitView(messageId, state, controller.signal);
       } }),
@@ -221,7 +213,10 @@ export class InMemoryActivity<Message, Event> {
     if (target.cancelledAt === undefined) {
       target.cancelledAt = new Date().toISOString();
       // Start the provider hook once, while this activity still owns the slot.
-      try { target.cancellation = Promise.resolve(target.onCancel?.()); }
+      try {
+        // Flushing has released the provider slot; its hook could interrupt the next run.
+        target.cancellation = Promise.resolve(this.flushing.has(target) ? undefined : target.onCancel?.());
+      }
       catch (error) { target.cancellation = Promise.reject(error); }
       // Provider failure must not prevent signalling or release the slot early.
       target.cancellation = target.cancellation.catch(() => { this.report(target, "failed"); });

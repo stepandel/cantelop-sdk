@@ -11,15 +11,15 @@ export interface SessionOutput<Event> {
   send(event: Event): Promise<void>;
 }
 
-export interface SessionActivityContext<Message, Event> {
-  readonly view: SessionViewWriter;
+export interface SessionActivityContext<Message, Event, View = unknown> {
+  readonly view: SessionViewWriter<View>;
   readonly signal: AbortSignal;
   readonly output: SessionOutput<Event>;
   send(message: Message): void;
 }
 
-export type SessionActivityFunction<Message, Event> = (
-  context: SessionActivityContext<Message, Event>,
+export type SessionActivityFunction<Message, Event, View = unknown> = (
+  context: SessionActivityContext<Message, Event, View>,
 ) => Awaitable<void>;
 
 export interface SessionActivityOptions<Message> {
@@ -35,12 +35,12 @@ export interface SessionActivityQueueOptions<Message> extends SessionActivityOpt
   readonly priority?: boolean;
 }
 
-export interface SessionActivity<Message, Event> {
+export interface SessionActivity<Message, Event, View = unknown> {
   readonly active: boolean;
   /** Starts immediately; rejects while another activity or queued work owns the slot. */
-  start(work: SessionActivityFunction<Message, Event>, options?: SessionActivityOptions<Message>): void;
+  start(work: SessionActivityFunction<Message, Event, View>, options?: SessionActivityOptions<Message>): void;
   /** Schedules owned work without blocking message intake. */
-  queue(work: SessionActivityFunction<Message, Event>, options?: SessionActivityQueueOptions<Message>): void;
+  queue(work: SessionActivityFunction<Message, Event, View>, options?: SessionActivityQueueOptions<Message>): void;
   /** Delivers input through the active activity's onSteer adapter. */
   steer(message: Message): Promise<void>;
   extend(timeoutMs: number): void;
@@ -65,15 +65,15 @@ export interface SessionContext<Message, Event = never, Reply = never, View = un
   database(): Promise<WorkspaceDatabase>;
   readonly session: SessionIdentity;
   readonly env: SessionEnvironment;
-  readonly activity: SessionActivity<Message, Event>;
+  readonly activity: SessionActivity<Message, Event, View>;
   readonly output: SessionOutput<Event>;
   /** Supplies the single result returned by Session.request(). */
   reply(value: Reply): void;
   send(message: Message): Promise<void>;
 }
 
-export interface SessionRecoveryContext<Message, Event = never> {
-  readonly view: SessionViewWriter;
+export interface SessionRecoveryContext<Message, Event = never, View = unknown> {
+  readonly view: SessionViewWriter<View>;
   readonly signal: AbortSignal;
   readonly recovery: Readonly<{
     id: string;
@@ -82,23 +82,23 @@ export interface SessionRecoveryContext<Message, Event = never> {
   database(): Promise<WorkspaceDatabase>;
   readonly session: SessionIdentity;
   readonly env: SessionEnvironment;
-  readonly activity: SessionActivity<Message, Event>;
+  readonly activity: SessionActivity<Message, Event, View>;
   readonly output: SessionOutput<Event>;
   send(message: Message): Promise<void>;
 }
 
 /** Runs once per runtime incarnation, before intake or recovery. */
-export type SessionActivationContext<Message, Event = never> = Omit<
-  SessionContext<Message, Event, never>, "message" | "reply" | "command"
+export type SessionActivationContext<Message, Event = never, View = unknown> = Omit<
+  SessionContext<Message, Event, never, View>, "message" | "reply" | "command"
 >;
 
 export interface SessionBehaviour<Message, Event = never, Reply = never, View = unknown> {
   /** Opt in only when intake is idempotent across process loss using message.id. */
   readonly redelivery?: boolean;
-  onActivate?(context: SessionActivationContext<Message, Event>): Awaitable<void>;
+  onActivate?(context: SessionActivationContext<Message, Event, View>): Awaitable<void>;
   /** Successful return acknowledges intake. Commit durable work before returning. */
   receive(context: SessionContext<Message, Event, Reply, View>): Awaitable<void>;
-  onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
+  onRecover?(context: SessionRecoveryContext<Message, Event, View>): Awaitable<void>;
 }
 
 export type { SessionIdentity } from "./resources.js";
@@ -135,5 +135,5 @@ export interface SessionHarness<Message, Event = never, Reply = never, View = un
 export interface SessionHarnessRuntime<Message, Event = never, Reply = never, View = unknown> {
   create(context: SessionHarnessContext): Awaitable<SessionHarness<Message, Event, Reply, View>>;
   readonly redelivery?: boolean;
-  onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
+  onRecover?(context: SessionRecoveryContext<Message, Event, View>): Awaitable<void>;
 }

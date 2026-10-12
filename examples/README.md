@@ -2,9 +2,9 @@
 
 Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through a named App definition and keeps credentials out of browser code.
 
-[Codex](codex/README.md), [Claude Code](anthropic/README.md), and [OpenCode](opencode/README.md) wrap published stock CLIs directly, following the [claude-code-api pattern](https://github.com/stepandel/claude-code-api). Each starts a subprocess per turn, uses native Workspace-owned authentication, forwards JSON events and resumes its persisted native conversation. Each native runner implements `SessionHarness.run(message, work)` and is returned directly from `runtime.create`, without a wrapper function.
+[Codex](codex/README.md), [Claude Code](anthropic/README.md), and [OpenCode](opencode/README.md) wrap published stock CLIs directly, following the [claude-code-api pattern](https://github.com/stepandel/claude-code-api). Each starts a subprocess per turn, uses native Workspace-owned authentication, forwards JSON events and resumes its persisted native conversation. Each native runner implements `SessionHarness.run(message, work)` and is returned directly from `runtime.create`.
 
-All three declare `steering: "interrupt"` on the harness itself; app constructors only register `runtime: { create }`. This means: prioritize the new prompt, interrupt the active operation, wait for process-group cleanup, then resume the native conversation. Provider tools, prompts, permissions and agent loops remain native.
+All three declare `steering: "interrupt"` on the harness itself; app constructors register `runtime: { create }`. Steering will prioritize the new prompt, interrupt the active operation, wait for process-group cleanup, then resume the native conversation. Provider tools, prompts, permissions and agent loops remain native.
 
 [OpenAI Agents](openai/README.md), [Pi](pi/README.md), and the web chat example show additional integrations. OpenAI Agents is a separate framework example; it is not the Codex harness.
 

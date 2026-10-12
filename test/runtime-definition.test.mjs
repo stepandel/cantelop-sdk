@@ -240,6 +240,9 @@ test("compiler extracts typed session-scoped harness factories without executing
     '{create() {return {run() {}};},receive() {}}',
     '{create() {return {run() {}};},steering:"interrupt"}',
     '{create() {return {run() {},steering:"silent"};}}',
+    '{create() {return {run() {return {answer:"ok"};}};},onRecover(context) {context.view.commit({wrong:true});}}',
+    '{receive(context) {context.activity.queue(work => work.view.commit({wrong:true}));}}',
+    '{receive() {},onActivate(context) {context.view.commit({wrong:true});}}',
   ]) {
     await writeFile(definition, prefix + runtime + '});');
     await assert.rejects(buildSessionRuntime({ definition, outdir }), /Invalid Session runtime/);

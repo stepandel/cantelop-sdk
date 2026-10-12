@@ -1,4 +1,4 @@
-import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
+import type { AppCommandEnvelope, WorkspaceSelector } from "./integration.js";
 
 export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
 export const APP_COMMAND_PATH = "/commands";

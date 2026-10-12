@@ -134,25 +134,11 @@ All App operations use the versioned `{ protocolVersion, id, workspace, session,
 
 For a runnable browser and server integration, see [the web chat example](examples/web-chat/README.md).
 
-### Harness control and durable Session views
+### Harness controls and durable Session views
 
 Dispatch, steer and cancel share ordinary delivery. The platform treats their SDK command payloads as opaque. Queueing, steering and cancellation are coordinated in the SDK's single execution slot.
 
 ```ts
-const app = cantelop.app({
-  name: "assistant",
-  runtime: {
-    create(context) {
-      const harness = createHarness(context);
-      return {
-        run: (message, work) => harness.run(message, work),
-        steer: message => harness.steer(message),
-        cancel: () => harness.abort(),
-      };
-    },
-  },
-});
-
 await session.dispatch(message);
 await session.steer(newDirection);
 await session.cancel();

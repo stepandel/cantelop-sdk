@@ -65,7 +65,7 @@ test("provider client entrypoints do not import native dependencies at runtime",
 
   for (const file of files) {
     const typescript = await readFile(path.join(repositoryRoot, file), "utf8");
-    // Native SDK output contracts are type-only. Preserve all value imports so
+    // Native output contracts are type-only. Preserve all value imports so
     // this still rejects accidental runtime dependencies rather than tree-shaking them.
     const source = ts.transpileModule(typescript, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, verbatimModuleSyntax: true },

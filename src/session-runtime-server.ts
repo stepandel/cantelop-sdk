@@ -16,9 +16,9 @@ import type {
   SessionActivityFunction,
   SessionActivityOptions,
   SessionActivityQueueOptions,
-  SessionContext,
   SessionEnvironment,
   SessionHarness,
+  SessionViewWriter,
   SessionOutput,
   SessionRecoveryContext,
 } from "./session.js";
@@ -35,7 +35,6 @@ import {
 } from "./runtime-log-capture.js";
 import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
 import { InMemoryActivity, type ActivityLifecycle } from "./activity.js";
-import { cancelRuntimeWork } from "./runtime-coordinator.js";
 import { decodeRuntimeCommand, type RuntimeCommand } from "./runtime-command.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
@@ -141,20 +140,28 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
         signal: lifetime.signal, session, env: options.env ?? process.env, database,
         activity: createActivityCapability(messageId, () => lifetime.signal.throwIfAborted()),
         // Restored work reports under the activating message.
-        view: Object.freeze({ commit: (state: unknown) => outputBuffer.publish(messageId, state, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)]), true) }),
+        view: createViewCapability(messageId, lifetime.signal, () => lifetime.signal.throwIfAborted()),
         output: Object.freeze({
           send: (event: Event) => outputBuffer.publish(messageId, event, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)])),
         }),
         send: (payload: Input) => { sendMessage(payload); return Promise.resolve(); },
-      } satisfies SessionActivationContext<Input, Event>));
+      } satisfies SessionActivationContext<Input, Event, View>));
     });
     return activation;
   };
   let quiescence: RuntimeQuiescence;
   const outputBuffer = new SessionOutputBuffer();
+  const createViewCapability = (
+    messageId: string, signal: AbortSignal, assertOpen: () => void,
+  ): SessionViewWriter<View> => Object.freeze({
+    commit: (state: View) => {
+      assertOpen();
+      return outputBuffer.publish(messageId, state, AbortSignal.any([signal, AbortSignal.timeout(30_000)]), true);
+    },
+  });
   const observationBuffer = new RuntimeObservationBuffer();
   const mailbox = new InMemoryMailbox<void>(markMessageLifecycle, () => quiescence.changed());
-  let activity: InMemoryActivity<Input, Event>;
+  let activity: InMemoryActivity<Input, Event, View>;
   const recoveries = new Map<string, RuntimeRecovery>();
   let nextIntakeSequence = 1;
 
@@ -163,13 +170,13 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     assertOpen: () => void,
     observe: (event: ActivityLifecycle) => void = () => undefined,
     priority = false,
-  ): SessionActivity<Input, Event> => Object.freeze({
+  ): SessionActivity<Input, Event, View> => Object.freeze({
     get active() { return activity.active; },
-    start(work: SessionActivityFunction<Input, Event>, options?: SessionActivityOptions<Input>) {
+    start(work: SessionActivityFunction<Input, Event, View>, options?: SessionActivityOptions<Input>) {
       assertOpen();
       activity.start(messageId, work, options, observe);
     },
-    queue(work: SessionActivityFunction<Input, Event>, options?: SessionActivityQueueOptions<Input>) {
+    queue(work: SessionActivityFunction<Input, Event, View>, options?: SessionActivityQueueOptions<Input>) {
       assertOpen();
       activity.queue(messageId, work, { ...options, priority: options?.priority ?? priority }, observe);
     },
@@ -193,7 +200,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     let replied = false;
     if (command.type === "cancel") {
       started();
-      const result = cancelRuntimeWork(message.id, activity);
+      const result = { id: message.id, state: activity.cancel() ? "requested" : "idle" };
       if (replyHolder) replyHolder.value = result;
       return Object.freeze({ generation, settled: Promise.resolve(), ...(replyHolder ? { reply: replyHolder } : {}) });
     }
@@ -239,7 +246,9 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
         const context = Object.freeze({
           signal, command: Object.freeze({ type: command.type }), message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
           activity: activityCapability, output, reply, send, database,
-          view: Object.freeze({commit:(state: unknown) => { if(!invocationOpen) throw new Error("Session invocation settled");return outputBuffer.publish(message.id,state,AbortSignal.any([signal,AbortSignal.timeout(30_000)]),true); }}),
+          view: createViewCapability(message.id, signal, () => {
+            if (!invocationOpen) throw new Error("Session invocation settled");
+          }),
         });
         await runWithRuntimeLogContext(observer, async () => {
           await activate(session, message.id);
@@ -329,11 +338,13 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
         if (!invocationOpen) throw new Error("Session recovery invocation has already settled");
         signal.throwIfAborted();
       });
-      const context: SessionRecoveryContext<Input, Event> = Object.freeze({
+      const context: SessionRecoveryContext<Input, Event, View> = Object.freeze({
         signal,
         database,
         recovery: Object.freeze({ id: recoveryId, interruptedMessageId }),
-        view: Object.freeze({commit:(state: unknown) => { if(!invocationOpen) throw new Error("Session recovery settled");return outputBuffer.publish(interruptedMessageId,state,AbortSignal.any([signal,AbortSignal.timeout(30_000)]),true); }}),
+        view: createViewCapability(interruptedMessageId, signal, () => {
+          if (!invocationOpen) throw new Error("Session recovery settled");
+        }),
         session,
         env: options.env ?? process.env,
         activity: activityCapability,
@@ -362,7 +373,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     sendMessage,
     (messageId, event, signal) => outputBuffer.publish(messageId, event, AbortSignal.any([signal, AbortSignal.timeout(30_000)])),
     () => quiescence.changed(),
-    (messageId,state,signal)=>outputBuffer.publish(messageId,state,AbortSignal.any([signal,AbortSignal.timeout(30_000)]),true),
+    (messageId, state, signal) => outputBuffer.publish(messageId, state, AbortSignal.any([signal, AbortSignal.timeout(30_000)]), true),
   );
   quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
   const handler = (request: IncomingMessage, response: ServerResponse) => {
@@ -459,7 +470,7 @@ async function handleRequest<Input>(
   outputBuffer: SessionOutputBuffer,
   observationBuffer: RuntimeObservationBuffer,
   messages: RuntimeMessages,
-  activity: { active: boolean; cancel(reason?: unknown): boolean; snapshot(): unknown; },
+  activity: { active: boolean; cancel(reason?: unknown, activityId?: string): boolean; snapshot(): unknown; },
   recoverySupported: boolean,
   redeliverySupported: boolean,
   recover: (recoveryId: string, interruptedMessageId: string, session: SessionIdentity) => RuntimeRecovery,
@@ -499,7 +510,7 @@ async function handleRequest<Input>(
     if (!isRecord(body) || Object.keys(body).length !== 1 || typeof body.activity_id !== "string") throw new ProtocolError(400, "invalid_activity_cancel");
     const currentActivity = activity.snapshot();
     if (!isRecord(currentActivity) || currentActivity.id !== body.activity_id) throw new RuntimeProtocolError(409, "activity_mismatch");
-    activity.cancel(); writeJSON(response, 200, { active: activity.active }); return;
+    activity.cancel(undefined, body.activity_id); writeJSON(response, 200, { active: activity.active }); return;
   }
   for (const [path, buffer] of [[OUTPUT_PATH, outputBuffer], [OBSERVATIONS_PATH, observationBuffer]] as const) {
     if (url.pathname === path + "/ack" && request.method === "POST") {

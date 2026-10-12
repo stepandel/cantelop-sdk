@@ -5,7 +5,6 @@ import { dirname, join } from "node:path";
 import type { SessionHarness, SessionHarnessWorkContext } from "@cantelop/sdk/session";
 
 export type NativeEvent = Readonly<Record<string, unknown>>;
-export type NativeOutput = NativeEvent;
 export interface NativeTurn {
   text: string;
   signal: AbortSignal;
@@ -81,11 +80,13 @@ export async function runJsonProcess(options: {
   let exited = false;
   let escalation: ReturnType<typeof setTimeout> | undefined;
   let cleanupError: unknown;
+  let groupKilled = false;
   const signalGroup = (signal: NodeJS.Signals) => {
     if (!child.pid) return;
     try {
       if (process.platform === "win32") { if (!exited) child.kill(signal); }
       else process.kill(-child.pid, signal);
+      if (signal === "SIGKILL") groupKilled = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") cleanupError = error;
     }
@@ -137,21 +138,23 @@ export async function runJsonProcess(options: {
     stop();
     await done.catch(() => undefined);
     if (escalation) clearTimeout(escalation);
-    signalGroup("SIGKILL"); // Remove tools still in this turn's group before another turn starts.
+    // Successful escalation already covered the whole group. Do not signal an
+    // exited group again: its numeric ID may have been recycled by the host.
+    if (!groupKilled) signalGroup("SIGKILL");
     turn.signal.removeEventListener("abort", stop);
     if (cleanupError) throw cleanupError;
   }
 }
 
-/** Scheduling stays in Cantelop; native execution stays in the supplied harness. */
-export abstract class NativeHarness implements SessionHarness<{ type: "prompt"; prompt: string }, NativeOutput> {
+/** Shared turn signals and output publication for stock CLI harnesses. */
+export abstract class NativeHarness implements SessionHarness<{ type: "prompt"; prompt: string }, NativeEvent> {
   readonly steering = "interrupt" as const;
   constructor(private readonly lifetime?: AbortSignal) {}
   protected abstract execute(turn: NativeTurn): Promise<void>;
 
-  run(message: { type: "prompt"; prompt: string }, work: SessionHarnessWorkContext<{ type: "prompt"; prompt: string }, NativeOutput>): Promise<void> {
+  run(message: { type: "prompt"; prompt: string }, work: SessionHarnessWorkContext<{ type: "prompt"; prompt: string }, NativeEvent>): Promise<void> {
     const signal = this.lifetime ? AbortSignal.any([work.signal, this.lifetime]) : work.signal;
-    const publish = async (event: NativeOutput) => {
+    const publish = async (event: NativeEvent) => {
       signal.throwIfAborted();
       let abort!: () => void;
       const interrupted = new Promise<never>((_, reject) => {

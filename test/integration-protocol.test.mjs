@@ -40,14 +40,14 @@ test('cancellation interrupts the active run and distinguishes requested from id
   }
 });
 
-test('cancellation retries retain command identity and remote errors; malformed target replies reject', async () => {
+test('cancellation retries retain command identity and remote errors; malformed command replies reject', async () => {
   const commandId = 'msg_' + 'f'.repeat(32);
   let calls = 0;
   const failed = session(async request => { calls++; assert.equal((await request.json()).id, commandId); throw new Error('lost'); });
   await assert.rejects(failed.cancel({ id: commandId }), error => error.code === 'command_outcome_unknown' && error.messageId === commandId);
   assert.equal(calls, 1);
   await assert.rejects(session(async () => Response.json({ error: { code: 'workspace_conflict' } }, { status: 409 })).cancel(), error => error.code === 'workspace_conflict' && error.status === 409);
-  for (const value of [{ protocolVersion: 2, messageId: 'other', state: 'requested' }, { protocolVersion: 2, messageId: fixture.id, state: 'done' }]) await assert.rejects(session(async () => Response.json(value)).cancel(), /invalid_cancellation_response/);
+  for (const value of [{ protocolVersion: 2, id: 'other', state: 'requested' }, { protocolVersion: 2, id: fixture.id, state: 'done' }]) await assert.rejects(session(async () => Response.json(value)).cancel(), /invalid_cancellation_response/);
 });
 
 test('durable view is a typed projection and carries the atomic subscription boundary without provisioning', async () => {

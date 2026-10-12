@@ -36,23 +36,28 @@ export class SessionOutputBuffer {
       this.pendingBytes + bytes > MAX_PENDING_BYTES
     ) {
       signal?.throwIfAborted();
- await new Promise<void>((resolve, reject) => {
- const cleanup = () => { this.capacityWaiters.delete(ready); signal?.removeEventListener("abort", abort); };
- const ready = () => { cleanup(); resolve(); };
- const abort = () => { cleanup(); reject(signal!.reason); };
- this.capacityWaiters.add(ready); signal?.addEventListener("abort", abort, {once:true});
- });
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          this.capacityWaiters.delete(ready);
+          signal?.removeEventListener("abort", abort);
+        };
+        const ready = () => { cleanup(); resolve(); };
+        const abort = () => { cleanup(); reject(signal!.reason); };
+        this.capacityWaiters.add(ready);
+        signal?.addEventListener("abort", abort, { once: true });
+      });
     }
 
     signal?.throwIfAborted();
- return new Promise<void>((resolve, reject) => {
- const abort = () => reject(signal!.reason);
- signal?.addEventListener("abort", abort, {once:true});
+    return new Promise<void>((resolve, reject) => {
+      const abort = () => reject(signal!.reason);
+      signal?.addEventListener("abort", abort, { once: true });
+      const value: unknown = JSON.parse(encoded);
       this.events.push({
         cursor: this.nextCursor++,
         messageId,
-        event: projection ? null : JSON.parse(encoded) as unknown,
-        ...(projection ? {view: JSON.parse(encoded)} : {}),
+        event: projection ? null : value,
+        ...(projection ? { view: value } : {}),
         bytes,
         resolve: () => { signal?.removeEventListener("abort", abort); resolve(); },
       });
@@ -81,7 +86,7 @@ export class SessionOutputBuffer {
       if (available.length > 0) {
         this.delivered = Math.max(this.delivered, available.at(-1)!.cursor);
         return available.map(({ cursor, messageId, event, view }) =>
-          Object.freeze({ cursor, messageId, event, ...(view === undefined ? {} : {view}) })
+          Object.freeze({ cursor, messageId, event, ...(view === undefined ? {} : { view }) })
         );
       }
       if (!wait) return [];

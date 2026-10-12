@@ -95,6 +95,7 @@ try {
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type AppCommandEnvelope, type SessionEventCursor } from "@cantelop/sdk";',
     'const runtime = { receive() {} };',
     'const harnessApp = new CantelopClient().app<{prompt:string},{text:string},{answer:string},{entries:string[]}>({name:"harness-agent",runtime:{create(context){return {steering:"interrupt",async run(message,work){await work.output.send({text:message.prompt});await work.view.commit({entries:[context.session.id]});return {answer:message.prompt};},steer(message){message.prompt;},cancel(){}};}}});',
+    'const viewApp = new CantelopClient().app<string,never,never,{entries:string[]}>({name:"view-agent",runtime:{receive(context){context.activity.queue(work => work.view.commit({entries:[context.message.payload]}));},onActivate(context){context.view.commit({entries:[]});},onRecover(context){context.view.commit({entries:[context.recovery.id]});}}});',
     'const harnessReply: {answer:string} = await harnessApp.workspace({slug:"customer"}).session().request({prompt:"hello"});',
     'const cancellation: {state:"requested"|"idle"} = await harnessApp.workspace({slug:"customer"}).session().cancel();',
     'const connection: AppConnection = { fetch: async () => new Response(null) };',

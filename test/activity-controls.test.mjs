@@ -30,7 +30,7 @@ test("activity queues preserve owner output, priority FIFO, and one work slot", 
   assert.equal(activity.isIdle, true);
 });
 
-test("queued activity cancellation removes only its owner's work after intake has settled", async () => {
+test("intake expiry removes only its owner's queued work", async () => {
   const { activity, outputs } = scheduler();
   const running = deferred();
   let signal;
@@ -38,9 +38,9 @@ test("queued activity cancellation removes only its owner's work after intake ha
   await tick();
   activity.queue("cancelled", ({ output }) => output.send("never"));
   activity.queue("kept", ({ output }) => output.send("kept"));
-  assert.equal(activity.cancelMessage("cancelled"), "cancelled");
-  assert.equal(activity.cancelMessage("cancelled"), "cancelled");
-  assert.equal(activity.cancelMessage("unknown"), false);
+  activity.cancelMessage("cancelled");
+  activity.cancelMessage("cancelled");
+  activity.cancelMessage("unknown");
   assert.equal(signal.aborted, false);
   running.resolve();
   await tick();
@@ -115,4 +115,23 @@ test("queue capacity and options are checked before accepting work", () => {
   assert.throws(() => activity.queue("overflow", () => undefined), /capacity/);
   for (let n = 0; n < 256; n++) activity.cancelMessage(`queued-${n}`);
   running.resolve();
+});
+
+
+test("cancelling a flushing activity never interrupts the next provider operation", async () => {
+  const flush = deferred(), next = deferred();
+  let nextSignal, hooks = 0;
+  const activity = new InMemoryActivity(() => flush.promise, async () => undefined);
+  activity.start("first", context => context.send("completion"), { timeoutMs: 10_000, onCancel() { hooks++; } });
+  const firstId = activity.snapshot().id;
+  activity.queue("second", context => { nextSignal = context.signal; return next.promise; }, { timeoutMs: 20_000, onCancel() { hooks++; } });
+  await tick();
+  assert.equal(activity.snapshot().id, firstId, "the oldest deadline belongs to flushing work");
+  assert.equal(activity.cancel(undefined, firstId), true);
+  assert.equal(nextSignal.aborted, false);
+  assert.equal(hooks, 0);
+  assert.equal(activity.cancel(undefined, "unknown"), false);
+  next.resolve(); flush.resolve();
+  await tick();
+  assert.equal(activity.isIdle, true);
 });

@@ -1,6 +1,6 @@
 # Stock OpenCode CLI harness
 
-This example follows the [claude-code-api native runner pattern](https://github.com/stepandel/claude-code-api/blob/ce9d80b12f0b69c6823fd78960815752f3796eeb/src/claude.ts). It starts the published, unmodified CLI for each turn, supplies the prompt through stdin, forwards native JSON events and resumes the provider's existing conversation. It uses no provider SDK transport or replacement agent loop.
+This example runs the published, unmodified CLI for each turn, supplies the prompt through stdin, forwards native JSON events and resumes the provider's existing conversation.
 
 ```text
 opencode run --format json [--session SESSION_ID]
