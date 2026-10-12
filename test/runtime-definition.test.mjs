@@ -229,19 +229,19 @@ test("compiler extracts typed session-scoped harness factories without executing
   const prefix = `import { CantelopClient } from ${JSON.stringify(clientModule)}; export const app = new CantelopClient().app<{prompt:string},{text:string},{answer:string},{entries:string[]}>({name:"harness", runtime:`;
   for (const runtime of [
     '{create:42}',
-    '{create() { return {run() {}};}}',
-    '{create() { return {}; }}',
-    '{create() { return {run(message) {message.wrong;}};}}',
-    '{create() { return {run(message,work) {work.output.send({wrong:true});}};}}',
-    '{create() { return {run(message,work) {work.view.commit({wrong:true});}};}}',
-    '{create() { return {run() {return {answer:42};}};}}',
-    '{create() { return {run() {},steering(message) {message.wrong;}};}}',
-    '{create() { return {run() {},cancel(message) {}};}}',
-    '{create() {return {run() {}};},receive() {}}',
-    '{create() {return {run() {}};},steering:"interrupt"}',
-    '{create() {return {run() {},steering:"silent"};}}',
-    '{create() {return {run() {return {answer:"ok"};},steering:"native"};}}',
-    '{create() {return {run() {return {answer:"ok"};}};},onRecover(context) {context.view.commit({wrong:true});}}',
+    '{create() {return {};}}',
+    '{create() {return {run() {},steer() {},cancel() {return false;}};}}',
+    '{create() {return {queue() {return {answer:"ok"};},cancel() {return false;}};}}',
+    '{create() {return {queue(message) {message.wrong;return {answer:"ok"};},steer() {},cancel() {return false;}};}}',
+    '{create() {return {queue(message,work) {work.output.send({wrong:true});return {answer:"ok"};},steer() {},cancel() {return false;}};}}',
+    '{create() {return {queue(message,work) {work.view.commit({wrong:true});return {answer:"ok"};},steer() {},cancel() {return false;}};}}',
+    '{create() {return {queue() {return {answer:42};},steer() {},cancel() {return false;}};}}',
+    '{create() {return {queue() {return {answer:"ok"};},steer(message) {message.wrong;},cancel() {return false;}};}}',
+    '{create() {return {queue() {return {answer:"ok"};},steer() {},cancel(message) {return false;}};}}',
+    '{create() {return {queue() {return {answer:"ok"};},steer() {},cancel() {}};}}',
+    '{create() {return {queue() {},steer() {},cancel() {return false;}};},receive() {}}',
+    '{create() {return {queue() {},steer() {},cancel() {return false;}};},steering:"interrupt"}',
+    '{create() {return {queue() {return {answer:"ok"};},steer() {},cancel() {return false;}};},onRecover(context) {context.view.commit({wrong:true});}}',
     '{receive(context) {context.activity.queue(work => work.view.commit({wrong:true}));}}',
     '{receive() {},onActivate(context) {context.view.commit({wrong:true});}}',
   ]) {
@@ -253,13 +253,13 @@ test("compiler extracts typed session-scoped harness factories without executing
       const marker = "harness-runtime-only";
       throw new Error("factory executed during compilation");
       return {
-        async run(message, work) {
+        async queue(message, work) {
           await work.output.send({text:message.prompt});
           await work.view.commit({entries:[marker]});
           return {answer:message.prompt};
         },
-        steering(message) {console.log(message.prompt, context.session.id);},
-        cancel() {},
+        steer(message, work) {console.log(message.prompt, context.session.id, work.message.id);},
+        cancel() {return false;},
       };
     }
   }});`);

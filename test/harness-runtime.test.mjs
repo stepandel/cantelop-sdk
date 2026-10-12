@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
 import { createSessionRuntimeHandler } from "../dist/runtime.js";
-import { InMemoryActivity } from "../dist/activity.js";
 
 const sandboxId = "sbx-" + "a".repeat(32);
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -44,222 +43,134 @@ async function fixture(t, runtime) {
   };
 }
 
-test("one harness handles FIFO queue, live steering and run-wide cancellation with cleanup barriers", async t => {
-  let creates = 0, cancels = 0, signal;
-  const started = [], steering = [];
-  const workExit = deferred(), cancelExit = deferred();
-  const f = await fixture(t, {
-    create(context) {
-      creates++;
-      assert.equal(context.session.id, "chat");
-      return {
-        async run(message, work) {
-          started.push(message);
-          if (message === "first") { signal = work.signal; await workExit.promise; }
-        },
-        steering: message => { steering.push(message); },
-        async cancel() { cancels++; await cancelExit.promise; },
-      };
-    },
-  });
+test("queue, steer and cancel delegate directly to one session harness", async t => {
+  const first = deferred(), next = deferred();
+  const accepted = [], redirected = [];
+  let creates = 0, cancels = 0, active = false;
+  const f = await fixture(t, { create(context) {
+    creates++;
+    assert.equal(context.session.id, "chat");
+    return {
+      marker: "native",
+      queue(message, work) {
+        active = true; accepted.push({ message, work });
+        return message === "first" ? first.promise : next.promise;
+      },
+      steer(message, work) { redirected.push([this.marker, message, work.message.payload]); },
+      cancel() { cancels++; return active; },
+    };
+  } });
   await f.send(1, { type: "cancel" }, true); await f.settled(1);
   assert.equal((await f.reply(1)).reply.state, "idle");
-  assert.equal(creates, 0);
+  assert.equal(creates, 1, "even an initial cancellation delegates to the harness");
   await f.send(2, { type: "dispatch", message: "first" }); await f.settled(2);
-  await until(() => signal);
   await f.send(3, { type: "dispatch", message: "next" }); await f.settled(3);
+  assert.deepEqual(accepted.map(value => value.message), ["first", "next"], "the SDK does not serialize provider operations");
   await f.send(4, { type: "steer", message: "adjust" }); await f.settled(4);
-  assert.deepEqual(steering, ["adjust"]);
+  await until(() => redirected.length === 1);
+  assert.deepEqual(redirected, [["native", "adjust", "adjust"]]);
   await f.send(5, { type: "cancel" }, true); await f.settled(5);
   assert.equal((await f.reply(5)).reply.state, "requested");
-  assert.equal(signal.aborted, true);
-  // Retry the same command even after another run starts: it never selects again.
-  await f.send(5, { type: "cancel" }, true);
-  assert.equal(cancels, 1);
-  workExit.resolve(); await tick();
-  assert.deepEqual(started, ["first"]);
-  cancelExit.resolve(); await until(() => started.length === 2);
+  assert.equal(accepted[0].work.signal.aborted, false, "the implementation owns cancellation");
+  first.resolve(); next.resolve(); active = false;
+  await f.send(5, { type: "cancel" }, true); await f.settled(5);
+  assert.equal(cancels, 2, "command retries never select a later operation");
   assert.equal(creates, 1);
-  assert.deepEqual(started, ["first", "next"]);
-  await f.send(5, { type: "cancel" }, true);
-  assert.equal(cancels, 1);
 });
 
-test("request waits for run return while steering and cancellation intake remain responsive", async t => {
-  const exit = deferred();
-  let active, steered = false;
+test("pending queue and steer completion never block subsequent intake", async t => {
+  const answer = deferred(), direction = deferred();
+  const calls = [];
   const f = await fixture(t, { create: () => ({
-    async run(message, work) { active = work.signal; await exit.promise; return { answer: message }; },
-    steering() { steered = true; },
+    queue(message) { calls.push(message); return message === "answer" ? answer.promise : { answer: message }; },
+    steer() { calls.push("steer"); return direction.promise; },
+    cancel() { calls.push("cancel"); return false; },
   }) });
   await f.send(1, { type: "dispatch", message: "answer" }, true);
-  await until(() => active);
+  await until(() => calls.length === 1);
   assert.equal((await f.reply(1)).status, 409);
-  await f.send(2, { type: "steer", message: "adjust" }); await f.settled(2);
-  assert.equal(steered, true);
-  exit.resolve(); await f.settled(1);
+  await f.send(2, { type: "steer", message: "direction" }); await f.settled(2);
+  await f.send(3, { type: "dispatch", message: "next" }, true); await f.settled(3);
+  await f.send(4, { type: "cancel" }, true); await f.settled(4);
+  assert.deepEqual(calls, ["answer", "steer", "next", "cancel"]);
+  assert.equal((await f.reply(4)).reply.state, "idle", "the SDK uses the implementation's active-operation result");
+  assert.deepEqual((await f.reply(3)).reply, { answer: "next" });
+  answer.resolve({ answer: "answer" }); direction.resolve();
+  await f.settled(1);
   assert.deepEqual((await f.reply(1)).reply, { answer: "answer" });
 });
 
-test("cancelling an active request yields failure and preserves a queued request", async t => {
-  let active;
+test("steer is called while idle and the implementation reports unsupported input", async t => {
+  let calls = 0;
   const f = await fixture(t, { create: () => ({
-    async run(message, work) {
-      if (message === "hold") {
-        active = work.signal;
-        await new Promise(resolve => active.addEventListener("abort", resolve, { once: true }));
-      }
-      return message;
-    },
+    queue() { throw new Error("SDK must not substitute queue for steer"); },
+    steer() { calls++; throw new Error("unsupported steering"); },
+    cancel() { return false; },
   }) });
-  await f.send(1, { type: "dispatch", message: "hold" }, true); await until(() => active);
-  await f.send(2, { type: "dispatch", message: "next" }, true);
-  await f.send(3, { type: "cancel" }, true); await f.settled(3);
-  await f.settled(1); await f.settled(2);
+  await f.send(1, { type: "steer", message: "direction" }); await f.settled(1);
+  assert.equal(calls, 1);
   assert.equal((await f.status(1)).state, "failed");
-  assert.equal((await f.reply(1)).status, 409);
-  assert.equal((await f.reply(2)).reply, "next");
 });
 
-test("unsupported steering rejects explicitly; configured fallback uses priority FIFO", async t => {
-  const rejected = await fixture(t, { create: () => ({ run() {} }) });
-  await rejected.send(1, { type: "steer", message: "unsupported" }); await rejected.settled(1);
-  assert.equal((await rejected.status(1)).state, "failed");
-  const exit = deferred();
-  const started = [];
-  const queued = await fixture(t, { create: () => ({ steering: "queue",
-    async run(message) { started.push(message); if (message === "hold") await exit.promise; },
-  }) });
-  for (const [n, type, message] of [[1, "dispatch", "hold"], [2, "dispatch", "normal"], [3, "steer", "priority-1"], [4, "steer", "priority-2"]]) {
-    await queued.send(n, { type, message }); await queued.settled(n);
-  }
-  assert.deepEqual(started, ["hold"]);
-  exit.resolve(); await until(() => started.length === 4);
-  assert.deepEqual(started, ["hold", "priority-1", "priority-2", "normal"]);
-});
-
-test("provider cancellation errors still abort execution and release only after work exits", async () => {
-  const activity = new InMemoryActivity(() => {}, async () => {});
-  const exit = deferred();
-  let signal, starts = 0;
-  activity.start("one", context => { signal = context.signal; return exit.promise; }, { onCancel() { throw new Error("provider failure"); } });
-  await tick();
-  activity.queue("two", () => { starts++; });
-  assert.equal(activity.cancel(), true);
-  assert.equal(signal.aborted, true);
-  await tick(); assert.equal(starts, 0);
-  exit.resolve(); await until(() => starts === 1);
-});
-
-
-test("queued harness work keeps owner output and durable view capabilities after intake closes", async t => {
+test("harness operation output and typed views stay owned until completion", async t => {
   let work, done = false;
   const f = await fixture(t, { create: () => ({
-    async run(message, context) {
+    async queue(message, context) {
       work = context;
       await context.output.send({ text: message });
       await context.view.commit({ entries: [message] });
       done = true;
     },
+    steer() {}, cancel() { return false; },
   }) });
   await f.send(1, { type: "dispatch", message: "hello" }); await f.settled(1);
-  assert.equal(work.signal.aborted, false);
   assert.equal(done, false);
   let event;
   await until(async () => { event = (await f.output()).events[0]; return event; });
   assert.equal(event.message_id, "msg_" + "1".padStart(32, "0"));
-  assert.deepEqual(event.event, { text: "hello" });
   await f.ack(event.cursor);
   const after = event.cursor;
   await until(async () => { event = (await f.output(after)).events[0]; return event; });
   assert.deepEqual(event.view, { entries: ["hello"] });
-  assert.equal(done, false);
   await f.ack(event.cursor);
-  await until(() => done);
-  await tick();
-  await assert.rejects(work.output.send({ text: "late" }), /settled/);
-  await assert.rejects(work.view.commit({ entries: [] }), /settled/);
+  await until(() => done); await tick();
+  assert.throws(() => work.output.send({ text: "late" }), /settled/);
+  assert.throws(() => work.view.commit({ entries: [] }), /settled/);
 });
 
-test("failed harness initialization is fenced for subsequent input in the incarnation", async t => {
+test("failed harness initialization is fenced for subsequent input", async t => {
   let creates = 0;
-  const f = await fixture(t, { async create() { creates++; throw new Error("provider initialization failed"); } });
-  await f.send(1, { type: "dispatch", message: "one" }); await f.settled(1);
-  await f.send(2, { type: "dispatch", message: "two" }); await f.settled(2);
-  assert.equal((await f.status(1)).state, "failed");
-  assert.equal((await f.status(2)).state, "failed");
-  assert.equal(creates, 1);
-});
-
-test("interrupt steering admits priority input, aborts the current run and waits for cleanup", async t => {
-  const exit = deferred(), cleanup = deferred();
-  const started = [];
-  let signal, cancels = 0;
-  const f = await fixture(t, { create: () => ({ steering: "interrupt",
-    async run(message, work) {
-      started.push(message);
-      if (message === "hold") { signal = work.signal; await exit.promise; }
-    },
-    async cancel() { cancels++; await cleanup.promise; },
-  }) });
-  await f.send(1, { type: "dispatch", message: "hold" }); await f.settled(1);
-  await until(() => signal);
-  await f.send(2, { type: "dispatch", message: "normal" }); await f.settled(2);
-  await f.send(3, { type: "steer", message: "direction-1" }); await f.settled(3);
-  await f.send(4, { type: "steer", message: "direction-2" }); await f.settled(4);
-  assert.equal(signal.aborted, true);
-  assert.equal(cancels, 1);
-  exit.resolve(); await tick();
-  assert.deepEqual(started, ["hold"]);
-  cleanup.resolve(); await until(() => started.length === 4);
-  assert.deepEqual(started, ["hold", "direction-1", "direction-2", "normal"]);
-});
-
-test("rejected interrupt steering cannot cancel active work", async t => {
-  const exit = deferred();
-  let signal;
-  const f = await fixture(t, { create: () => ({ steering: "interrupt",
-    async run(message, work) { if (message === "hold") { signal = work.signal; await exit.promise; } },
-  }) });
-  await f.send(1, { type: "dispatch", message: "hold" }); await f.settled(1);
-  await until(() => signal);
-  for (let n = 2; n < 258; n++) { await f.send(n, { type: "dispatch", message: "queued" }); await f.settled(n); }
-  await f.send(258, { type: "steer", message: "overflow" }); await f.settled(258);
-  assert.equal((await f.status(258)).state, "failed");
-  assert.equal(signal.aborted, false);
-  exit.resolve();
-});
-
-
-test("invalid harness steering declarations fail activation before executing input", async t => {
-  let runs = 0, creates = 0;
-  const f = await fixture(t, { create() {
-    creates++;
-    return { steering: "unsupported", run() { runs++; } };
-  } });
+  const f = await fixture(t, { create() { creates++; throw new Error("initialization failed"); } });
   for (const n of [1, 2]) {
     await f.send(n, { type: "dispatch", message: "input" }); await f.settled(n);
     assert.equal((await f.status(n)).state, "failed");
   }
-  assert.equal(runs, 0);
   assert.equal(creates, 1);
 });
 
+test("all three harness methods are required and cancellation returns a boolean", async t => {
+  for (const missing of ["queue", "steer", "cancel"]) {
+    const f = await fixture(t, { create: () => ({ queue() {}, steer() {}, cancel() { return false; }, [missing]: undefined }) });
+    await f.send(1, { type: "dispatch", message: "input" }); await f.settled(1);
+    assert.equal((await f.status(1)).state, "failed");
+  }
+  const f = await fixture(t, { create: () => ({ queue() {}, steer() {}, cancel() {} }) });
+  await f.send(1, { type: "dispatch", message: "input" }); await f.settled(1);
+  await f.send(2, { type: "cancel" }, true); await f.settled(2);
+  assert.equal((await f.status(2)).state, "failed");
+});
 
-test("native steering is one capability, retains its receiver, and queues input while idle", async t => {
+test("operation admission limits never invoke rejected harness input or cancel other work", async t => {
   const exit = deferred();
-  const runs = [], adjustments = [];
-  const f = await fixture(t, { create: () => new class {
-    marker = "native:";
-    async run(message) { runs.push(message); if (message === "hold") await exit.promise; }
-    steering(message) { adjustments.push(this.marker + message); }
-  } });
-  await f.send(1, { type: "steer", message: "idle" }); await f.settled(1);
-  await until(() => runs.length === 1);
-  await f.send(2, { type: "dispatch", message: "hold" }); await f.settled(2);
-  await until(() => runs.length === 2);
-  await f.send(3, { type: "steer", message: "adjust" }); await f.settled(3);
-  assert.deepEqual(runs, ["idle", "hold"]);
-  assert.deepEqual(adjustments, ["native:adjust"]);
+  let queues = 0, steers = 0, cancels = 0;
+  const f = await fixture(t, { create: () => ({
+    queue() { queues++; return exit.promise; },
+    steer() { steers++; },
+    cancel() { cancels++; return true; },
+  }) });
+  for (let n = 1; n <= 256; n++) { await f.send(n, { type: "dispatch", message: "input" }); await f.settled(n); }
+  await f.send(257, { type: "steer", message: "overflow" }); await f.settled(257);
+  assert.equal((await f.status(257)).state, "failed");
+  assert.equal(queues, 256); assert.equal(steers, 0); assert.equal(cancels, 0);
   exit.resolve();
 });

@@ -59,9 +59,9 @@ await session.dispatch({ type: "prompt", prompt: "Continue" });
 
 `stop()` releases the current Sandbox and closes streams, potentially interrupting work. It retains current errors for an unmaterialized Session. The integration route includes the Workspace selector for platform ownership/binding checks without provisioning.
 
-Dispatch and steer accept the same message type and return an ID/status reference. Dispatch submits ordinary input; steer preserves priority intent for the runtime’s activity scheduler or live harness adapter. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
+Dispatch and steer accept the same message type and return an ID/status reference. Dispatch invokes the harness’s `queue` method; steer invokes its `steer` method. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
 
-`cancel()` interrupts the active harness run and preserves queued input. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Steering and run cancellation are coordinated by the SDK runtime; the platform delivers their envelopes as ordinary messages. Durable views require the coordinated platform implementation.
+`cancel()` interrupts the active harness run and preserves queued input. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Steering and run cancellation are implemented by the harness; the platform delivers their envelopes as ordinary messages. Durable views require the coordinated platform implementation.
 
 ## Stream output
 
@@ -81,20 +81,16 @@ Breaking iteration or aborting the subscription only closes its stream. It does 
 // src/agent.ts — the harness factory compiled into the Sandbox.
 import type { SessionHarness, SessionHarnessContext } from "@cantelop/sdk/session";
 import type { Message, Event, Reply } from "./contracts.js";
-import { runAgent } from "./harness.js";
+import { createHarness } from "./harness.js";
 
 export function create(context: SessionHarnessContext): SessionHarness<Message, Event, Reply> {
-  return {
-    async run(message, { signal, output, view }) {
-      return await runAgent(message, { signal, output, view, session: context.session });
-    },
-  };
+  return createHarness(context); // Implements queue(message, work), steer(message, work), cancel().
 }
 ```
 
-The factory runs once per Session runtime incarnation, on first input or recovery. It returns one harness with `run`, an optional steering capability, and an optional `cancel` hook. The SDK queues ordinary input without blocking intake. `run` resolves after execution and cleanup; its return value supplies `session.request()` replies. Work receives its own signal, output, view, message identity, and Session resources. The compiler bundles the factory and its dependencies into the Sandbox while excluding them from backend and Edge artifacts.
+The factory runs once per Session runtime incarnation, on the first harness command or recovery. It returns one harness implementing `queue(message, work)`, `steer(message, work)`, and `cancel()`. Each implementation owns ordering, steering behavior, interruption, and cleanup. The SDK calls those methods directly and keeps intake responsive while their promises remain pending. `queue` resolves after the submitted operation and its cleanup; its return value supplies `session.request()` replies. `steer` resolves at the implementation's completion boundary: native input may be accepted immediately, while an interrupt-and-resume implementation can wait for the redirected turn.
 
-A function-valued `steering` capability injects input into the active native run. Steering while idle schedules a new run. The harness declares its own steering policy; app constructors only supply `runtime: { create }`. Omitting `steering` makes steering unsupported; `steering: "queue"` selects priority queueing, while `steering: "interrupt"` admits priority input and interrupts the active operation before its next run. Both preserve FIFO within each priority. Interrupt admission failures leave active work untouched, and cleanup must complete before a queued turn starts.
+Work receives a signal, typed output/view, submission identity and Session resources. The SDK tracks operation lifetimes, attribution and deadlines without selecting provider scheduling behavior. `cancel()` returns whether an active operation was signalled and preserves waiting input. The compiler bundles the factory and its dependencies into the Sandbox while excluding them from backend and Edge artifacts.
 
 Custom runtimes can use `runtime: { receive, onActivate?, onRecover?, redelivery? }`. Their intake is serialized; move long-running work into `context.activity` to keep control intake responsive.
 
@@ -136,7 +132,7 @@ For a runnable browser and server integration, see [the web chat example](exampl
 
 ### Harness controls and durable Session views
 
-Dispatch, steer and cancel share ordinary delivery. The platform treats their SDK command payloads as opaque. Queueing, steering and cancellation are coordinated in the SDK's single execution slot.
+Dispatch, steer and cancel share ordinary delivery. The platform treats their SDK command payloads as opaque. The harness implementation owns queueing, steering and active-operation cancellation. The SDK owns command receipts and operation-scoped output and replies.
 
 ```ts
 await session.dispatch(message);
@@ -144,9 +140,9 @@ await session.steer(newDirection);
 await session.cancel();
 ```
 
-`session.cancel({ id?, signal? })` takes no target message ID and returns `{ state: "requested" | "idle" }`. It captures the active run when the command reaches the Sandbox, signals its work context, and invokes its optional provider cancellation hook once. `requested` acknowledges interruption, not completed cleanup. The execution slot remains occupied until work, steering, and cancellation cleanup settle. Queued input is preserved; cancellation while idle does not affect later input. Retrying the same command ID reuses its result and cannot interrupt a subsequent run.
+`session.cancel({ id?, signal? })` takes no target message ID and returns `{ state: "requested" | "idle" }`. It invokes the harness’s `cancel()` method, which selects and signals its active operation. `requested` acknowledges interruption, not completed cleanup. The harness retains ownership of the active operation until cleanup settles before reusing provider resources. Queued input is preserved; cancellation while idle does not affect later input. Retrying the same command ID reuses its result and cannot interrupt a subsequent run.
 
-Submission IDs remain available for receipts, retries and output correlation. Dispatch status describes intake; a queued run may outlive intake completion. Requests wait for the run's returned reply while other input and control remain responsive. `stop()` releases the Sandbox and retains Session identity. SDK queues and harness memory belong to one incarnation; recovery remains application-owned.
+Submission IDs remain available for receipts, retries and output correlation. Dispatch status describes intake; a queued run may outlive intake completion. Requests wait for `queue` to return its reply while other input and control remain responsive. `stop()` releases the Sandbox and retains Session identity. Harness memory belongs to one incarnation; recovery remains application-owned.
 
 For custom receive runtimes, `activity.start`, `queue`, `steer`, and `cancel` remain available. Register provider methods through activity options `onSteer` and `onCancel`; those hooks belong to the active execution.
 

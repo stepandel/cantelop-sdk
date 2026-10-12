@@ -38,12 +38,12 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 ## Phase 3 — Harness scheduling and active-run cancellation
 
-- Negotiate priority capability through the Edge ↔ Sandbox protocol. Dispatch is normal work; steer has priority at safe scheduling boundaries. Preserve FIFO within each priority and do not preempt a running receiver. Idle steer admits normally.
-- Persist message identity, payload and scheduling mode before acknowledgment. Deduplicate exact retries; reject conflicting reuse across commands/payloads. Recovery must preserve priority and admission order.
+- Deliver queue and steer intent through the Edge ↔ Sandbox protocol. Each harness implements ordering, idle steering, and safe native interruption through its required interface.
+- Persist message identity, payload and command intent before acknowledgment. Deduplicate exact retries; reject conflicting reuse across commands/payloads. Recovery must preserve priority and admission order.
 - Define busy work consistently across intake and background activity. Provider adapters must consume prioritized input at safe points without introducing a separate steering payload type.
 - Keep keep-alive optional in the public contract; resolve method/reference/App defaults in order. Preserve existing quiescence/stop semantics and specify active lease effects in platform tests.
-- Implement session-scoped harness factories, SDK-owned queueing, native steering adapters and active-run cancellation. Hold the execution slot through work and provider cleanup; deduplicate cancellation retries so they cannot interrupt a later run.
-- Handle admission/start/settlement/cancellation races, unknown targets, repeated cancellation, shared work, lost acknowledgments and replacement incarnations. Acceptance never claims cooperative work has stopped.
+- Implement session-scoped harness factories with queue, steer and cancel methods. Each harness owns scheduling and retains its provider slot through cleanup; deduplicate cancellation retries so they cannot interrupt a later run.
+- Handle admission/start/settlement/cancellation races, idle operations, repeated cancellation, shared work, lost acknowledgments and replacement incarnations. Acceptance never claims cooperative work has stopped.
 - Convert provider examples from their existing application-defined control messages only after actor support exists. Maintain generic non-agent and durable application queue examples.
 
 **Gate:** priority ordering, idle admission, cancellation attribution, exact retries, late cancellation, process loss/redelivery and provider completion distinctions pass cross-repository tests. Advertise capabilities only then.

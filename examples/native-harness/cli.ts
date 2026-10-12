@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { TurnQueue } from "../harness/queue.js";
 import type { SessionHarness, SessionHarnessWorkContext } from "@cantelop/sdk/session";
 
 export type NativeEvent = Readonly<Record<string, unknown>>;
@@ -148,30 +149,31 @@ export async function runJsonProcess(options: {
 
 /** Shared turn signals and output publication for stock CLI harnesses. */
 export abstract class NativeHarness implements SessionHarness<{ type: "prompt"; prompt: string }, NativeEvent> {
-  readonly steering = "interrupt" as const;
-  constructor(private readonly lifetime?: AbortSignal) {}
+  private readonly turns: TurnQueue<{ type: "prompt"; prompt: string }, NativeEvent>;
+  constructor(lifetime?: AbortSignal) {
+    this.turns = new TurnQueue((message, work) => this.executeSubmission(message, work), lifetime);
+  }
   protected abstract execute(turn: NativeTurn): Promise<void>;
 
-  run(message: { type: "prompt"; prompt: string }, work: SessionHarnessWorkContext<{ type: "prompt"; prompt: string }, NativeEvent>): Promise<void> {
-    const signal = this.lifetime ? AbortSignal.any([work.signal, this.lifetime]) : work.signal;
-    const publish = async (event: NativeEvent) => {
-      signal.throwIfAborted();
-      let abort!: () => void;
-      const interrupted = new Promise<never>((_, reject) => {
-        abort = () => reject(signal.reason);
-        signal.addEventListener("abort", abort, { once: true });
-      });
-      try { await Promise.race([work.output.send(event), interrupted]); }
-      finally { signal.removeEventListener("abort", abort); }
-    };
+  queue(message: { type: "prompt"; prompt: string }, work: SessionHarnessWorkContext<{ type: "prompt"; prompt: string }, NativeEvent>): Promise<void> {
+    return this.turns.enqueue(message, work);
+  }
+  steer(message: { type: "prompt"; prompt: string }, work: SessionHarnessWorkContext<{ type: "prompt"; prompt: string }, NativeEvent>): Promise<void> {
+    const completion = this.turns.enqueue(message, work, true);
+    this.turns.cancel();
+    return completion;
+  }
+  cancel(): boolean { return this.turns.cancel(); }
+
+  private executeSubmission(message: { type: "prompt"; prompt: string }, work: SessionHarnessWorkContext<{ type: "prompt"; prompt: string }, NativeEvent>): Promise<void> {
     return this.execute({
-      text: message.prompt, signal,
+      text: message.prompt, signal: work.signal,
       emit: async event => {
         const json = JSON.stringify(event);
-        if (Buffer.byteLength(json) <= 48_000) { await publish(event); return; }
+        if (Buffer.byteLength(json) <= 48_000) { await work.output.send(event); return; }
         const eventId = randomUUID(), total = Math.ceil(json.length / 8000);
         for (let index = 0; index < total; index++) {
-          await publish({ type: "native.fragment", eventId, index, total, json: json.slice(index * 8000, (index + 1) * 8000) });
+          await work.output.send({ type: "native.fragment", eventId, index, total, json: json.slice(index * 8000, (index + 1) * 8000) });
         }
       },
     });

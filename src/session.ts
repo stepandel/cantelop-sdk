@@ -114,25 +114,20 @@ export interface SessionHarnessContext {
   database(): Promise<WorkspaceDatabase>;
 }
 
-/** Capabilities belong to one execution and close when it settles. */
+/** Capabilities belong to one submission and close when its method settles. */
 export interface SessionHarnessWorkContext<Message, Event = never, View = unknown>
   extends SessionHarnessContext, SessionActivityContext<Message, Event, View> {
   readonly message: Readonly<{ id: string; sequence: number; payload: Message }>;
 }
 
-/** A native input handler, or the SDK scheduling strategy for steering input. */
-export type SessionHarnessSteering<Message> =
-  | ((message: Message) => Awaitable<void>)
-  | "queue"
-  | "interrupt";
-
+/** One provider implementation owns input ordering, steering and active-operation cancellation. */
 export interface SessionHarness<Message, Event = never, Reply = never, View = unknown> {
-  /** Omit when unsupported. A function injects input into the active native run. */
-  readonly steering?: SessionHarnessSteering<Message>;
-  /** Resolves after execution and cleanup; its return value supplies request replies. */
-  run(message: Message, context: SessionHarnessWorkContext<Message, Event, View>): Awaitable<[Reply] extends [never] ? void : Reply>;
-  /** Interrupts the active operation; execution and cleanup retain the work slot. */
-  cancel?(): Awaitable<void>;
+  /** Accepts ordinary input; resolves after that submission's execution and cleanup. */
+  queue(message: Message, context: SessionHarnessWorkContext<Message, Event, View>): Awaitable<[Reply] extends [never] ? void : Reply>;
+  /** Handles redirection using the harness's own semantics and completion boundary. */
+  steer(message: Message, context: SessionHarnessWorkContext<Message, Event, View>): Awaitable<void>;
+  /** Signals the active operation and preserves waiting input; false means idle. */
+  cancel(): Awaitable<boolean>;
 }
 
 export interface SessionHarnessRuntime<Message, Event = never, Reply = never, View = unknown> {

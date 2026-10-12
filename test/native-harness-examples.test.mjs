@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { pathToFileURL } from "node:url";
 import { mkdtemp, rm, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
 
+const moduleDirectory = await mkdtemp(join(tmpdir(), "native-harness-modules-"));
+after(() => rm(moduleDirectory, { recursive: true, force: true }));
+let moduleSequence = 0;
 async function load(path) {
   const bundle = await build({ entryPoints: [new URL(path, import.meta.url).pathname], bundle: true, platform: "node", format: "esm", write: false });
-  return import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+  const modulePath = join(moduleDirectory, `module-${++moduleSequence}.mjs`);
+  await writeFile(modulePath, bundle.outputFiles[0].text);
+  return import(pathToFileURL(modulePath).href);
 }
 const providers = [
   ["codex", (await load("../examples/codex/src/native.ts")).NativeCodex],
@@ -61,7 +68,7 @@ let text=''; process.stdin.on('data',chunk=>text+=chunk); process.stdin.on('end'
 `, { mode: 0o755 });
   return { workspace, binary };
 }
-const run = (native, turn) => native.run({ type: "prompt", prompt: turn.text }, { signal: turn.signal, output: { send: turn.emit } });
+const run = (native, turn) => native.queue({ type: "prompt", prompt: turn.text }, { signal: turn.signal, output: { send: turn.emit } });
 const turn = (text, events, signal = new AbortController().signal) => ({ text, signal, emit: async event => { events.push(event); } });
 async function assertToolExited(pid) {
   // Group termination closes the pipes before the host necessarily reaps an
@@ -104,7 +111,7 @@ for (const [name, Native] of providers) {
     if (name === "codex") assert.equal(metadata.sqlite.startsWith(options.workspace), false);
     // The native runner implements SessionHarness directly.
     const output = [];
-    await native.run({ type: "prompt", prompt: "adapted" }, { signal: new AbortController().signal, output: { send: async event => output.push(event) } });
+    await native.queue({ type: "prompt", prompt: "adapted" }, { signal: new AbortController().signal, output: { send: async event => output.push(event) } });
     assert.equal(output.some(event => event.type === "metadata" && event.stdin === "adapted"), true);
   });
 
@@ -113,10 +120,11 @@ for (const [name, Native] of providers) {
     const controller = new AbortController();
     let toolPid, abortedAt;
     const execution = run(native, { text: "wait", signal: controller.signal, emit: async event => {
-      if (event.type === "tool.ready") { toolPid = event.pid; abortedAt = Date.now(); controller.abort(); }
+      if (event.type === "tool.ready") { toolPid = event.pid; abortedAt = Date.now(); assert.equal(native.cancel(), true); }
     } });
     await assert.rejects(execution, /abort/i);
     assert.ok(Date.now() - abortedAt >= 900);
+    assert.equal(controller.signal.aborted, false, "cancellation belongs to the harness");
     await assertToolExited(toolPid);
   });
 
@@ -136,7 +144,7 @@ test("large native frames are fragmented below the output limit and round-trip U
   const nativeEvent = { type: "assistant", text: "😀".repeat(30_000) };
   const harness = new class extends NativeHarness { async execute(turn) { await turn.emit(nativeEvent); } }();
   const events = [];
-  await harness.run({ type: "prompt", prompt: "test" }, { signal: new AbortController().signal, output: { send: async event => events.push(event) } });
+  await harness.queue({ type: "prompt", prompt: "test" }, { signal: new AbortController().signal, output: { send: async event => events.push(event) } });
   assert.equal(events.length > 1, true);
   assert.equal(events.every(event => event.type === "native.fragment" && Buffer.byteLength(JSON.stringify(event)) < 64 * 1024), true);
   assert.deepEqual(JSON.parse(events.map(event => event.json).join("")), nativeEvent);
@@ -150,7 +158,7 @@ test("incarnation shutdown interrupts a blocked output handoff and still waits f
     try { await turn.emit({ type: "assistant" }); }
     finally { await new Promise(resolve => setTimeout(resolve, 10)); exited = true; }
   } }(lifetime.signal);
-  const outcome = assert.rejects(harness.run({ type: "prompt", prompt: "hold" }, {
+  const outcome = assert.rejects(harness.queue({ type: "prompt", prompt: "hold" }, {
     signal: new AbortController().signal,
     output: { send: () => { publishing = true; return new Promise(() => {}); } },
   }), /abort/i);
@@ -158,4 +166,76 @@ test("incarnation shutdown interrupts a blocked output handoff and still waits f
   lifetime.abort();
   await outcome;
   assert.equal(exited, true);
+});
+
+test("CLI harness steer owns interruption, priority FIFO and its cleanup barrier", async () => {
+  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
+  let release;
+  const cleanup = new Promise(resolve => { release = resolve; });
+  const started = [], origins = [];
+  const context = new AsyncLocalStorage();
+  let active;
+  const native = new class extends NativeHarness {
+    async execute(turn) {
+      started.push(turn.text); origins.push(context.getStore());
+      if (turn.text === "hold") {
+        active = turn.signal;
+        await new Promise(resolve => turn.signal.addEventListener("abort", resolve, { once: true }));
+        await cleanup;
+      }
+    }
+  }();
+  const work = () => ({ signal: new AbortController().signal, output: { send: async () => {} } });
+  const first = assert.rejects(context.run("hold", () => native.queue({ type: "prompt", prompt: "hold" }, work())), /abort/i);
+  while (!active) await new Promise(resolve => setImmediate(resolve));
+  const ordinary = context.run("normal", () => native.queue({ type: "prompt", prompt: "normal" }, work()));
+  const priority1 = context.run("direction-1", () => native.steer({ type: "prompt", prompt: "direction-1" }, work()));
+  const priority2 = context.run("direction-2", () => native.steer({ type: "prompt", prompt: "direction-2" }, work()));
+  assert.equal(active.aborted, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(started, ["hold"]);
+  release(); await Promise.all([first, ordinary, priority1, priority2]);
+  assert.deepEqual(started, ["hold", "direction-1", "direction-2", "normal"]);
+  assert.deepEqual(origins, started, "queued turns retain their own logging context");
+  assert.equal(native.cancel(), false, "completion includes releasing the provider slot");
+});
+
+test("CLI harness rejects a full queue before steer can interrupt unrelated work", async () => {
+  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
+  let release, active;
+  const exit = new Promise(resolve => { release = resolve; });
+  const native = new class extends NativeHarness {
+    async execute(turn) { if (turn.text === "hold") { active = turn.signal; await exit; } }
+  }();
+  const work = () => ({ signal: new AbortController().signal, output: { send: async () => {} } });
+  const first = native.queue({ type: "prompt", prompt: "hold" }, work());
+  while (!active) await new Promise(resolve => setImmediate(resolve));
+  const waiting = Array.from({ length: 256 }, () => native.queue({ type: "prompt", prompt: "normal" }, work()));
+  assert.throws(() => native.steer({ type: "prompt", prompt: "direction" }, work()), /capacity/);
+  assert.equal(active.aborted, false);
+  release(); await Promise.all([first, ...waiting]);
+});
+
+
+test("queued input expiry removes only that harness submission", async () => {
+  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
+  let release, active;
+  const started = [];
+  const exit = new Promise(resolve => { release = resolve; });
+  const native = new class extends NativeHarness {
+    async execute(turn) {
+      started.push(turn.text);
+      if (turn.text === "hold") { active = turn.signal; await exit; }
+    }
+  }();
+  const work = signal => ({ signal, output: { send: async () => {} } });
+  const first = native.queue({ type: "prompt", prompt: "hold" }, work(new AbortController().signal));
+  while (!active) await new Promise(resolve => setImmediate(resolve));
+  const owner = new AbortController();
+  const expired = assert.rejects(native.queue({ type: "prompt", prompt: "expired" }, work(owner.signal)), /abort/i);
+  const kept = native.queue({ type: "prompt", prompt: "kept" }, work(new AbortController().signal));
+  owner.abort(); await expired;
+  assert.equal(active.aborted, false);
+  release(); await Promise.all([first, kept]);
+  assert.deepEqual(started, ["hold", "kept"]);
 });

@@ -94,10 +94,9 @@ try {
   await writeFile(path.join(consumer, "integration.ts"), [
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type AppCommandEnvelope, type SessionEventCursor } from "@cantelop/sdk";',
     'const runtime = { receive() {} };',
-    'import type { SessionHarnessSteering, SessionHarnessWorkContext, SessionActivityContext } from "@cantelop/sdk/session";',
-    'const nativeSteering: SessionHarnessSteering<{prompt:string}> = message => { message.prompt; };',
+    'import type { SessionHarnessWorkContext, SessionActivityContext } from "@cantelop/sdk/session";',
     'function activityContext(work: SessionHarnessWorkContext<string,never,{entries:string[]}>): SessionActivityContext<string,never,{entries:string[]}> { return work; }',
-    'const harnessApp = new CantelopClient().app<{prompt:string},{text:string},{answer:string},{entries:string[]}>({name:"harness-agent",runtime:{create(context){return {steering:"interrupt",async run(message,work){await work.output.send({text:message.prompt});await work.view.commit({entries:[context.session.id]});return {answer:message.prompt};},cancel(){}};}}});',
+    'const harnessApp = new CantelopClient().app<{prompt:string},{text:string},{answer:string},{entries:string[]}>({name:"harness-agent",runtime:{create(context){return {async queue(message,work){await work.output.send({text:message.prompt});await work.view.commit({entries:[context.session.id]});return {answer:message.prompt};},steer(message,work){message.prompt;work.signal;},cancel(){return false;}};}}});',
     'const viewApp = new CantelopClient().app<string,never,never,{entries:string[]}>({name:"view-agent",runtime:{receive(context){context.activity.queue(work => work.view.commit({entries:[context.message.payload]}));},onActivate(context){context.view.commit({entries:[]});},onRecover(context){context.view.commit({entries:[context.recovery.id]});}}});',
     'const harnessReply: {answer:string} = await harnessApp.workspace({slug:"customer"}).session().request({prompt:"hello"});',
     'const cancellation: {state:"requested"|"idle"} = await harnessApp.workspace({slug:"customer"}).session().cancel();',

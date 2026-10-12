@@ -85,7 +85,7 @@ The SDK serializes message intake, which stays responsive while work runs in
 work or `activity.queue(work, options)` to schedule a task in the single activity
 slot. `queue` returns immediately; its closure retains the submission's ownership.
 Steering submissions default to priority when they queue work, preserving FIFO
-within each priority. An explicit queue `priority` option overrides the default. The harness returned by `create` can declare `steering: "interrupt"` to admit priority work and interrupt the active operation before it runs; failed admission does not interrupt existing work, and cleanup holds the slot.
+within each priority. An explicit queue `priority` option overrides the default. Harness factories expose `queue`, `steer` and `cancel` methods. Their implementations own scheduling and cleanup; the SDK invokes them directly.
 
 `activity.steer(message)` invokes the current activity's registered `onSteer`
 adapter. No separate runtime handler is required. An absent adapter or inactive
@@ -107,7 +107,7 @@ command ID for deduplication; it has no target message ID.
 
 ## Active-run cancellation
 
-`session.cancel({ id?, signal? })` returns `{ state: "requested" | "idle" }` and takes no target message ID. The runtime synchronously captures its active execution when processing the command. Cancellation aborts that execution's signal and invokes its optional provider cancellation hook once. Work, steering, and cancellation cleanup must settle before the SDK reuses the execution slot. The command leaves queued submissions intact; an idle cancellation never targets future work.
+`session.cancel({ id?, signal? })` returns `{ state: "requested" | "idle" }` and takes no target message ID. The SDK invokes the harness’s `cancel()` method; the implementation signals its active operation and retains provider ownership until cleanup settles. The command leaves queued submissions intact; an idle cancellation never targets future work.
 
 Command IDs remain for safe retries. The Sandbox deduplicates a repeated cancellation command and returns its original receipt rather than selecting a new active run. A new cancellation command intentionally selects the run active when it is processed. `requested` is acceptance of cooperative interruption, not proof that execution has stopped.
 

@@ -18,6 +18,7 @@ import type {
   SessionActivityQueueOptions,
   SessionEnvironment,
   SessionHarness,
+  SessionHarnessWorkContext,
   SessionViewWriter,
   SessionOutput,
   SessionRecoveryContext,
@@ -84,6 +85,13 @@ interface RuntimeDelivery {
   readonly reply?: { value: unknown };
 }
 
+interface HarnessOperation {
+  readonly id: string;
+  readonly controller: AbortController;
+  readonly deadline: number;
+  cancelledAt?: string;
+}
+
 interface RuntimeRecovery {
   readonly fingerprint: string;
   readonly generation: number;
@@ -114,6 +122,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs, 4096, (id, reason) => {
     mailbox.cancel(id, reason);
     activity.cancelMessage(id);
+    harnessOperations.get(id)?.controller.abort(reason);
   });
   let sessionDatabase = createSessionDatabase(options.env ?? process.env);
   const database = async () => {
@@ -126,14 +135,14 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
   const lifetime = new AbortController();
   let activation: Promise<void> | undefined;
   let harness: SessionHarness<Input, Event, Reply, View> | undefined;
+  let pendingControls = 0;
+  const harnessOperations = new Map<string, HarnessOperation>();
   const activate = (session: SessionIdentity, messageId: string): Promise<void> => {
     activation ??= Promise.resolve().then(async () => {
       if ("create" in behaviour) {
         harness = await behaviour.create(Object.freeze({ signal: lifetime.signal, session, env: options.env ?? process.env, database }));
-        if (!harness || typeof harness.run !== "function" ||
-            harness.cancel !== undefined && typeof harness.cancel !== "function" ||
-            harness.steering !== undefined && typeof harness.steering !== "function" &&
-            harness.steering !== "queue" && harness.steering !== "interrupt") throw new TypeError("Invalid Session harness");
+        if (!harness || ["queue", "steer", "cancel"].some(method =>
+          typeof harness![method as keyof typeof harness] !== "function")) throw new TypeError("Invalid Session harness");
         return;
       }
       await behaviour.onActivate?.(Object.freeze({
@@ -200,10 +209,18 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     let replied = false;
     if (command.type === "cancel") {
       started();
-      const result = { id: message.id, state: activity.cancel() ? "requested" : "idle" };
-      if (replyHolder) replyHolder.value = result;
-      return Object.freeze({ generation, settled: Promise.resolve(), ...(replyHolder ? { reply: replyHolder } : {}) });
+      pendingControls++;
+      const settled = Promise.resolve().then(async () => {
+        signal.throwIfAborted();
+        if ("create" in behaviour) await activate(session, message.id);
+        signal.throwIfAborted();
+        const requested = "create" in behaviour ? await harness!.cancel() : activity.cancel();
+        if (typeof requested !== "boolean") throw new TypeError("Session harness cancel must return a boolean");
+        if (replyHolder) replyHolder.value = { id: message.id, state: requested ? "requested" : "idle" };
+      }).finally(() => { pendingControls--; quiescence.changed(); });
+      return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
     }
+
     let workCompletion: Promise<void> | undefined;
     const settled = mailbox.enqueue(message.id, async () => {
       signal.throwIfAborted();
@@ -255,34 +272,69 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
           signal.throwIfAborted();
           await observer.span("session.receive", async () => {
             if ("receive" in behaviour) return behaviour.receive(context);
-            const adapter = harness!;
-            const steering = adapter.steering;
-            if (command.type === "steer" && steering === undefined) throw new Error("Session harness does not support steering");
-            if (command.type === "steer" && activity.active && typeof steering === "function") {
-              await activity.steer(message.payload);
-              return;
-            }
-            workCompletion = activity.queue(message.id, async work => {
-              const result = await adapter.run(message.payload, Object.freeze({
-                signal: work.signal, output: work.output, view: work.view, send: work.send,
-                session, env: options.env ?? process.env, database,
-                message: Object.freeze({ ...message, sequence }),
-              }));
-              work.signal.throwIfAborted();
+            // The harness receives every submission directly. The SDK only tracks
+            // completion, attribution and deadlines; it never schedules provider work.
+            if (harnessOperations.size >= 256) throw new Error("harness operation capacity");
+            const operation: HarnessOperation = { id: randomUUID(), controller: new AbortController(), deadline: Date.now() + 1_800_000 };
+            harnessOperations.set(message.id, operation);
+            const workSignal = AbortSignal.any([signal, lifetime.signal, operation.controller.signal]);
+            const timer = setTimeout(() => operation.controller.abort(new DOMException("Harness operation timed out", "AbortError")), 1_800_000);
+            timer.unref();
+            const markCancellation = () => {
+              operation.cancelledAt = new Date().toISOString();
+              quiescence.changed();
+            };
+            operation.controller.signal.addEventListener("abort", markCancellation, { once: true });
+            let workOpen = true;
+            let pendingBytes = 0;
+            const followups: Input[] = [];
+            const assertWorkOpen = () => {
+              if (!workOpen) throw new Error("Session harness operation settled");
+              workSignal.throwIfAborted();
+            };
+            const work: SessionHarnessWorkContext<Input, Event, View> = Object.freeze({
+              signal: workSignal, session, env: options.env ?? process.env, database,
+              message: Object.freeze({ ...message, sequence }),
+              output: Object.freeze({ send: (event: Event) => {
+                assertWorkOpen();
+                return outputBuffer.publish(message.id, event, AbortSignal.any([workSignal, AbortSignal.timeout(30_000)]));
+              } }),
+              view: createViewCapability(message.id, workSignal, assertWorkOpen),
+              send: (payload: Input) => {
+                assertWorkOpen();
+                const bytes = Buffer.byteLength(JSON.stringify(payload));
+                if (followups.length >= 256 || pendingBytes + bytes > 8 * 1024 * 1024) throw new Error("harness mailbox capacity");
+                pendingBytes += bytes; followups.push(payload);
+              },
+            });
+            quiescence.changed();
+            const closeWork = () => {
+              workOpen = false;
+              clearTimeout(timer);
+              operation.controller.signal.removeEventListener("abort", markCancellation);
+              for (const payload of followups) {
+                try { sendMessage(payload); } catch (error) { console.error("Harness completion message rejected", error); }
+              }
+              harnessOperations.delete(message.id);
+              quiescence.changed();
+            };
+            let execution: unknown;
+            try {
+              workSignal.throwIfAborted();
+              execution = command.type === "steer"
+                ? harness!.steer(message.payload, work)
+                : harness!.queue(message.payload, work);
+            } catch (error) { closeWork(); throw error; }
+            workCompletion = Promise.resolve(execution).then(result => {
+              workSignal.throwIfAborted();
               if (replyRequested) {
                 let encoded: string | undefined;
                 try { encoded = JSON.stringify(result); } catch { /* normalized below */ }
                 if (encoded === undefined || Buffer.byteLength(encoded) > 64 * 1024) throw new Error("Session request reply must be JSON and at most 65536 bytes");
                 replyHolder!.value = JSON.parse(encoded);
               }
-            }, {
-              ...(typeof steering === "function" ? { onSteer: input => steering.call(adapter, input) } : {}),
-              ...(adapter.cancel ? { onCancel: () => adapter.cancel!() } : {}),
-              priority: command.type === "steer",
-            }, event => observer.recordActivity(event));
-            // Admit priority input before interrupting. A rejected admission must
-            // not stop unrelated work; cleanup holds the slot until it can run.
-            if (command.type === "steer" && steering === "interrupt") activity.cancel();
+            }).finally(closeWork);
+            void workCompletion.catch(() => undefined);
           });
         });
         if ("receive" in behaviour && replyRequested && !replied) throw new Error("Session request completed without a reply");
@@ -376,7 +428,22 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     () => quiescence.changed(),
     (messageId, state, signal) => outputBuffer.publish(messageId, state, AbortSignal.any([signal, AbortSignal.timeout(30_000)]), true),
   );
-  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
+  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle && harnessOperations.size === 0 && pendingControls === 0);
+  const supervisedWork = {
+    get active() { return activity.active || harnessOperations.size > 0; },
+    snapshot() {
+      const pending = [...harnessOperations.values()].sort((a, b) => a.deadline - b.deadline)[0];
+      const background = activity.snapshot();
+      if (!pending || background && Date.parse(background.deadline) <= pending.deadline) return background;
+      return { id: pending.id, deadline: new Date(pending.deadline).toISOString(), cancellation_requested_at: pending.cancelledAt };
+    },
+    cancel(reason?: unknown, activityId?: string) {
+      const pending = [...harnessOperations.values()].find(value => value.id === activityId);
+      if (!pending) return activity.cancel(reason, activityId);
+      pending.controller.abort(reason ?? new DOMException("Harness operation cancelled", "AbortError"));
+      return true;
+    },
+  };
   const handler = (request: IncomingMessage, response: ServerResponse) => {
     void handleRequest(
       request,
@@ -386,7 +453,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
       outputBuffer,
       observationBuffer,
       messages,
-      activity,
+      supervisedWork,
       behaviour.onRecover !== undefined,
       behaviour.redelivery === true,
       recover,

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
+const moduleDirectory = await mkdtemp(join(tmpdir(), "provider-harness-modules-"));
+after(() => rm(moduleDirectory, { recursive: true, force: true }));
+let moduleSequence = 0;
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() {
   let resolve;
@@ -57,7 +64,9 @@ async function harness(name, state, lifetime = new AbortController().signal) {
       build.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ contents: modules[args.path], loader: "js" }));
     } }],
   });
-  const { create } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+  const modulePath = join(moduleDirectory, `module-${++moduleSequence}.mjs`);
+  await writeFile(modulePath, bundle.outputFiles[0].text);
+  const { create } = await import(pathToFileURL(modulePath).href);
   delete globalThis[key];
   return create({ signal: lifetime, session: { id: "test" }, env: { OPENAI_API_KEY: "fixture" } });
 }
@@ -67,7 +76,7 @@ for (const name of ["openai", "web-chat", "pi"]) {
     const state = { cleanup: deferred(), aborted: false, exited: false };
     const adapter = await harness(name, state);
     let settled = false;
-    const failed = assert.rejects(adapter.run({ type: "prompt", prompt: "hello" }, {
+    const failed = assert.rejects(adapter.queue({ type: "prompt", prompt: "hello" }, {
       signal: new AbortController().signal,
       output: { send: async () => { throw new Error("handoff failed"); } },
     }), /handoff failed/).then(() => { settled = true; });

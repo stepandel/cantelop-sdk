@@ -62,7 +62,7 @@ export interface SessionRef<Message, Event = unknown, Reply = unknown, View = un
   request(message: Message, options?: SessionRequestOptions): Promise<Reply>;
   /** Explicit resume only; ending this subscription never cancels agent work. */
   stream(options?: SessionStreamOptions): AsyncIterable<SessionEvent<Event>>;
-  /** Native harness steering, or priority scheduling inside the SDK work queue. */
+  /** Delegates redirection to the harness implementation’s steer method. */
   steer(message: Message, options?: SessionSubmissionOptions): Promise<MessageRef>;
   /** Cooperative cancellation; acceptance is not cancellation completion. */
   cancel(options?: SessionCommandOptions): Promise<SessionCancellation>;
