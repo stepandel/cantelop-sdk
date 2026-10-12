@@ -15,7 +15,8 @@ export class NativeOpenCode extends CliHarness {
     this.snapshot = join(options.workspace, ".cantelop", "native-harness", "opencode", createHash("sha256").update(options.sessionId).digest("hex") + ".export.json");
   }
   private initialize(): Promise<NodeJS.ProcessEnv> {
-    return this.environment ??= (async () => {
+    if (this.environment) return this.environment;
+    this.environment = (async () => {
       const env = nativeEnvironment(this.options.workspace);
       const data = await mkdtemp(join(tmpdir(), "cantelop-opencode-"));
       env.XDG_DATA_HOME = data;
@@ -33,6 +34,9 @@ export class NativeOpenCode extends CliHarness {
       }
       return env;
     })();
+    // A transient setup failure must not poison every later turn.
+    this.environment.catch(() => { this.environment = undefined; });
+    return this.environment;
   }
   private async command(env: NodeJS.ProcessEnv, args: string[], format: "jsonl" | "json" | "text"): Promise<Record<string, unknown> | undefined> {
     let result: Record<string, unknown> | undefined;
@@ -46,7 +50,7 @@ export class NativeOpenCode extends CliHarness {
     turn.signal.throwIfAborted();
     const state = await this.store.load();
     const env = await this.initialize();
-    let completed = false, failed = false;
+    let completed = false, failed = false, turnFailed = true;
     try {
       await runJsonProcess({
         binary: this.options.binary, cwd: this.options.workspace, env,
@@ -63,13 +67,19 @@ export class NativeOpenCode extends CliHarness {
         } },
       });
       if (!completed || failed) throw new Error("OpenCode turn did not complete successfully");
+      turnFailed = false;
     } finally {
       if (state.id) {
-        const snapshot = await this.command(env, ["export", state.id], "json");
-        if (!snapshot || (snapshot.info as { id?: string } | undefined)?.id !== state.id) throw new Error("Invalid native OpenCode export");
-        const temporary = this.snapshot + "." + randomUUID() + ".tmp";
-        await writeFile(temporary, JSON.stringify(snapshot), { mode: 0o600 });
-        await rename(temporary, this.snapshot);
+        try {
+          const snapshot = await this.command(env, ["export", state.id], "json");
+          if (!snapshot || (snapshot.info as { id?: string } | undefined)?.id !== state.id) throw new Error("Invalid native OpenCode export");
+          const temporary = this.snapshot + "." + randomUUID() + ".tmp";
+          await writeFile(temporary, JSON.stringify(snapshot), { mode: 0o600 });
+          await rename(temporary, this.snapshot);
+        } catch (error) {
+          // Report the turn's own failure rather than a follow-on export failure.
+          if (!turnFailed) throw error;
+        }
       }
     }
   }

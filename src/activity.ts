@@ -13,18 +13,38 @@ export interface ActivityLifecycle {
   readonly outcome: "started" | "completed" | "failed" | "cancellation_requested" | "cancelled";
 }
 
+const PROVIDER_HOOK_GRACE_MS = 30_000;
+
+/** Completion messages buffered by one unit of work and admitted after it settles. */
+export class FollowupMessages<Message> {
+  private readonly messages: Message[] = [];
+  private bytes = 0;
+
+  push(payload: Message): void {
+    const size = Buffer.byteLength(JSON.stringify(payload) ?? "");
+    if (this.messages.length >= 256 || this.bytes + size > 8 * 1024 * 1024) throw new Error("activity mailbox capacity");
+    this.bytes += size;
+    this.messages.push(payload);
+  }
+
+  async flush(send: (payload: Message) => void | Promise<void>, label: string): Promise<void> {
+    for (const payload of this.messages.splice(0)) {
+      try { await send(payload); } catch (error) { console.error(label, error); }
+    }
+  }
+}
+
 interface ActiveActivity<Message> {
   readonly messageId: string;
   readonly observe: (event: ActivityLifecycle) => void;
   readonly id: string;
   readonly controller: AbortController;
-  readonly messages: Message[];
+  readonly messages: FollowupMessages<Message>;
   readonly onSteer: ((message: Message) => void | Promise<void>) | undefined;
   readonly onCancel: (() => void | Promise<void>) | undefined;
   cancellation: Promise<void>;
   steering: Promise<void>;
   steeringCount: number;
-  messageBytes: number;
   settled: boolean;
   deadline: number;
   cancelledAt?: string;
@@ -172,7 +192,7 @@ export class InMemoryActivity<Message, Event, View = unknown> {
     const timeout = options.timeoutMs ?? 1_800_000;
     const controller = new AbortController();
     const activity: ActiveActivity<Message> = {
-      id: randomUUID(), messageId, observe, controller, messages: [], messageBytes: 0,
+      id: randomUUID(), messageId, observe, controller, messages: new FollowupMessages<Message>(),
       settled: false, deadline: Date.now() + timeout, onSteer: options.onSteer,
       onCancel: options.onCancel, cancellation: Promise.resolve(),
       steering: Promise.resolve(), steeringCount: 0,
@@ -196,9 +216,6 @@ export class InMemoryActivity<Message, Event, View = unknown> {
       } }),
       send: (payload: Message) => {
         if (activity.settled) throw new Error("Session runtime activity has already settled");
-        const size = Buffer.byteLength(JSON.stringify(payload));
-        if (activity.messages.length >= 256 || activity.messageBytes + size > 8 * 1024 * 1024) throw new Error("activity mailbox capacity");
-        activity.messageBytes += size;
         activity.messages.push(payload);
       },
     });
@@ -234,20 +251,20 @@ export class InMemoryActivity<Message, Event, View = unknown> {
   private async settle(activity: ActiveActivity<Message>, failed: boolean): Promise<void> {
     if (this.current !== activity) return;
     activity.settled = true;
-    // Do not hand the slot to another harness while a steering adapter is still running.
-    await activity.steering;
-    await activity.cancellation;
+    // Do not hand the slot to another harness while a steering adapter is still running,
+    // but a wedged adapter or cancel hook must not hold the slot forever.
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.all([activity.steering, activity.cancellation]),
+      new Promise<void>(resolve => { grace = setTimeout(resolve, PROVIDER_HOOK_GRACE_MS); grace.unref(); }),
+    ]);
+    clearTimeout(grace);
     clearTimeout(activity.timer);
     this.flushing.add(activity);
     this.current = undefined;
     this.drain();
     this.stateChanged();
-    for (const payload of activity.messages) {
-      try {
-        const admitted = this.sendMessage(payload);
-        if (admitted !== undefined) await admitted;
-      } catch (error) { console.error("Activity completion message rejected", error); }
-    }
+    await activity.messages.flush(this.sendMessage, "Activity completion message rejected");
     this.flushing.delete(activity);
     this.report(activity, activity.controller.signal.aborted ? "cancelled" : failed ? "failed" : "completed");
     this.stateChanged();

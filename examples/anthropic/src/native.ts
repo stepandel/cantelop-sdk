@@ -16,7 +16,8 @@ export class NativeClaude extends CliHarness {
   auth(command: NativeAuthCommand, context: SessionNativeAuthContext): Promise<NativeAuthResult> { return this.nativeAuth.handle(command, context); }
   protected async execute(turn: NativeTurn): Promise<void> {
     const state = await this.store.load();
-    if (!state.id) { state.id = randomUUID(); await this.store.save(state); }
+    // An interrupted turn may have claimed its --session-id before init; never reuse it.
+    if (!state.resumable) { state.id = randomUUID(); await this.store.save(state); }
     const env = nativeEnvironment(this.options.workspace);
     await mkdir(env.CLAUDE_CONFIG_DIR!, { recursive: true, mode: 0o700 });
     let completed = false, failed = false;
