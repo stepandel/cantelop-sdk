@@ -4,7 +4,7 @@ export type RuntimeCommand<Message> =
       readonly type: "dispatch" | "steer";
       readonly message: Message;
     }
-  | { readonly type: "cancel"; readonly messageId: string };
+  | { readonly type: "cancel" };
 
 export function encodeRuntimeCommand<Message>(
   command: RuntimeCommand<Message>,
@@ -26,19 +26,14 @@ export function decodeRuntimeCommand<Message>(
   const command = value as Record<string, unknown>;
   const keys =
     command.type === "cancel"
-      ? ["__cantelop_command", "type", "messageId"]
+      ? ["__cantelop_command", "type"]
       : ["__cantelop_command", "type", "message"];
   if (
     command.__cantelop_command !== 2 ||
     Object.keys(command).some((key) => !keys.includes(key))
   )
     throw new TypeError("Invalid SDK runtime command");
-  if (
-    command.type === "cancel" &&
-    typeof command.messageId === "string" &&
-    /^msg_[0-9a-f]{32}$/.test(command.messageId)
-  )
-    return { type: "cancel", messageId: command.messageId };
+  if (command.type === "cancel") return { type: "cancel" };
   if (
     (command.type === "dispatch" || command.type === "steer") &&
     command.message !== undefined

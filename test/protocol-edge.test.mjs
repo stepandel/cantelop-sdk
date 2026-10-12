@@ -65,13 +65,13 @@ test("cancel uses uniform request delivery; read operations retain selector scop
  const calls=[];const worker=createProtocolWorker({runtimeId:"test.v1",fetch:async req=>{
   calls.push(req.clone());
   if(req.headers.get("Accept")==="text/event-stream")return new Response("event: error\ndata: {\"code\":\"event_stream_reset\"}\n\n",{headers:{"Content-Type":"text/event-stream"}});
-  if(req.url.endsWith("/requests"))return Response.json({id:messageId,reply:{id:messageId,messageId,state:"requested"}});
+  if(new URL(req.url).pathname.endsWith("/requests"))return Response.json({id:messageId,reply:{id:messageId,state:"requested"}});
   return Response.json({id:messageId,state:"handling",workspace_id:workspaceId});
  }});
- for(const command of [{type:"cancel",messageId},{type:"stop"},{type:"status",messageId},{type:"view"},{type:"stream",after:{streamId:"a".repeat(32),sequence:7}}])assert.equal((await worker.fetch(request(envelope(command)),bindings)).status,200);
- assert.deepEqual(calls.map(req=>req.method),["GET","POST","DELETE","GET","GET","GET"]);
- assert.equal(new URL(calls[1].url).pathname,"/__cantelop/integration/v2/requests");
- const delivered=await calls[1].json();assert.deepEqual(delivered.message,{id:messageId,payload:{__cantelop_command:2,type:"cancel",messageId}});assert.equal(delivered.session.workspace_id,workspaceId);assert.equal(delivered.session.keep_alive_seconds,120);
+ for(const command of [{type:"cancel"},{type:"stop"},{type:"status",messageId},{type:"view"},{type:"stream",after:{streamId:"a".repeat(32),sequence:7}}])assert.equal((await worker.fetch(request(envelope(command)),bindings)).status,200);
+ assert.deepEqual(calls.map(req=>req.method),["POST","DELETE","GET","GET","GET"]);
+ assert.equal(new URL(calls[0].url).pathname,"/__cantelop/integration/v2/sessions/chat/requests");
+ const delivered=await calls[0].json();assert.deepEqual(delivered.message,{id:messageId,payload:{__cantelop_command:2,type:"cancel"}});assert.equal(new URL(calls[0].url).searchParams.get("workspace_slug"),"customer");assert.equal(delivered.keep_alive_seconds,120);
  assert.ok(calls.every(req=>!req.url.includes("/cancel")&&!req.url.endsWith("/workspaces/open")));
 });
 

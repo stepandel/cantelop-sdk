@@ -26,7 +26,7 @@ for await (const event of session.stream()) {
 
 Use the same ID to address an existing Session, or omit it to spawn another Session sharing the Workspace. A canonical Workspace ID can replace the slug selector. Output can be replayed explicitly with the last cursor; disconnecting the iterator does not cancel work. Subscribe before dispatching when live subscription ordering matters, or use retained replay to recover earlier output within the broker's retention window.
 
-Use `session.dispatch(message)` for ordinary work, `session.steer(message)` for priority input, and `session.cancel(messageId)` to cancel one submission. Runtimes call `context.activity.queue(work)` to schedule ordinary work behind the active activity. Pi registers an `onSteer` adapter on its activity and calls `context.activity.steer(message)` from the same receive handler. Other examples queue steering input with priority. Cancellation aborts only the target's owned activity.
+Use `session.dispatch(message)` to queue ordinary work, `session.steer(message)` to steer the active harness, and `session.cancel()` to interrupt its current run. Provider examples register a session-scoped `runtime.create` factory. Pi and Anthropic provide native steering; OpenAI, OpenCode and web chat explicitly select priority queueing. Cancellation preserves waiting SDK input, and the execution slot stays occupied until cleanup completes. Custom receive/activity examples remain available for application-owned orchestration.
 
 Anthropic feeds its live input stream. OpenCode uses a headless server and the custom image in its manifest. All propagate managed activity cancellation to provider work. Workspace state is durable; warm runtime/provider memory is not.
 

@@ -19,13 +19,11 @@ for await (const event of session.stream()) {
 The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; deploy with the companion platform CLI. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
 
 Use `session.steer({type:"prompt",prompt:"adjust the task"})` and
-`session.cancel(message.id)`. These are SDK work commands delivered through the
+`session.cancel()`. These are SDK work commands delivered through the
 same actor transport. They do not require programmable Edge handlers.
 
 Run `pnpm check:examples` from the SDK root to type-check the backend client and runtime and qualify the runtime-only build artifact.
 
 ## Runtime behavior
 
-The SDK serializes OpenAI runs. Its receive handler calls `context.activity.queue`, so steering takes priority in that activity queue. Cancellation removes only the targeted queued message or signals its active run. The actor owns an Agent and MemorySession for its warm runtime incarnation. `OPENAI_API_KEY` is runtime-only, and `OPENAI_MODEL` defaults to `gpt-5-mini`.
-
-`cantelop.json` selects `src/cantelop.ts` for deployment. `src/contracts.ts` defines the message and event types shared by application calls and agent behavior.
+The factory creates one Agent and MemorySession per runtime incarnation. The SDK serializes runs and explicitly queues steering input with priority (`steering: "queue"`). Cancellation signals the active run and preserves waiting input. `OPENAI_API_KEY` is runtime-only, and `OPENAI_MODEL` defaults to `gpt-5-mini`.

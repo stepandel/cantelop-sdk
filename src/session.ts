@@ -26,6 +26,8 @@ export interface SessionActivityOptions<Message> {
   readonly timeoutMs?: number;
   /** Adapter for delivering input to this activity's live harness. */
   readonly onSteer?: (message: Message) => Awaitable<void>;
+  /** Provider interruption; the slot remains owned until this and work settle. */
+  readonly onCancel?: () => Awaitable<void>;
 }
 
 export interface SessionActivityQueueOptions<Message> extends SessionActivityOptions<Message> {
@@ -103,3 +105,35 @@ export type { SessionIdentity } from "./resources.js";
 
 export { createSessionDatabase } from "./session-database.js";
 export type { WorkspaceDatabase, DatabaseCredentials } from "./database.js";
+
+/** Session resources available for constructing one harness per incarnation. */
+export interface SessionHarnessContext {
+  readonly signal: AbortSignal;
+  readonly session: SessionIdentity;
+  readonly env: SessionEnvironment;
+  database(): Promise<WorkspaceDatabase>;
+}
+
+/** Capabilities belong to one execution and close when it settles. */
+export interface SessionHarnessWorkContext<Message, Event = never, View = unknown>
+  extends SessionHarnessContext {
+  readonly message: Readonly<{ id: string; sequence: number; payload: Message }>;
+  readonly output: SessionOutput<Event>;
+  readonly view: SessionViewWriter<View>;
+  send(message: Message): void;
+}
+
+export interface SessionHarness<Message, Event = never, Reply = never, View = unknown> {
+  /** Resolves after execution and cleanup; its return value supplies request replies. */
+  run(message: Message, context: SessionHarnessWorkContext<Message, Event, View>): Awaitable<[Reply] extends [never] ? void : Reply>;
+  steer?(message: Message): Awaitable<void>;
+  cancel?(): Awaitable<void>;
+}
+
+export interface SessionHarnessRuntime<Message, Event = never, Reply = never, View = unknown> {
+  create(context: SessionHarnessContext): Awaitable<SessionHarness<Message, Event, Reply, View>>;
+  /** Explicitly queue steering when native steering is unavailable; default is rejection. */
+  readonly steering?: "native" | "queue";
+  readonly redelivery?: boolean;
+  onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
+}

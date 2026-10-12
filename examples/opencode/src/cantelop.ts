@@ -1,4 +1,4 @@
-import { receive } from "./agent.js";
+import { create } from "./agent.js";
 import { CantelopClient } from "@cantelop/sdk";
 import type { SessionMessage, SessionEvent } from "./contracts.js";
 
@@ -6,7 +6,7 @@ const cantelop = new CantelopClient();
 
 export const app = cantelop.app<SessionMessage, SessionEvent>({
   name: "opencode",
-  runtime: { receive },
+  runtime: { create, steering: "queue" },
   environment: {
     ANTHROPIC_API_KEY: { secret: true, required: true },
     OPENCODE_MODEL: { default: "anthropic/claude-sonnet-4-5" },

@@ -20,6 +20,8 @@ interface ActiveActivity<Message> {
   readonly controller: AbortController;
   readonly messages: Message[];
   readonly onSteer: ((message: Message) => void | Promise<void>) | undefined;
+  readonly onCancel: (() => void | Promise<void>) | undefined;
+  cancellation: Promise<void>;
   steering: Promise<void>;
   steeringCount: number;
   messageBytes: number;
@@ -34,6 +36,7 @@ interface QueuedActivity<Message, Event> {
   readonly work: SessionActivityFunction<Message, Event>;
   readonly options: SessionActivityQueueOptions<Message>;
   readonly observe: (event: ActivityLifecycle) => void;
+  readonly reject: (reason: unknown) => void;
 }
 
 export type ActivityCancellation = "cancelled" | "requested" | false;
@@ -72,14 +75,23 @@ export class InMemoryActivity<Message, Event> {
     work: SessionActivityFunction<Message, Event>,
     options: SessionActivityQueueOptions<Message> = {},
     observe: (event: ActivityLifecycle) => void = () => undefined,
-  ): void {
+  ): Promise<void> {
     this.validate(work, options);
     if (options.priority !== undefined && typeof options.priority !== "boolean") throw new TypeError("Invalid activity priority");
     if (this.queued.length >= 256) throw new Error("activity queue capacity");
-    this.queued.push({ messageId, work, options: { ...options }, observe });
+    let resolve!: () => void;
+    let reject!: (reason: unknown) => void;
+    const completion = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    // Dispatch does not wait for work; request callers may observe completion.
+    void completion.catch(() => undefined);
+    this.queued.push({ messageId, work: async context => {
+      try { await work(context); context.signal.throwIfAborted(); resolve(); }
+      catch (error) { reject(error); throw error; }
+    }, options: { ...options }, observe, reject });
     this.stateChanged();
     // Intake can enqueue several activities before any user work begins.
     queueMicrotask(() => this.drain());
+    return completion;
   }
 
   async steer(message: Message): Promise<void> {
@@ -98,7 +110,7 @@ export class InMemoryActivity<Message, Event> {
   }
 
   cancel(reason?: unknown): boolean {
-    const target = this.current ?? [...this.flushing][0];
+    const target = this.current;
     return target ? this.abort(target, reason) : false;
   }
 
@@ -106,6 +118,7 @@ export class InMemoryActivity<Message, Event> {
     let removed = false;
     for (let index = this.queued.length - 1; index >= 0; index--) {
       if (this.queued[index]!.messageId === id) {
+        this.queued[index]!.reject(new DOMException("Queued work cancelled", "AbortError"));
         this.queued.splice(index, 1);
         removed = true;
       }
@@ -146,6 +159,7 @@ export class InMemoryActivity<Message, Event> {
   private validate(work: SessionActivityFunction<Message, Event>, options: SessionActivityOptions<Message>): void {
     if (typeof work !== "function") throw new TypeError("Activity work must be a function");
     validateTimeout(options.timeoutMs ?? 1_800_000);
+    if (options.onCancel !== undefined && typeof options.onCancel !== "function") throw new TypeError("Activity onCancel must be a function");
     if (options.onSteer !== undefined && typeof options.onSteer !== "function") throw new TypeError("Activity onSteer must be a function");
   }
 
@@ -153,7 +167,7 @@ export class InMemoryActivity<Message, Event> {
     if (this.active || this.queued.length === 0) return;
     const priority = this.queued.findIndex(entry => entry.options.priority);
     const entry = this.queued.splice(priority < 0 ? 0 : priority, 1)[0]!;
-    this.launch(entry.messageId, entry.work, entry.options, entry.observe);
+    this.launch(entry.messageId, entry.work, entry.options, entry.observe, entry.reject);
   }
 
   private launch(
@@ -161,12 +175,14 @@ export class InMemoryActivity<Message, Event> {
     work: SessionActivityFunction<Message, Event>,
     options: SessionActivityOptions<Message>,
     observe: (event: ActivityLifecycle) => void,
+    reject?: (reason: unknown) => void,
   ): void {
     const timeout = options.timeoutMs ?? 1_800_000;
     const controller = new AbortController();
     const activity: ActiveActivity<Message> = {
       id: randomUUID(), messageId, observe, controller, messages: [], messageBytes: 0,
       settled: false, deadline: Date.now() + timeout, onSteer: options.onSteer,
+      onCancel: options.onCancel, cancellation: Promise.resolve(),
       steering: Promise.resolve(), steeringCount: 0,
     };
     activity.timer = setTimeout(() => this.abort(activity), timeout);
@@ -197,13 +213,18 @@ export class InMemoryActivity<Message, Event> {
     const result = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return work(context); });
     void result.then(
       () => this.settle(activity, false),
-      () => this.settle(activity, true),
+      error => { reject?.(error); return this.settle(activity, true); },
     ).catch(() => { /* Failed admission retains activity ownership for bounded supervision. */ });
   }
 
   private abort(target: ActiveActivity<Message>, reason?: unknown): boolean {
     if (target.cancelledAt === undefined) {
       target.cancelledAt = new Date().toISOString();
+      // Start the provider hook once, while this activity still owns the slot.
+      try { target.cancellation = Promise.resolve(target.onCancel?.()); }
+      catch (error) { target.cancellation = Promise.reject(error); }
+      // Provider failure must not prevent signalling or release the slot early.
+      target.cancellation = target.cancellation.catch(() => { this.report(target, "failed"); });
       this.report(target, "cancellation_requested");
       this.stateChanged();
     }
@@ -220,6 +241,7 @@ export class InMemoryActivity<Message, Event> {
     activity.settled = true;
     // Do not hand the slot to another harness while a steering adapter is still running.
     await activity.steering;
+    await activity.cancellation;
     clearTimeout(activity.timer);
     this.flushing.add(activity);
     this.current = undefined;

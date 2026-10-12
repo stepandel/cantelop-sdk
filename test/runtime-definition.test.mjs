@@ -29,7 +29,7 @@ test('Edge rejects missing or different runtime identity on every Session method
   const worker = createProtocolWorker({ runtimeId: "chat.v1", fetch: async () => { calls++; return Response.json({}); } });
   const commands = [
     { type: 'dispatch', message: 'hello' }, { type: 'steer', message: 'hello' },
-    { type: 'request', message: 'hello', timeoutMs: 1000 }, { type: 'cancel', messageId },
+    { type: 'request', message: 'hello', timeoutMs: 1000 }, { type: 'cancel' },
     { type: 'status', messageId }, { type: 'stop' }, { type: 'view' }, { type: 'stream' },
   ];
   for (const value of commands) {
@@ -222,4 +222,46 @@ test("editing one inline App preserves sibling identity while nested contract ed
   const third=await compileAppDefinitions(definition);
   assert.notEqual(third.apps[0].definition.id,second.apps[0].definition.id);
   assert.equal(third.apps[1].definition.id,second.apps[1].definition.id);
+});
+
+test("compiler extracts typed session-scoped harness factories without executing them", async t => {
+  const { definition, outdir } = await project(t);
+  const prefix = `import { CantelopClient } from ${JSON.stringify(clientModule)}; export const app = new CantelopClient().app<{prompt:string},{text:string},{answer:string},{entries:string[]}>({name:"harness", runtime:`;
+  for (const runtime of [
+    '{create:42}',
+    '{create() { return {run() {}};}}',
+    '{create() { return {}; }}',
+    '{create() { return {run(message) {message.wrong;}};}}',
+    '{create() { return {run(message,work) {work.output.send({wrong:true});}};}}',
+    '{create() { return {run(message,work) {work.view.commit({wrong:true});}};}}',
+    '{create() { return {run() {return {answer:42};}};}}',
+    '{create() { return {run() {},steer(message) {message.wrong;}};}}',
+    '{create() { return {run() {},cancel(message) {}};}}',
+    '{create() {return {run() {}};},receive() {}}',
+    '{create() {return {run() {}};},steering:"silent"}',
+  ]) {
+    await writeFile(definition, prefix + runtime + '});');
+    await assert.rejects(buildSessionRuntime({ definition, outdir }), /Invalid Session runtime/);
+  }
+  await writeFile(definition, prefix + `{
+    create(context) {
+      const marker = "harness-runtime-only";
+      throw new Error("factory executed during compilation");
+      return {
+        async run(message, work) {
+          await work.output.send({text:message.prompt});
+          await work.view.commit({entries:[marker]});
+          return {answer:message.prompt};
+        },
+        steer(message) {console.log(message.prompt, context.session.id);},
+        cancel() {},
+      };
+    }
+  }});`);
+  const compiled = await compileClientDefinition(definition);
+  assert.match(compiled.runtimeModule, /harness-runtime-only/);
+  assert.doesNotMatch(compiled.backendSource, /harness-runtime-only|factory executed/);
+  const native = await buildSessionRuntime({ definition, outdir });
+  const edge = await buildEdgeApi({ definition, outdir: path.join(outdir, "edge") });
+  assert.equal(native.manifest.session_runtime_id, edge.manifest.session_runtime_id);
 });

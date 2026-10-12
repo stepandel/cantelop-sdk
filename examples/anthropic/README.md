@@ -18,12 +18,8 @@ for await (const event of session.stream()) {
 
 The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
 
-Use `session.dispatch(message)` for ordinary work, `session.steer(message)` for SDK priority input, and `session.cancel(messageId)` for targeted cancellation. This runtime forwards input to its live provider stream; `context.command.type` preserves SDK steering intent. The receive handler remains responsive while its activity owns the stream; its `onSteer` adapter sends priority input through `context.activity.steer`.
+Use `session.dispatch(message)` to queue work, `session.steer(message)` for native steering, and `session.cancel()` to interrupt the active run. The session-scoped factory retains Claude's conversation identity across runs. Each run owns a provider input stream; the SDK remains responsive while that run executes. Steering feeds priority input into its live stream. Cancellation closes that input and aborts the provider operation through the run's signal, preserving queued SDK input.
 
-Run `pnpm check:examples` from the SDK root to type-check the backend client and runtime and qualify the runtime-only build artifact.
+Run `pnpm check:examples` from the SDK root to type-check clients and runtimes and qualify the build artifacts.
 
-## Runtime behavior
-
-The actor starts a streaming-input Claude query. While active, ordinary prompts enter the SDK input stream with `later` priority and application steering commands with `now` priority. `cancel` closes the stream and aborts the query. Claude's conversation ID remains runtime state; the mailbox stays responsive because the live query is managed activity. Configure `ANTHROPIC_API_KEY` as a runtime secret.
-
-`cantelop.json` selects `src/cantelop.ts` for deployment. `src/contracts.ts` defines the message and event types shared by application calls and agent behavior.
+Configure `ANTHROPIC_API_KEY` as a runtime secret. `cantelop.json` selects `src/cantelop.ts` for deployment, and `src/contracts.ts` defines the shared message and event types.

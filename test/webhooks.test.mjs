@@ -20,7 +20,7 @@ test('webhook App uses Workspace ID/slug and every Session method through local 
       const url = new URL(request.url);
       if (url.pathname.endsWith('/workspaces/open')) return Response.json({ id: workspaceId, slug: 'customer' });
       if (url.pathname.endsWith('/messages')) return receipt((await request.json()).message.id);
-      if(url.pathname.endsWith('/requests')){const input=await request.json();return Response.json({id:input.message.id,reply:input.message.payload.type==='cancel'?{id:input.message.id,messageId,state:'requested'}:'done'})}
+      if(url.pathname.endsWith('/requests')){const input=await request.json();return Response.json({id:input.message.id,reply:input.message.payload.type==='cancel'?{id:input.message.id,state:'requested'}:'done'})}
       if(url.pathname.includes('/sessions/')&&url.pathname.includes('/messages/'))return Response.json({id:messageId,state:'handling',workspace_id:workspaceId});
       if (url.pathname.endsWith('/view')) return Response.json({ workspaceId, sessionId: 'chat', revision: '1', updatedAt: '2026-10-11T00:00:00Z', state: 'ready', cursor: { streamId: '3'.repeat(32), sequence: 0 } });
       if (url.pathname.endsWith('/events')) return new Response('', { headers: { 'Content-Type': 'text/event-stream' } });
@@ -38,7 +38,7 @@ test('webhook App uses Workspace ID/slug and every Session method through local 
       await session.steer('priority', { id: messageId, keepAliveSeconds: 30 });
       assert.equal(await session.request('request', { id: messageId }), 'done');
       const existing = app.workspace({ id: workspaceId }).session({ id: 'chat' });
-      assert.equal((await existing.cancel(messageId)).state, 'requested');
+      assert.equal((await existing.cancel()).state, 'requested');
       assert.equal((await existing.view()).state, 'ready');
       for await (const event of existing.stream()) assert.fail(JSON.stringify(event));
       await existing.stop();

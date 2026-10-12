@@ -50,8 +50,7 @@
       "id": "primary"
     },
     "command": {
-      "type": "cancel",
-      "messageId": "msg_11111111111111111111111111111111"
+      "type": "cancel"
     }
   },
   "accepted": {

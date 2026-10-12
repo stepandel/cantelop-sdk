@@ -19,7 +19,7 @@ for await (const event of session.stream()) {
 The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; deploy with the companion platform CLI. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
 
 Use `session.steer({type:"prompt",prompt:"adjust the task"})` and
-`session.cancel(message.id)`. These are SDK work commands delivered through the
+`session.cancel()`. These are SDK work commands delivered through the
 same actor transport. They do not require programmable Edge handlers.
 
 OpenCode requires the custom image declared in `cantelop.json`. The Dockerfile installs the headless server; Cantelop owns startup and Workspace mounts. Its server conversation state lasts for the warm Sandbox lifetime.

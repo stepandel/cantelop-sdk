@@ -1,6 +1,4 @@
-export type SessionMessage =
-  | { type: "prompt" | "steer"; prompt: string }
-  | { type: "cancel" };
+export type SessionMessage = { type: "prompt"; prompt: string };
 
 export type SessionEvent =
   | { type: "text_delta"; delta: string }

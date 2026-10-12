@@ -906,7 +906,7 @@ test("failed activation fences later intake in the same incarnation", async (t) 
   assert.deepEqual(received, []);
 });
 
-test("activity steering and targeted cancellation share a responsive runtime process", async t => {
+test("activity steering and run cancellation share a responsive runtime process", async t => {
   const calls = [];
   let activeSignal;
   const server = createServer(createSessionRuntimeHandler({
@@ -944,29 +944,14 @@ test("activity steering and targeted cancellation share a responsive runtime pro
   await send(103, { type: "steer", message: { prompt: "change direction" } });
   assert.equal(activeSignal.aborted, false);
   assert.equal(calls.some(call => call.steering === "change direction"), true);
-  await send(104, { type: "cancel", messageId: id(102) });
-  const queuedReply = await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(104)}/reply`)).json();
-  assert.equal(queuedReply.reply.state, "cancelled");
-  assert.equal(activeSignal.aborted, false);
-  await send(105, { type: "cancel", messageId: id(101) });
+  await send(104, { type: "cancel" });
+  const reply = await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(104)}/reply`)).json();
+  assert.equal(reply.reply.state, "requested");
   await waitFor(() => activeSignal.aborted);
-  assert.equal(calls.some(call => call.work === "queued"), false);
+  await waitFor(() => calls.some(call => call.work === "queued"));
   assert.equal(new Set(calls.map(call => call.pid)).size, 1);
-  await send(106, { type: "cancel", messageId: id(102) });
-  assert.equal((await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(106)}/reply`)).json()).reply.state, "cancelled");
-});
-
-test("SDK cancellation aborts only the activity owned by its target message",async t=>{
- let signal;
- const server=createServer(createSessionRuntimeHandler(behaviour(context=>{
-   context.activity.start(async activity=>{signal=activity.signal;await new Promise(resolve=>signal.addEventListener("abort",resolve,{once:true}));});
- })));
- await listen(server);t.after(()=>close(server));
- const id=n=>`msg_${n.toString(16).padStart(32,"0")}`;
- const send=async(n,command)=>{const input=messageEnvelope({__cantelop_command:2,...command},"thread",id(n));if(command.type==="cancel")input.reply=true;const result=await fetch(`${origin(server)}/__cantelop/v2/messages`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});assert.equal(result.status,202);};
- await send(201,{type:"dispatch",message:{prompt:"run"}});await waitFor(()=>signal!==undefined);
- await send(202,{type:"cancel",messageId:id(999)});assert.equal(signal.aborted,false);
- await send(203,{type:"cancel",messageId:id(201)});await waitFor(()=>signal.aborted);
+  await send(106, { type: "cancel" });
+  assert.equal((await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(106)}/reply`)).json()).reply.state, "idle");
 });
 
 test("activity queue keeps intake responsive, preserves priority, and runs one harness", async t => {
@@ -1007,7 +992,7 @@ test("activity queue keeps intake responsive, preserves priority, and runs one h
   assert.deepEqual(worked, ["hold"]);
   const busy = await (await fetch(`${origin(server)}/__cantelop/v2/runtime`)).json();
   assert.equal(busy.quiescent, false);
-  await send(304, { type: "cancel", messageId: id(301) });
+  await send(304, { type: "cancel" });
   await waitFor(() => worked.length === 3);
   assert.deepEqual(worked, ["hold", "priority", "ordinary"]);
   assert.equal(peak, 1);

@@ -309,7 +309,7 @@ function sessionRuntimeBootstrap(): string {
     "mark(\"bun_entry\");",
     `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
     'const { default: behaviour } = await import("cantelop:extracted-runtime");',
-    'if (typeof behaviour.receive !== "function") throw new Error("Session runtime must export receive");',
+    'if (typeof behaviour.receive !== "function" && typeof behaviour.create !== "function") throw new Error("Session runtime must export create or receive");',
     "mark(\"module_evaluated\");",
     "const sessionRuntime = serveSessionRuntime(behaviour);",
     "await sessionRuntime.ready;",

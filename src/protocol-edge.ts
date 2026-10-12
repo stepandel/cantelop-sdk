@@ -102,31 +102,14 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           } catch {
             throw new EdgeFailure("keep_alive_not_configured", 503);
           }
-          const statusResponse = await invoke(scopedPath(`/messages/${cancel.messageId}`), "GET");
-          if (!statusResponse.ok) return statusResponse;
-          const target = await readPlatformJSON(statusResponse);
-          if (!record(target) || target.state === "unknown") throw new EdgeFailure("message_not_found", 404);
-          if (typeof target.workspace_id !== "string" || !/^wsp_[0-9a-f]{32}$/.test(target.workspace_id)) {
-            throw new EdgeFailure("invalid_platform_response", 502);
-          }
-          if ((target.state === "handled" || target.state === "failed") &&
-              record(target.execution) && target.execution.phase === "quiescent") {
-            return Response.json({
-              protocolVersion: 2, id: envelope.id, messageId: cancel.messageId,
-              state: target.state === "failed" && record(target.error) && target.error.code === "message_cancelled"
-                ? "cancelled" : "settled",
-              status: target,
-            });
-          }
-          const response = await invoke("/__cantelop/integration/v2/requests", "POST", {
-            session: { id: session!.id, workspace_id: target.workspace_id, keep_alive_seconds: keepAliveSeconds },
-            message: { id: envelope.id, payload: encodeRuntimeCommand({ type: "cancel", messageId: cancel.messageId }) },
+          const response = await invoke(scopedPath("/requests"), "POST", {
+            message: { id: envelope.id, payload: encodeRuntimeCommand({ type: "cancel" }) },
+            keep_alive_seconds: keepAliveSeconds,
             timeout_ms: 30_000,
           });
           if (!response.ok) return response;
           const result = await readPlatformJSON(response);
           if (!record(result) || !record(result.reply)) throw new EdgeFailure("invalid_platform_response", 502);
-          if (record(result.reply.error)) return Response.json({ error: result.reply.error }, { status: 404 });
           return Response.json({ ...result.reply, protocolVersion: 2 });
         }
         case "status": {

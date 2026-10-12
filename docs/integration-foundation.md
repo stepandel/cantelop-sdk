@@ -18,7 +18,7 @@ const session = workspace.session({ id: "conversation" });
 const message = await session.dispatch({ prompt: "Review the change" });
 const steering = await session.steer({ prompt: "Focus on authentication" });
 await message.status();
-await session.cancel(steering.id);
+await session.cancel();
 const view = await session.view();
 for await (const event of session.stream({ after: view.cursor })) {
   // Apply application events after the snapshot's atomic boundary.
@@ -62,7 +62,7 @@ All operations use `POST {app_url}/commands`, including streaming. The URL is un
 | `dispatch` | `message`, optional `keepAliveSeconds` | Resolve/provision Workspace; admit normal-priority actor message; activate if needed |
 | `steer` | `message`, optional `keepAliveSeconds` | Same admission with steering intent available to the runtime activity scheduler |
 | `request` | `message`, `timeoutMs`, optional `keepAliveSeconds` | Normal message admission plus existing bounded reply wait |
-| `cancel` | `messageId` | Cancel the specific submission; no Workspace provisioning or Sandbox activation |
+| `cancel` | optional `keepAliveSeconds` | Interrupt the active run through selector-bound request delivery; no Workspace provisioning |
 | `status` | `messageId` | Read the original message receipt without activation |
 | `stop` | none | Release current Sandbox; preserve reusable Session identity |
 | `stream` | optional `after: { streamId, sequence }` | Read SSE events without activation |
@@ -103,23 +103,17 @@ Acceptance means durable delivery admission, not work completion. Successful
 `receive` acknowledges intake; its owned activity can outlive that acknowledgment.
 Queued activity can remain pending after its intake status becomes handled; message status describes intake, while activity owns work completion. A caller timeout/disconnect only stops waiting. Stable IDs deduplicate the opaque
 command payload; conflicting reuse fails. SDK cancellation uses its own reply
-command ID, separate from its target ID.
+command ID for deduplication; it has no target message ID.
 
-## Message-targeted cancellation
+## Active-run cancellation
 
-`session.cancel(messageId, { id?, signal? })` returns `{ messageId, state, status? }`. `requested` means cooperative cancellation was admitted; `cancelled` means queued work was withdrawn; `settled` reports an existing terminal message outcome in the required `status` field. Unknown targets are errors. A cancellation operation's retry ID is separate from its target ID.
+`session.cancel({ id?, signal? })` returns `{ state: "requested" | "idle" }` and takes no target message ID. The runtime synchronously captures its active execution when processing the command. Cancellation aborts that execution's signal and invokes its optional provider cancellation hook once. Work, steering, and cancellation cleanup must settle before the SDK reuses the execution slot. The command leaves queued submissions intact; an idle cancellation never targets future work.
 
-Cancellation interpretation lives in the Sandbox SDK. It removes queued intake or activity work,
-aborts the running message signal, or aborts the activity owned by that target ID.
-It does not stop another message's activity. SDK queues and activity ownership
-belong to the actor incarnation; durable delivery/status and generic recovery
-remain platform responsibilities. Application-managed work outside SDK activity
-must implement its own ownership and recovery.
+Command IDs remain for safe retries. The Sandbox deduplicates a repeated cancellation command and returns its original receipt rather than selecting a new active run. A new cancellation command intentionally selects the run active when it is processed. `requested` is acceptance of cooperative interruption, not proof that execution has stopped.
 
-Cancellation uses ordinary private request delivery, not a private cancellation
-route. The generated Edge checks existing message/Workspace scope without opening
-missing Workspaces. The command must reach the Sandbox before it takes effect.
-Stop, status, view and event reads retain their selector-bound private routes.
+Edge sends the opaque cancellation payload to `POST /__cantelop/integration/v2/sessions/{id}/requests`, with one Workspace selector in the query. The body contains `{ message: { id, payload }, keep_alive_seconds, timeout_ms }`. The platform resolves the existing Workspace and Session, verifies ownership/binding, then forwards through ordinary request delivery without interpreting the command. Missing resources fail without provisioning a Workspace. Generic delivery may reactivate an existing Session; an incarnation with no active execution returns `idle`.
+
+Submission IDs remain for receipt/status inspection and output correlation. `stop` remains a separate infrastructure lifecycle operation.
 
 ## Durable application view
 

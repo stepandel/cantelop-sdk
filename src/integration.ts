@@ -65,7 +65,7 @@ export interface SessionRef<Message, Event = unknown, Reply = unknown, View = un
   /** Native harness steering, or priority scheduling inside the SDK work queue. */
   steer(message: Message, options?: SessionSubmissionOptions): Promise<MessageRef>;
   /** Cooperative cancellation; acceptance is not cancellation completion. */
-  cancel(messageId: string, options?: SessionCommandOptions): Promise<MessageCancellation>;
+  cancel(options?: SessionCommandOptions): Promise<SessionCancellation>;
   /** Last committed application projection; never provisions or activates. */
   view(options?: { readonly signal?: AbortSignal }): Promise<SessionView<View>>;
   /** Releases the Sandbox. This identity remains reusable. */
@@ -83,11 +83,9 @@ export interface SessionSubmissionOptions extends SessionCommandOptions {
   readonly keepAliveSeconds?: number;
 }
 
-export interface MessageCancellation {
-  readonly messageId: string;
-  /** requested means cooperative cancellation was admitted, not completed. */
-  readonly state: "requested" | "cancelled" | "settled";
-  readonly status?: import("./resources.js").MessageStatus;
+export interface SessionCancellation {
+  /** requested means the active run was signalled; idle means there was no active run. */
+  readonly state: "requested" | "idle";
 }
 
 export interface SessionView<View = unknown> {
@@ -102,7 +100,7 @@ export interface SessionView<View = unknown> {
 export type SessionCommand<Message = unknown> =
   | { readonly type: "dispatch" | "steer"; readonly message: Message; readonly keepAliveSeconds?: number }
   | { readonly type: "request"; readonly message: Message; readonly keepAliveSeconds?: number; readonly timeoutMs: number }
-  | { readonly type: "cancel"; readonly messageId: string; readonly keepAliveSeconds?: number }
+  | { readonly type: "cancel"; readonly keepAliveSeconds?: number }
   | { readonly type: "status"; readonly messageId: string }
   | { readonly type: "stop" | "view" }
   | { readonly type: "stream"; readonly after?: SessionEventCursor };

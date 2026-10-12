@@ -26,18 +26,17 @@ test('both message receipts inspect the original submission through a status com
   for (const type of ['dispatch', 'steer']) assert.equal((await (await ref[type]('hi', { id: fixture.id })).status()).state, 'handled');
 });
 
-test('cancellation targets one message and distinguishes requested, withdrawn and settled outcomes', async () => {
-  for (const state of ['requested', 'cancelled', 'settled']) {
+test('cancellation interrupts the active run and distinguishes requested from idle', async () => {
+  for (const state of ['requested', 'idle']) {
     const calls = [];
     const ref = session(async request => {
       const body = await request.json(); calls.push(body);
-      assert.deepEqual(body.command, { type: 'cancel', messageId: fixture.id });
-      return Response.json({ protocolVersion: 2, id: body.id, messageId: fixture.id, state, ...(state === 'settled' ? { status: fixture.handled } : {}) });
+      assert.deepEqual(body.command, { type: 'cancel' });
+      return Response.json({ protocolVersion: 2, id: body.id, state });
     });
-    const result = await ref.cancel(fixture.id);
-    assert.equal(result.state, state); assert.equal(result.messageId, fixture.id);
+    const result = await ref.cancel();
+    assert.equal(result.state, state); assert.deepEqual(Object.keys(result), ["state"]);
     assert.equal(calls.length, 1);
-    if (state === 'settled') assert.equal(result.status.state, 'handled');
   }
 });
 
@@ -45,10 +44,10 @@ test('cancellation retries retain command identity and remote errors; malformed 
   const commandId = 'msg_' + 'f'.repeat(32);
   let calls = 0;
   const failed = session(async request => { calls++; assert.equal((await request.json()).id, commandId); throw new Error('lost'); });
-  await assert.rejects(failed.cancel(fixture.id, { id: commandId }), error => error.code === 'command_outcome_unknown' && error.messageId === commandId);
+  await assert.rejects(failed.cancel({ id: commandId }), error => error.code === 'command_outcome_unknown' && error.messageId === commandId);
   assert.equal(calls, 1);
-  await assert.rejects(session(async () => Response.json({ error: { code: 'workspace_conflict' } }, { status: 409 })).cancel(fixture.id), error => error.code === 'workspace_conflict' && error.status === 409);
-  for (const value of [{ protocolVersion: 2, messageId: 'other', state: 'requested' }, { protocolVersion: 2, messageId: fixture.id, state: 'done' }]) await assert.rejects(session(async () => Response.json(value)).cancel(fixture.id), /invalid_cancellation_response/);
+  await assert.rejects(session(async () => Response.json({ error: { code: 'workspace_conflict' } }, { status: 409 })).cancel(), error => error.code === 'workspace_conflict' && error.status === 409);
+  for (const value of [{ protocolVersion: 2, messageId: 'other', state: 'requested' }, { protocolVersion: 2, messageId: fixture.id, state: 'done' }]) await assert.rejects(session(async () => Response.json(value)).cancel(), /invalid_cancellation_response/);
 });
 
 test('durable view is a typed projection and carries the atomic subscription boundary without provisioning', async () => {
@@ -82,7 +81,7 @@ test('view/stop/stream cancellation signals never invoke cancellation or activat
   let calls = 0;
   const ref = session(async () => { calls++; return new Response(); });
   await assert.rejects(ref.view({ signal: controller.signal }), /client gone/);
-  await assert.rejects(ref.cancel(fixture.id, { signal: controller.signal }), /client gone/);
+  await assert.rejects(ref.cancel({ signal: controller.signal }), /client gone/);
   assert.equal(calls, 0);
   assert.equal('abort' in ref, false);
 });

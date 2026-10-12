@@ -144,38 +144,23 @@ async function fixture(mode = "success") {
     `data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`
   );
   let work;
-  let active = false;
   const abort = new AbortController();
   const events = [];
   const followups = [];
-  const activity = {
-    get active() {
-      return active;
-    },
-    queue(fn) {
-      active = true;
-      work = fn({
-        signal: abort.signal,
-        output: { send: async (e) => events.push(e) },
-        send: (e) => followups.push(e),
-      }).finally(() => {
-        active = false;
-      });
-    },
-    cancel() {
-      abort.abort();
-    },
-  };
-  const receive = (payload) =>
-    behaviour.receive({
-      command: { type: "dispatch" },
-      message: { payload },
-      session: { id: "cantelop-test" },
-      env: { ANTHROPIC_API_KEY: "test-placeholder" },
-      activity,
+  const harness = behaviour.create({
+    session: { id: "cantelop-test" },
+    env: { ANTHROPIC_API_KEY: "test-placeholder" },
+  });
+  const receive = payload => {
+    work = harness.run(payload, {
+      signal: abort.signal,
+      output: { send: async event => events.push(event) },
+      send: event => followups.push(event),
     });
+  };
   return {
     receive,
+    cancel: () => abort.abort(),
     events,
     followups,
     prompts,
@@ -224,7 +209,7 @@ test(
       f.receive({ type: "prompt", prompt: "hello" });
       while (!f.prompts.length)
         await new Promise((resolve) => setImmediate(resolve));
-      f.receive({ type: "cancel" });
+      f.cancel();
       await f.work;
       assert.deepEqual(f.followups, []);
       assert.deepEqual(f.events, []);

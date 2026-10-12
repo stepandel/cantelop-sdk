@@ -1,3 +1,4 @@
+import { assertSessionRuntime, type SessionRuntime } from "./session-runtime-contract.js";
 import { createSessionDatabase } from "./session-database.js";
 /// <reference types="node" />
 
@@ -17,7 +18,7 @@ import type {
   SessionActivityQueueOptions,
   SessionContext,
   SessionEnvironment,
-  SessionBehaviour,
+  SessionHarness,
   SessionOutput,
   SessionRecoveryContext,
 } from "./session.js";
@@ -98,17 +99,18 @@ interface RuntimeRecovery {
  * Creates the native HTTP protocol adapter. This lower-level entrypoint is
  * primarily useful to platform integration tests and custom native launchers.
  */
-export function createSessionRuntimeHandler<Input, Event = never, Reply = never>(
-  behaviour: SessionBehaviour<Input, Event, Reply>,
+export function createSessionRuntimeHandler<Input, Event = never, Reply = never, View = unknown>(
+  behaviour: SessionRuntime<Input, Event, Reply, View>,
   options: SessionRuntimeHandlerOptions = {},
 ): SessionRuntimeHandler {
   return createSessionRuntimeAdapter(behaviour, options).handler;
 }
 
-function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
-  behaviour: SessionBehaviour<Input, Event, Reply>,
+function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View = unknown>(
+  behaviour: SessionRuntime<Input, Event, Reply, View>,
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; closeDatabase(): void; } {
+  assertSessionRuntime(behaviour);
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs, 4096, (id, reason) => {
     mailbox.cancel(id, reason);
@@ -124,18 +126,27 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
   // Activation belongs to the runtime incarnation, not to the Message that triggered it.
   const lifetime = new AbortController();
   let activation: Promise<void> | undefined;
+  let harness: SessionHarness<Input, Event, Reply, View> | undefined;
   const activate = (session: SessionIdentity, messageId: string): Promise<void> => {
-    if (!behaviour.onActivate) return Promise.resolve();
-    activation ??= Promise.resolve().then(() => behaviour.onActivate!(Object.freeze({
-      signal: lifetime.signal, session, env: options.env ?? process.env, database,
-      activity: createActivityCapability(messageId, () => lifetime.signal.throwIfAborted()),
-      // Platform output is Message-addressed; restored work reports under the activating Message.
-      view: Object.freeze({commit:(state: unknown) => outputBuffer.publish(messageId,state,AbortSignal.any([lifetime.signal,AbortSignal.timeout(30_000)]),true)}),
-      output: Object.freeze({
-        send: (event: Event) => outputBuffer.publish(messageId, event, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)])),
-      }),
-      send: (payload: Input) => { sendMessage(payload); return Promise.resolve(); },
-    } satisfies SessionActivationContext<Input, Event>)));
+    activation ??= Promise.resolve().then(async () => {
+      if ("create" in behaviour) {
+        harness = await behaviour.create(Object.freeze({ signal: lifetime.signal, session, env: options.env ?? process.env, database }));
+        if (!harness || typeof harness.run !== "function" ||
+            harness.steer !== undefined && typeof harness.steer !== "function" ||
+            harness.cancel !== undefined && typeof harness.cancel !== "function") throw new TypeError("Invalid Session harness");
+        return;
+      }
+      await behaviour.onActivate?.(Object.freeze({
+        signal: lifetime.signal, session, env: options.env ?? process.env, database,
+        activity: createActivityCapability(messageId, () => lifetime.signal.throwIfAborted()),
+        // Restored work reports under the activating message.
+        view: Object.freeze({ commit: (state: unknown) => outputBuffer.publish(messageId, state, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)]), true) }),
+        output: Object.freeze({
+          send: (event: Event) => outputBuffer.publish(messageId, event, AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)])),
+        }),
+        send: (payload: Input) => { sendMessage(payload); return Promise.resolve(); },
+      } satisfies SessionActivationContext<Input, Event>));
+    });
     return activation;
   };
   let quiescence: RuntimeQuiescence;
@@ -181,11 +192,11 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     let replied = false;
     if (command.type === "cancel") {
       started();
-      if (replyHolder) {
-        replyHolder.value = cancelRuntimeWork(message.id, command.messageId, messages, [mailbox], activity);
-      }
+      const result = cancelRuntimeWork(message.id, activity);
+      if (replyHolder) replyHolder.value = result;
       return Object.freeze({ generation, settled: Promise.resolve(), ...(replyHolder ? { reply: replyHolder } : {}) });
     }
+    let workCompletion: Promise<void> | undefined;
     const settled = mailbox.enqueue(message.id, async () => {
       signal.throwIfAborted();
       started();
@@ -232,15 +243,41 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
         await runWithRuntimeLogContext(observer, async () => {
           await activate(session, message.id);
           signal.throwIfAborted();
-          await observer.span("session.receive", () => invokeBehaviour(behaviour, context));
+          await observer.span("session.receive", async () => {
+            if ("receive" in behaviour) return behaviour.receive(context);
+            const adapter = harness!;
+            if (command.type === "steer" && activity.active && behaviour.steering !== "queue") {
+              await activity.steer(message.payload);
+              return;
+            }
+            if (command.type === "steer" && !adapter.steer && behaviour.steering !== "queue") throw new Error("Session harness does not support steering");
+            workCompletion = activity.queue(message.id, async work => {
+              const result = await adapter.run(message.payload, Object.freeze({
+                signal: work.signal, output: work.output, view: work.view, send: work.send,
+                session, env: options.env ?? process.env, database,
+                message: Object.freeze({ ...message, sequence }),
+              }));
+              work.signal.throwIfAborted();
+              if (replyRequested) {
+                let encoded: string | undefined;
+                try { encoded = JSON.stringify(result); } catch { /* normalized below */ }
+                if (encoded === undefined || Buffer.byteLength(encoded) > 64 * 1024) throw new Error("Session request reply must be JSON and at most 65536 bytes");
+                replyHolder!.value = JSON.parse(encoded);
+              }
+            }, {
+              ...(adapter.steer ? { onSteer: input => adapter.steer!(input) } : {}),
+              ...(adapter.cancel ? { onCancel: () => adapter.cancel!() } : {}),
+              priority: command.type === "steer",
+            }, event => observer.recordActivity(event));
+          });
         });
-        if (replyRequested && !replied) throw new Error("Session request completed without a reply");
+        if ("receive" in behaviour && replyRequested && !replied) throw new Error("Session request completed without a reply");
       } finally {
         invocationOpen = false;
         outputOpen = false;
       }
     });
-    return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
+    return Object.freeze({ generation, settled: "create" in behaviour && replyRequested ? settled.then(() => workCompletion) : settled, ...(replyHolder ? { reply: replyHolder } : {}) });
   };
 
   const sendMessage = (payload: Input): void => {
@@ -360,8 +397,8 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
  * Starts the Session runtime server on the port injected by Cantelop. Customer
  * code never supplies a deployment port.
  */
-export function serveSessionRuntime<Input, Event = never, Reply = never>(
-  behaviour: SessionBehaviour<Input, Event, Reply>,
+export function serveSessionRuntime<Input, Event = never, Reply = never, View = unknown>(
+  behaviour: SessionRuntime<Input, Event, Reply, View>,
 ): SessionRuntimeServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
@@ -678,13 +715,6 @@ export async function readRequestEnvelope(request: IncomingMessage): Promise<unk
   } catch {
     throw new ProtocolError(400, "invalid_message_request");
   }
-}
-
-function invokeBehaviour<Input, Event, Reply>(
-  behaviour: SessionBehaviour<Input, Event, Reply>,
-  context: SessionContext<Input, Event, Reply>,
-): void | Promise<void> {
-  return behaviour.receive(context);
 }
 
 function createMessageID(): string {
