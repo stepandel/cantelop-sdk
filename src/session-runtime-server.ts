@@ -32,6 +32,8 @@ import {
 } from "./runtime-log-capture.js";
 import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
 import { InMemoryActivity } from "./activity.js";
+import { cancelRuntimeWork } from "./runtime-coordinator.js";
+import { decodeRuntimeCommand, type RuntimeCommand } from "./runtime-command.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
 import { SessionOutputBuffer } from "./output.js";
@@ -106,7 +108,10 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; closeDatabase(): void; } {
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
-  const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs);
+  const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs, 4096, (id, reason) => {
+    mailbox.cancel(id, reason);
+    controls.cancel(id, reason);
+  });
   let sessionDatabase = createSessionDatabase(options.env ?? process.env);
   const database = async () => {
     if (sessionDatabase.closed) sessionDatabase = createSessionDatabase(options.env ?? process.env);
@@ -140,8 +145,10 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
   const outputBuffer = new SessionOutputBuffer();
   const observationBuffer = new RuntimeObservationBuffer();
   const mailbox = new InMemoryMailbox<void>(markMessageLifecycle, () => quiescence.changed());
+  const controls = new InMemoryMailbox<void>(markMessageLifecycle, () => quiescence.changed());
   let activity: InMemoryActivity<Input, Event>;
   const recoveries = new Map<string, RuntimeRecovery>();
+  let nextIntakeSequence = 1;
 
   const receiveMessage = (
     message: Readonly<{ id: string; payload: Input; }>,
@@ -150,12 +157,22 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     signal: AbortSignal,
     started: () => void,
     replyRequested = false,
-    priority: "normal" | "priority" = "normal",
+    command: RuntimeCommand<Input> = { type: "dispatch", message: message.payload },
   ): RuntimeDelivery => {
     const generation = quiescence.observeMessage(message.id);
+    const sequence = nextIntakeSequence++;
     const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
     let replied = false;
-    const settled = mailbox.enqueue(message.id, async (sequence) => {
+    if (command.type === "cancel") {
+      started();
+      if (replyHolder) {
+        replyHolder.value = cancelRuntimeWork(message.id, command.messageId, messages, [mailbox, controls], activity);
+      }
+      return Object.freeze({ generation, settled: Promise.resolve(), ...(replyHolder ? { reply: replyHolder } : {}) });
+    }
+    const nativeSteer = command.type === "steer" && behaviour.steer !== undefined;
+    const intake = nativeSteer ? controls : mailbox;
+    const settled = intake.enqueue(message.id, async () => {
       signal.throwIfAborted();
       started();
       let invocationOpen = true;
@@ -181,6 +198,9 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
           return activity.active;
         },
         start(work: SessionActivityFunction<Input, Event>, policy?: { timeoutMs?: number; }) {
+          if (nativeSteer && !mailbox.isIdle) {
+            throw new Error("Steering cannot start another activity during active intake");
+          }
           activity.start(message.id, work, policy, (event) => observer.recordActivity(event));
         },
         extend(timeoutMs: number) { return activity.extend(timeoutMs); },
@@ -202,21 +222,25 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
       };
       try {
         const context = Object.freeze({
-          signal, message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
+          signal, command: Object.freeze({ type: command.type }), message: Object.freeze({ ...message, sequence }), session, env: options.env ?? process.env,
           activity: activityCapability, output, reply, send, database,
           view: Object.freeze({commit:(state: unknown) => { if(!invocationOpen) throw new Error("Session invocation settled");return outputBuffer.publish(message.id,state,AbortSignal.any([signal,AbortSignal.timeout(30_000)]),true); }}),
         });
         await runWithRuntimeLogContext(observer, async () => {
           await activate(session, message.id);
           signal.throwIfAborted();
-          await observer.span("session.receive", () => invokeBehaviour(behaviour, context));
+          await observer.span(nativeSteer?"session.steer":"session.receive", () => nativeSteer?behaviour.steer!(context):invokeBehaviour(behaviour, context));
         });
         if (replyRequested && !replied) throw new Error("Session request completed without a reply");
       } finally {
         invocationOpen = false;
         outputOpen = false;
       }
-    }, priority);
+    }, nativeSteer || !command.waitForActivity ? {} : {
+      priority: command.type === "steer",
+      beforeReceive: () => activity.waitForIdle(signal),
+      afterReceive: () => activity.waitForIdle(undefined, message.id),
+    });
     return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
   };
 
@@ -304,7 +328,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     () => quiescence.changed(),
     (messageId,state,signal)=>outputBuffer.publish(messageId,state,AbortSignal.any([signal,AbortSignal.timeout(30_000)]),true),
   );
-  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
+  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && controls.isIdle && activity.isIdle);
   const handler = (request: IncomingMessage, response: ServerResponse) => {
     void handleRequest(
       request,
@@ -393,7 +417,7 @@ async function handleRequest<Input>(
     trace: RuntimeTraceContext | undefined,
     signal: AbortSignal, started: () => void,
     replyRequested?: boolean,
-    priority?: "normal" | "priority",
+    command?: RuntimeCommand<Input>,
   ) => RuntimeDelivery,
   quiescence: RuntimeQuiescence,
   outputBuffer: SessionOutputBuffer,
@@ -416,7 +440,7 @@ async function handleRequest<Input>(
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
     writeJSON(response, 200, {
       sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
-      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true, redelivery: redeliverySupported, priority: true, messageCancellation: true, durableView: true },
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true, redelivery: redeliverySupported, steering: true, messageCancellation: true, durableView: true },
       observations: observationBuffer.metadata(), events: outputBuffer.metadata()
     });
     return;
@@ -468,9 +492,15 @@ async function handleRequest<Input>(
   const session = readSession(envelope.session);
   const trace = readObservabilityContext(envelope.observability);
   bindSession(session);
-  if (envelope.priority !== undefined && envelope.priority !== "normal" && envelope.priority !== "priority") throw new ProtocolError(400, "invalid_priority");
   const replyRequested = envelope.reply === true;
-  const result = messages.admit(message.id, { message, session, reply: replyRequested, priority: envelope.priority ?? "normal" }, (signal, started) => receiveMessage(message, session, trace, signal, started, replyRequested, envelope.priority === "priority" ? "priority" : "normal"), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
+  let command: RuntimeCommand<Input>;
+  try {
+    command = decodeRuntimeCommand<Input>(message.payload);
+  } catch {
+    throw new ProtocolError(400, "invalid_sdk_command");
+  }
+  const input = command.type === "cancel" ? message : { ...message, payload: command.message };
+  const result = messages.admit(message.id, { message, session, reply: replyRequested }, (signal, started) => receiveMessage(input, session, trace, signal, started, replyRequested, command), typeof envelope.deadline === "string" ? envelope.deadline : undefined, trace?.attemptId);
   writeJSON(response, 202, result.receipt);
 }
 
@@ -695,7 +725,7 @@ function isJSONContentType(value: string | undefined): boolean {
 
 function hasMessageEnvelopeShape(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return keys.every(key => ["session", "message", "observability", "deadline", "reply", "priority"].includes(key)) &&
+  return keys.every(key => ["session", "message", "observability", "deadline", "reply"].includes(key)) &&
     (value.deadline === undefined || typeof value.deadline === "string") &&
     (value.reply === undefined || typeof value.reply === "boolean") &&
     keys.includes("session") && keys.includes("message") &&

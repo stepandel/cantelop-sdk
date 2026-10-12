@@ -1,0 +1,53 @@
+/** SDK commands are opaque application payloads to the delivery transport. */
+export type RuntimeCommand<Message> =
+  | {
+      readonly type: "dispatch" | "steer";
+      readonly message: Message;
+      readonly waitForActivity?: boolean;
+    }
+  | { readonly type: "cancel"; readonly messageId: string };
+
+export function encodeRuntimeCommand<Message>(
+  command: RuntimeCommand<Message>,
+): unknown {
+  return { __cantelop_command: 2, ...command };
+}
+
+export function decodeRuntimeCommand<Message>(
+  value: unknown,
+): RuntimeCommand<Message> {
+  // Raw actor messages remain ordinary dispatch input for existing integrations.
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    !("__cantelop_command" in value)
+  )
+    return { type: "dispatch", message: value as Message };
+  const command = value as Record<string, unknown>;
+  const keys =
+    command.type === "cancel"
+      ? ["__cantelop_command", "type", "messageId"]
+      : ["__cantelop_command", "type", "message"];
+  if (
+    command.__cantelop_command !== 2 ||
+    Object.keys(command).some((key) => !keys.includes(key))
+  )
+    throw new TypeError("Invalid SDK runtime command");
+  if (
+    command.type === "cancel" &&
+    typeof command.messageId === "string" &&
+    /^msg_[0-9a-f]{32}$/.test(command.messageId)
+  )
+    return { type: "cancel", messageId: command.messageId };
+  if (
+    (command.type === "dispatch" || command.type === "steer") &&
+    command.message !== undefined
+  )
+    return {
+      type: command.type,
+      message: command.message as Message,
+      waitForActivity: true,
+    };
+  throw new TypeError("Invalid SDK runtime command");
+}

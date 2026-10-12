@@ -35,6 +35,18 @@ export class InMemoryActivity<Message, Event> {
     private readonly commitView: (messageId:string,state:unknown,signal:AbortSignal)=>Promise<void> = async () => {throw new Error("Session view handoff unavailable");},
   ) { }
 
+  private readonly waiters = new Set<()=>void>();
+
+  private changed():void {this.stateChanged();for(const wake of [...this.waiters])wake();}
+
+  async waitForIdle(signal?:AbortSignal,owner?:string):Promise<void>{
+    while(this.current!==undefined&&(owner===undefined||this.current.messageId===owner)){
+      signal?.throwIfAborted();
+      await new Promise<void>((resolve,reject)=>{const cleanup=()=>{this.waiters.delete(wake);signal?.removeEventListener("abort",abort)};const wake=()=>{cleanup();resolve()};const abort=()=>{cleanup();reject(signal!.reason)};this.waiters.add(wake);signal?.addEventListener("abort",abort,{once:true})});
+    }
+    signal?.throwIfAborted();
+  }
+
   get active(): boolean {
     return this.current !== undefined;
   }
@@ -57,7 +69,7 @@ export class InMemoryActivity<Message, Event> {
     activity.timer.unref();
     this.current = activity;
     this.report(activity, "started");
-    this.stateChanged();
+    this.changed();
     const output: SessionOutput<Event> = Object.freeze({
       send: async (event: Event) => {
         if (activity.settled) {
@@ -93,7 +105,7 @@ export class InMemoryActivity<Message, Event> {
     if (target.cancelledAt === undefined) {
       target.cancelledAt = new Date().toISOString();
       this.report(target, "cancellation_requested");
-      this.stateChanged();
+      this.changed();
     }
     target.controller.abort(
       reason ?? new DOMException("Session runtime activity cancelled", "AbortError"),
@@ -101,12 +113,17 @@ export class InMemoryActivity<Message, Event> {
     return true;
   }
 
+  cancelMessage(id:string):boolean {
+    const target=this.current ?? [...this.flushing][0];
+    return target?.messageId===id && this.cancel();
+  }
+
   extend(timeoutMs: number): void {
     validateTimeout(timeoutMs);
     const activity = this.current;
     if (!activity || activity.controller.signal.aborted) throw new Error("activity is not extendable");
     activity.deadline = Math.max(activity.deadline, Date.now() + timeoutMs);
-    clearTimeout(activity.timer); activity.timer = setTimeout(() => this.cancel(), activity.deadline - Date.now()); activity.timer.unref(); this.stateChanged();
+    clearTimeout(activity.timer); activity.timer = setTimeout(() => this.cancel(), activity.deadline - Date.now()); activity.timer.unref(); this.changed();
   }
 
   snapshot() { const target = [this.current, ...this.flushing].filter((value): value is ActiveActivity<Message> => value !== undefined).sort((a,b)=>a.deadline-b.deadline)[0]; return target ? {id:target.id,deadline:new Date(target.deadline).toISOString(),cancellation_requested_at:target.cancelledAt}:null; }
@@ -128,7 +145,7 @@ export class InMemoryActivity<Message, Event> {
     // while allowing admitted completion messages to start a new activity.
     this.flushing.add(activity);
     this.current = undefined;
-    this.stateChanged();
+    this.changed();
     for (const payload of activity.messages) {
       try {
         const admitted = this.sendMessage(payload);
@@ -137,7 +154,7 @@ export class InMemoryActivity<Message, Event> {
     }
     this.flushing.delete(activity);
     this.report(activity, activity.controller.signal.aborted ? "cancelled" : failed ? "failed" : "completed");
-    this.stateChanged();
+    this.changed();
   }
 }
 

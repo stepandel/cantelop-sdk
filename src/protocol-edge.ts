@@ -1,3 +1,4 @@
+import {encodeRuntimeCommand} from "./runtime-command.js";
 import { App } from "./app.js";
 import { validateAppDeploymentConfiguration, type AppEnvironmentDeclaration } from "./app-definition.js";
 import { RUNTIME_ID } from "./session-runtime-contract.js";
@@ -86,14 +87,47 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           const workspaceId = await resolveWorkspace();
           return await invoke(`/__cantelop/integration/v2/${submission.type === "request" ? "requests" : "messages"}`, "POST", {
             session: { id: session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds },
-            message: { id: envelope.id, payload: submission.message },
-            priority: submission.type === "steer" ? "priority" : "normal",
+            message: { id: envelope.id, payload: encodeRuntimeCommand({ type: submission.type === "steer" ? "steer" : "dispatch", message: submission.message }) },
             ...(submission.type === "request" ? { timeout_ms: submission.timeoutMs } : {}),
           });
         }
         case "cancel": {
           const cancel = sessionCommand;
-          return await invoke(scopedPath(`/messages/${cancel.messageId}/cancel`), "POST", { id: envelope.id });
+          const value = bindings.CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS;
+          const keepAliveSeconds = cancel.keepAliveSeconds ??
+            (typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value);
+          try {
+            assertKeepAlive(keepAliveSeconds);
+            if (keepAliveSeconds === undefined) throw new TypeError();
+          } catch {
+            throw new EdgeFailure("keep_alive_not_configured", 503);
+          }
+          const statusResponse = await invoke(scopedPath(`/messages/${cancel.messageId}`), "GET");
+          if (!statusResponse.ok) return statusResponse;
+          const target = await readPlatformJSON(statusResponse);
+          if (!record(target) || target.state === "unknown") throw new EdgeFailure("message_not_found", 404);
+          if (typeof target.workspace_id !== "string" || !/^wsp_[0-9a-f]{32}$/.test(target.workspace_id)) {
+            throw new EdgeFailure("invalid_platform_response", 502);
+          }
+          if ((target.state === "handled" || target.state === "failed") &&
+              record(target.execution) && target.execution.phase === "quiescent") {
+            return Response.json({
+              protocolVersion: 2, id: envelope.id, messageId: cancel.messageId,
+              state: target.state === "failed" && record(target.error) && target.error.code === "message_cancelled"
+                ? "cancelled" : "settled",
+              status: target,
+            });
+          }
+          const response = await invoke("/__cantelop/integration/v2/requests", "POST", {
+            session: { id: session!.id, workspace_id: target.workspace_id, keep_alive_seconds: keepAliveSeconds },
+            message: { id: envelope.id, payload: encodeRuntimeCommand({ type: "cancel", messageId: cancel.messageId }) },
+            timeout_ms: 30_000,
+          });
+          if (!response.ok) return response;
+          const result = await readPlatformJSON(response);
+          if (!record(result) || !record(result.reply)) throw new EdgeFailure("invalid_platform_response", 502);
+          if (record(result.reply.error)) return Response.json({ error: result.reply.error }, { status: 404 });
+          return Response.json({ ...result.reply, protocolVersion: 2 });
         }
         case "status": {
           const status = sessionCommand;

@@ -113,7 +113,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
             assertMessageID(messageId);
             const commandId = options.id ?? messageID(); assertMessageID(commandId);
             let value: unknown;
-            try { value = await send(envelope({ type: "cancel", messageId }, commandId), options.signal); }
+            try { value = await send(envelope({ type: "cancel", messageId, ...keepAlive({}) }, commandId), options.signal); }
             catch (error) { throw submissionError(error, commandId, options.signal); }
             if (!record(value) || value.protocolVersion !== 2 || value.id !== commandId || value.messageId !== messageId || typeof value.state !== "string" || !["requested", "cancelled", "settled"].includes(value.state)) throw new RemoteAppError("invalid_cancellation_response", 0, commandId);
             const status = value.status === undefined ? undefined : readMessageStatus(value.status, messageId);

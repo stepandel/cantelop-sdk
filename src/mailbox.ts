@@ -1,39 +1,44 @@
 /**
- * Activation-local priority mailbox. Completed results remain cached for the
+ * Activation-local FIFO work mailbox. Completed results remain cached for the
  * lifetime of the mailbox so retrying the same message ID does not invoke the
  * receiver again.
  */
 export type MailboxEvent =
   | Readonly<{
-    type: "enqueued";
-    messageId: string;
-    sequence: number;
-    depth: number;
-  }>
+      type: "enqueued";
+      messageId: string;
+      sequence: number;
+      depth: number;
+    }>
   | Readonly<{
-    type: "deduplicated";
-    messageId: string;
-  }>
+      type: "deduplicated";
+      messageId: string;
+    }>
   | Readonly<{
-    type: "handling";
-    messageId: string;
-    sequence: number;
-    depth: number;
-    queueWaitMicroseconds: number;
-  }>
+      type: "handling";
+      messageId: string;
+      sequence: number;
+      depth: number;
+      queueWaitMicroseconds: number;
+    }>
   | Readonly<{
-    type: "handled" | "failed";
-    messageId: string;
-    sequence: number;
-    handlingMicroseconds: number;
-  }>;
+      type: "handled" | "failed";
+      messageId: string;
+      sequence: number;
+      handlingMicroseconds: number;
+    }>;
 
 type MailboxObserver = (event: MailboxEvent) => void;
 
 export class InMemoryMailbox<Output> {
   private readonly results = new Map<string, Promise<Output>>();
   private running = false;
-  private readonly queue: { priority: string; run: () => Promise<void> }[] = [];
+  private readonly queue: {
+    id: string;
+    priority: boolean;
+    reject: (error: unknown) => void;
+    run: () => Promise<void>;
+  }[] = [];
   private pending = 0;
   private nextSequence = 1;
 
@@ -42,7 +47,15 @@ export class InMemoryMailbox<Output> {
     private readonly stateChanged: () => void = () => undefined,
   ) {}
 
-  enqueue(id: string, receive: (sequence: number) => Promise<Output>, priority: "normal" | "priority" = "normal"): Promise<Output> {
+  enqueue(
+    id: string,
+    receive: (sequence: number) => Promise<Output>,
+    options: {
+      priority?: boolean;
+      beforeReceive?: () => Promise<void>;
+      afterReceive?: () => Promise<void>;
+    } = {},
+  ): Promise<Output> {
     const existing = this.results.get(id);
     if (existing !== undefined) {
       this.observe(Object.freeze({ type: "deduplicated", messageId: id }));
@@ -53,45 +66,69 @@ export class InMemoryMailbox<Output> {
     const enqueuedAt = process.hrtime.bigint();
     this.pending += 1;
     this.stateChanged();
-    this.observe(Object.freeze({
-      type: "enqueued",
-      messageId: id,
-      sequence,
-      depth: this.pending,
-    }));
-    let resolve!: (value: Output) => void;
-    let reject!: (error: unknown) => void;
-    const result = new Promise<Output>((yes, no) => { resolve = yes; reject = no; });
-    const run = async () => {
-      const startedAt = process.hrtime.bigint();
-      this.observe(Object.freeze({
-        type: "handling",
+    this.observe(
+      Object.freeze({
+        type: "enqueued",
         messageId: id,
         sequence,
         depth: this.pending,
-        queueWaitMicroseconds: microsecondsBetween(enqueuedAt, startedAt),
-      }));
+      }),
+    );
+    let resolve!: (value: Output) => void;
+    let reject!: (error: unknown) => void;
+    const result = new Promise<Output>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    const run = async () => {
+      try {
+        if (options.beforeReceive) await options.beforeReceive();
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      const startedAt = process.hrtime.bigint();
+      this.observe(
+        Object.freeze({
+          type: "handling",
+          messageId: id,
+          sequence,
+          depth: this.pending,
+          queueWaitMicroseconds: microsecondsBetween(enqueuedAt, startedAt),
+        }),
+      );
       try {
         const output = await receive(sequence);
-        this.observe(Object.freeze({
-          type: "handled",
-          messageId: id,
-          sequence,
-          handlingMicroseconds: microsecondsBetween(startedAt, process.hrtime.bigint()),
-        }));
+        this.observe(
+          Object.freeze({
+            type: "handled",
+            messageId: id,
+            sequence,
+            handlingMicroseconds: microsecondsBetween(
+              startedAt,
+              process.hrtime.bigint(),
+            ),
+          }),
+        );
         resolve(output);
+        if (options.afterReceive) await options.afterReceive();
       } catch (error) {
-        this.observe(Object.freeze({
-          type: "failed",
-          messageId: id,
-          sequence,
-          handlingMicroseconds: microsecondsBetween(startedAt, process.hrtime.bigint()),
-        }));
+        this.observe(
+          Object.freeze({
+            type: "failed",
+            messageId: id,
+            sequence,
+            handlingMicroseconds: microsecondsBetween(
+              startedAt,
+              process.hrtime.bigint(),
+            ),
+          }),
+        );
         reject(error);
       }
     };
     this.results.set(id, result);
-    this.queue.push({ priority, run });
+    this.queue.push({ id, priority: options.priority ?? false, reject, run });
     queueMicrotask(() => this.drain());
     void result.then(
       () => this.settle(),
@@ -100,12 +137,23 @@ export class InMemoryMailbox<Output> {
     return result;
   }
 
+  cancel(id: string, reason: unknown): boolean {
+    const index = this.queue.findIndex((entry) => entry.id === id);
+    if (index < 0) return false;
+    const [entry] = this.queue.splice(index, 1);
+    entry!.reject(reason);
+    return true;
+  }
+
   private drain(): void {
     if (this.running || this.queue.length === 0) return;
     this.running = true;
-    const priorityIndex = this.queue.findIndex(entry => entry.priority === "priority");
-    const entry = this.queue.splice(priorityIndex < 0 ? 0 : priorityIndex, 1)[0]!;
-    void entry.run().finally(() => { this.running = false; this.drain(); });
+    const index = this.queue.findIndex((entry) => entry.priority);
+    const entry = this.queue.splice(index < 0 ? 0 : index, 1)[0]!;
+    void entry.run().finally(() => {
+      this.running = false;
+      this.drain();
+    });
   }
 
   get isIdle(): boolean {

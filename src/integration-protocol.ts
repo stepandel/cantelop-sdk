@@ -58,7 +58,8 @@ export function validateCommand(value: unknown): AppCommandEnvelope {
           keys.push("timeoutMs");
         }
         break;
-      case "cancel": case "status": assertMessageID(command.messageId); keys = ["type", "messageId"]; break;
+      case "cancel": assertMessageID(command.messageId); assertKeepAlive(command.keepAliveSeconds); keys=["type","messageId","keepAliveSeconds"]; break;
+      case "status": assertMessageID(command.messageId); keys=["type","messageId"]; break;
       case "view": case "stop": keys = ["type"]; break;
       case "stream": if (command.after !== undefined) assertCursor(command.after); keys = ["type", "after"]; break;
       default: throw new TypeError("Unknown command");

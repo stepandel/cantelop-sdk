@@ -35,6 +35,7 @@ export interface SessionViewWriter<View = unknown> {
 }
 
 export interface SessionContext<Message, Event = never, Reply = never, View = unknown> {
+  readonly command: Readonly<{type:"dispatch"|"steer"}>;
   readonly view: SessionViewWriter<View>;
   readonly signal: AbortSignal;
   readonly message: Readonly<{
@@ -69,7 +70,7 @@ export interface SessionRecoveryContext<Message, Event = never> {
 
 /** Runs once per runtime incarnation, before intake or recovery. */
 export type SessionActivationContext<Message, Event = never> = Omit<
-  SessionContext<Message, Event, never>, "message" | "reply"
+  SessionContext<Message, Event, never>, "message" | "reply" | "command"
 >;
 
 export interface SessionBehaviour<Message, Event = never, Reply = never, View = unknown> {
@@ -78,6 +79,8 @@ export interface SessionBehaviour<Message, Event = never, Reply = never, View = 
   onActivate?(context: SessionActivationContext<Message, Event>): Awaitable<void>;
   /** Successful return acknowledges intake. Commit durable work before returning. */
   receive(context: SessionContext<Message, Event, Reply, View>): Awaitable<void>;
+  /** Optional native steering hook; otherwise steer joins the SDK work queue with priority. */
+  steer?(context: SessionContext<Message, Event, Reply, View>): Awaitable<void>;
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }
 

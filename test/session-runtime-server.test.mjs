@@ -905,3 +905,63 @@ test("failed activation fences later intake in the same incarnation", async (t) 
   assert.equal(activations, 1);
   assert.deepEqual(received, []);
 });
+
+test("opaque steering and cancellation reach the same runtime while dispatch is blocked", async t => {
+  const calls=[];let running=false;
+  const handle=async context=>{
+    calls.push({type:context.command.type,prompt:context.message.payload.prompt,pid:process.pid});
+    if(context.command.type==="steer"){assert.equal(running,true);return;}
+    if(context.message.payload.prompt==="hold"){
+      running=true;
+      try{await new Promise((_,reject)=>context.signal.addEventListener("abort",()=>reject(context.signal.reason),{once:true}));}finally{running=false;}
+    }
+  };
+  const server=createServer(createSessionRuntimeHandler({receive:handle,steer:handle}));
+  await listen(server);t.after(()=>close(server));
+  const id=n=>`msg_${n.toString(16).padStart(32,"0")}`;
+  const send=async(n,command)=>{
+    const input=messageEnvelope({__cantelop_command:2,...command},"thread",id(n));if(command.type==="cancel")input.reply=true;
+    const response=await fetch(`${origin(server)}/__cantelop/v2/messages`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});assert.equal(response.status,202);return response.json();
+  };
+  await send(101,{type:"dispatch",message:{prompt:"hold"}});await waitFor(()=>running);
+  await send(102,{type:"dispatch",message:{prompt:"queued"}});
+  await send(103,{type:"steer",message:{prompt:"change direction"}});await waitFor(()=>calls.some(call=>call.type==="steer"));assert.equal(running,true);
+  await send(104,{type:"cancel",messageId:id(102)});
+  await waitFor(async()=>{const status=await(await fetch(`${origin(server)}/__cantelop/v2/messages/${id(104)}`)).json();return status.state==="succeeded"});
+  const queuedReply=await(await fetch(`${origin(server)}/__cantelop/v2/messages/${id(104)}/reply`)).json();assert.equal(queuedReply.reply.state,"cancelled");assert.equal(calls.some(call=>call.prompt==="queued"),false);
+  await send(105,{type:"cancel",messageId:id(101)});await waitFor(()=>!running);
+  assert.equal(new Set(calls.map(call=>call.pid)).size,1);
+});
+
+test("SDK cancellation aborts only the activity owned by its target message",async t=>{
+ let signal;
+ const server=createServer(createSessionRuntimeHandler(behaviour(context=>{
+   context.activity.start(async activity=>{signal=activity.signal;await new Promise(resolve=>signal.addEventListener("abort",resolve,{once:true}));});
+ })));
+ await listen(server);t.after(()=>close(server));
+ const id=n=>`msg_${n.toString(16).padStart(32,"0")}`;
+ const send=async(n,command)=>{const input=messageEnvelope({__cantelop_command:2,...command},"thread",id(n));if(command.type==="cancel")input.reply=true;const result=await fetch(`${origin(server)}/__cantelop/v2/messages`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});assert.equal(result.status,202);};
+ await send(201,{type:"dispatch",message:{prompt:"run"}});await waitFor(()=>signal!==undefined);
+ await send(202,{type:"cancel",messageId:id(999)});assert.equal(signal.aborted,false);
+ await send(203,{type:"cancel",messageId:id(201)});await waitFor(()=>signal.aborted);
+});
+
+test("SDK queues dispatch behind an owned activity and prioritizes steer fallback without a second harness",async t=>{
+ let signal,active=0,peak=0;const handled=[];
+ const server=createServer(createSessionRuntimeHandler(behaviour(context=>{
+  handled.push(context.message.payload.prompt);
+  context.activity.start(async activity=>{
+   active++;peak=Math.max(peak,active);
+   try{if(context.message.payload.prompt==="hold"){signal=activity.signal;await new Promise(resolve=>signal.addEventListener("abort",resolve,{once:true}));}}finally{active--;}
+  });
+ })));
+ await listen(server);t.after(()=>close(server));
+ const id=n=>`msg_${n.toString(16).padStart(32,"0")}`;
+ const send=async(n,command)=>{const input=messageEnvelope({__cantelop_command:2,...command},"thread",id(n));if(command.type==="cancel")input.reply=true;const result=await fetch(`${origin(server)}/__cantelop/v2/messages`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});assert.equal(result.status,202);};
+ await send(301,{type:"dispatch",message:{prompt:"hold"}});await waitFor(()=>signal!==undefined);
+ await send(302,{type:"dispatch",message:{prompt:"ordinary"}});
+ await send(303,{type:"steer",message:{prompt:"priority"}});
+ assert.deepEqual(handled,["hold"]);
+ await send(304,{type:"cancel",messageId:id(301)});await waitFor(()=>handled.length===3);
+ assert.deepEqual(handled,["hold","priority","ordinary"]);assert.equal(peak,1);
+});

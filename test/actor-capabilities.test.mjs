@@ -3,45 +3,29 @@ import test from "node:test";
 import { InMemoryMailbox } from "../dist/mailbox.js";
 import { SessionOutputBuffer } from "../dist/output.js";
 
-test("priority intake overtakes queued normal messages without interrupting active work", async () => {
+test("dispatch intake stays FIFO and queued work can be removed inside the SDK", async () => {
   const mailbox = new InMemoryMailbox();
   let release;
-  const blocked = new Promise((resolve) => {
-    release = resolve;
-  });
+  const blocked = new Promise((resolve) => (release = resolve));
   const order = [];
-  const first = mailbox.enqueue("active", async () => {
+  const active = mailbox.enqueue("active", async () => {
     order.push("active");
     await blocked;
   });
   await Promise.resolve();
-  const normal = mailbox.enqueue("normal", async () => {
-    order.push("normal");
+  const next = mailbox.enqueue("next", async () => {
+    order.push("next");
   });
-  const priority = mailbox.enqueue(
-    "priority",
-    async () => {
-      order.push("priority");
-    },
-    "priority",
-  );
-  const nextPriority = mailbox.enqueue(
-    "next-priority",
-    async () => {
-      order.push("next-priority");
-    },
-    "priority",
-  );
-  assert.equal(
-    mailbox.enqueue("priority", async () => {
-      throw Error("duplicate invoked");
-    }),
-    priority,
-  );
+  const removed = mailbox.enqueue("removed", async () => {
+    throw new Error("cancelled work ran");
+  });
+  const failed = assert.rejects(removed, /cancelled/);
+  assert.equal(mailbox.cancel("removed", new Error("cancelled")), true);
+  assert.equal(mailbox.cancel("active", new Error("cancelled")), false);
   assert.deepEqual(order, ["active"]);
   release();
-  await Promise.all([first, normal, priority, nextPriority]);
-  assert.deepEqual(order, ["active", "priority", "next-priority", "normal"]);
+  await Promise.all([active, next, failed]);
+  assert.deepEqual(order, ["active", "next"]);
 });
 
 test("projection commits preserve source order and wait for platform acknowledgment", async () => {

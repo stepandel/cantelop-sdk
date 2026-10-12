@@ -62,7 +62,7 @@ export interface SessionRef<Message, Event = unknown, Reply = unknown, View = un
   request(message: Message, options?: SessionRequestOptions): Promise<Reply>;
   /** Explicit resume only; ending this subscription never cancels agent work. */
   stream(options?: SessionStreamOptions): AsyncIterable<SessionEvent<Event>>;
-  /** Priority message admission; preserves order within each priority. */
+  /** Native harness steering, or priority scheduling inside the SDK work queue. */
   steer(message: Message, options?: SessionSubmissionOptions): Promise<MessageRef>;
   /** Cooperative cancellation; acceptance is not cancellation completion. */
   cancel(messageId: string, options?: SessionCommandOptions): Promise<MessageCancellation>;
@@ -102,7 +102,8 @@ export interface SessionView<View = unknown> {
 export type SessionCommand<Message = unknown> =
   | { readonly type: "dispatch" | "steer"; readonly message: Message; readonly keepAliveSeconds?: number }
   | { readonly type: "request"; readonly message: Message; readonly keepAliveSeconds?: number; readonly timeoutMs: number }
-  | { readonly type: "cancel" | "status"; readonly messageId: string }
+  | { readonly type: "cancel"; readonly messageId: string; readonly keepAliveSeconds?: number }
+  | { readonly type: "status"; readonly messageId: string }
   | { readonly type: "stop" | "view" }
   | { readonly type: "stream"; readonly after?: SessionEventCursor };
 

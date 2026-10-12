@@ -20,8 +20,8 @@ test('webhook App uses Workspace ID/slug and every Session method through local 
       const url = new URL(request.url);
       if (url.pathname.endsWith('/workspaces/open')) return Response.json({ id: workspaceId, slug: 'customer' });
       if (url.pathname.endsWith('/messages')) return receipt((await request.json()).message.id);
-      if (url.pathname.endsWith('/requests')) return Response.json({ id: (await request.json()).message.id, reply: 'done' });
-      if (url.pathname.endsWith('/cancel')) return Response.json({ id: (await request.json()).id, messageId, state: 'requested' });
+      if(url.pathname.endsWith('/requests')){const input=await request.json();return Response.json({id:input.message.id,reply:input.message.payload.type==='cancel'?{id:input.message.id,messageId,state:'requested'}:'done'})}
+      if(url.pathname.includes('/sessions/')&&url.pathname.includes('/messages/'))return Response.json({id:messageId,state:'handling',workspace_id:workspaceId});
       if (url.pathname.endsWith('/view')) return Response.json({ workspaceId, sessionId: 'chat', revision: '1', updatedAt: '2026-10-11T00:00:00Z', state: 'ready', cursor: { streamId: '3'.repeat(32), sequence: 0 } });
       if (url.pathname.endsWith('/events')) return new Response('', { headers: { 'Content-Type': 'text/event-stream' } });
       if (request.method === 'DELETE') return new Response(null, { status: 204 });
@@ -158,7 +158,7 @@ export const other = new CantelopClient().app({name:"other", runtime:{receive}, 
   let calls = 0;
   const original = globalThis.fetch;
   t.after(() => { globalThis.fetch = original; });
-  globalThis.fetch = async request => { calls++; assert.equal(new URL(request.url).hostname, 'runtime.cantelop.internal'); const body = await request.json(); assert.deepEqual(body.message.payload, { text: 'edge-only-marker' }); return receipt(body.message.id); };
+  globalThis.fetch = async request => { calls++; assert.equal(new URL(request.url).hostname, 'runtime.cantelop.internal'); const body = await request.json(); assert.deepEqual(body.message.payload, {__cantelop_command:2,type:"dispatch",message:{ text: 'edge-only-marker' }}); return receipt(body.message.id); };
   const worker = (await import(pathToFileURL(edge.mainModule))).default;
   const invoke = token => worker.fetch(new Request('https://support.example/webhooks/provider', { method: 'POST', headers: { 'provider-token': token } }), { HOOK_SECRET: 'provider-secret', CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS: 120 });
   assert.equal((await invoke('bad')).status, 401); assert.equal(calls, 0);
@@ -215,5 +215,5 @@ test('GitHub example verifies signatures before dispatch and maps retries to sta
   assert.equal(submissions.length,2);
   assert.equal(submissions[0].message.id,submissions[1].message.id);
   assert.equal(submissions[0].session.id,'issue-7');
-  assert.deepEqual(submissions[0].message.payload,{repository:'owner/repo',issueNumber:7,title:'Help',body:'An issue'});
+  assert.deepEqual(submissions[0].message.payload.message,{repository:'owner/repo',issueNumber:7,title:'Help',body:'An issue'});
 });
