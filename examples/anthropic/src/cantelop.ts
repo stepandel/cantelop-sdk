@@ -6,7 +6,7 @@ const cantelop = new CantelopClient();
 
 export const app = cantelop.app<SessionMessage, SessionEvent>({
   name: "anthropic",
-  runtime: { create, steering: "interrupt" },
+  runtime: { create },
   environment: {
     CLAUDE_PATH: { default: "/usr/local/bin/claude" },
     CLAUDE_MODEL: {},

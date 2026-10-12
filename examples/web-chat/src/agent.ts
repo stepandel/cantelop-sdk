@@ -13,7 +13,7 @@ export function create(context: SessionHarnessContext): SessionHarness<ChatMessa
   const conversation = new MemorySession({ sessionId: context.session.id });
   const currentAgent = agent;
   const currentConversation = conversation;
-  return { async run(message, { signal, output }) {
+  return { steering: "queue", async run(message, { signal, output }) {
       const result = await run(currentAgent, message.prompt, {
         session: currentConversation,
         signal,

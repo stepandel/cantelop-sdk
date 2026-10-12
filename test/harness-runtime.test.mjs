@@ -127,7 +127,7 @@ test("unsupported steering rejects explicitly; configured fallback uses priority
   assert.equal((await rejected.status(1)).state, "failed");
   const exit = deferred();
   const started = [];
-  const queued = await fixture(t, { steering: "queue", create: () => ({
+  const queued = await fixture(t, { create: () => ({ steering: "queue",
     async run(message) { started.push(message); if (message === "hold") await exit.promise; },
   }) });
   for (const [n, type, message] of [[1, "dispatch", "hold"], [2, "dispatch", "normal"], [3, "steer", "priority-1"], [4, "steer", "priority-2"]]) {
@@ -195,7 +195,7 @@ test("interrupt steering admits priority input, aborts the current run and waits
   const exit = deferred(), cleanup = deferred();
   const started = [];
   let signal, cancels = 0;
-  const f = await fixture(t, { steering: "interrupt", create: () => ({
+  const f = await fixture(t, { create: () => ({ steering: "interrupt",
     async run(message, work) {
       started.push(message);
       if (message === "hold") { signal = work.signal; await exit.promise; }
@@ -219,7 +219,7 @@ test("interrupt steering admits priority input, aborts the current run and waits
 test("rejected interrupt steering cannot cancel active work", async t => {
   const exit = deferred();
   let signal;
-  const f = await fixture(t, { steering: "interrupt", create: () => ({
+  const f = await fixture(t, { create: () => ({ steering: "interrupt",
     async run(message, work) { if (message === "hold") { signal = work.signal; await exit.promise; } },
   }) });
   await f.send(1, { type: "dispatch", message: "hold" }); await f.settled(1);
@@ -229,4 +229,19 @@ test("rejected interrupt steering cannot cancel active work", async t => {
   assert.equal((await f.status(258)).state, "failed");
   assert.equal(signal.aborted, false);
   exit.resolve();
+});
+
+
+test("invalid harness steering declarations fail activation before executing input", async t => {
+  let runs = 0, creates = 0;
+  const f = await fixture(t, { create() {
+    creates++;
+    return { steering: "unsupported", run() { runs++; } };
+  } });
+  for (const n of [1, 2]) {
+    await f.send(n, { type: "dispatch", message: "input" }); await f.settled(n);
+    assert.equal((await f.status(n)).state, "failed");
+  }
+  assert.equal(runs, 0);
+  assert.equal(creates, 1);
 });

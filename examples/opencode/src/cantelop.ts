@@ -6,7 +6,7 @@ const cantelop = new CantelopClient();
 
 export const app = cantelop.app<SessionMessage, SessionEvent>({
   name: "opencode",
-  runtime: { create, steering: "interrupt" },
+  runtime: { create },
   environment: {
     OPENCODE_PATH: { default: "/usr/local/bin/opencode" },
     OPENCODE_MODEL: {},

@@ -28,4 +28,4 @@ Run `pnpm check:examples` from the SDK root to type-check the backend client and
 
 ## Runtime behavior
 
-The factory creates one Agent and MemorySession per runtime incarnation. The SDK serializes runs and explicitly queues steering input with priority (`steering: "queue"`). Cancellation signals the active run and preserves waiting input. `OPENAI_API_KEY` is runtime-only, and `OPENAI_MODEL` defaults to `gpt-5-mini`.
+The factory creates one Agent and MemorySession per runtime incarnation. The SDK serializes runs and queues steering input with priority, as declared by the harness’s `steering: "queue"` capability. Cancellation signals the active run and preserves waiting input. `OPENAI_API_KEY` is runtime-only, and `OPENAI_MODEL` defaults to `gpt-5-mini`.

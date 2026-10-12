@@ -133,7 +133,8 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
         harness = await behaviour.create(Object.freeze({ signal: lifetime.signal, session, env: options.env ?? process.env, database }));
         if (!harness || typeof harness.run !== "function" ||
             harness.steer !== undefined && typeof harness.steer !== "function" ||
-            harness.cancel !== undefined && typeof harness.cancel !== "function") throw new TypeError("Invalid Session harness");
+            harness.cancel !== undefined && typeof harness.cancel !== "function" ||
+            harness.steering !== undefined && !["native", "queue", "interrupt"].includes(harness.steering)) throw new TypeError("Invalid Session harness");
         return;
       }
       await behaviour.onActivate?.(Object.freeze({
@@ -246,11 +247,11 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
           await observer.span("session.receive", async () => {
             if ("receive" in behaviour) return behaviour.receive(context);
             const adapter = harness!;
-            if (command.type === "steer" && activity.active && (behaviour.steering ?? "native") === "native") {
+            if (command.type === "steer" && activity.active && (adapter.steering ?? "native") === "native") {
               await activity.steer(message.payload);
               return;
             }
-            if (command.type === "steer" && !adapter.steer && (behaviour.steering ?? "native") === "native") throw new Error("Session harness does not support steering");
+            if (command.type === "steer" && !adapter.steer && (adapter.steering ?? "native") === "native") throw new Error("Session harness does not support steering");
             workCompletion = activity.queue(message.id, async work => {
               const result = await adapter.run(message.payload, Object.freeze({
                 signal: work.signal, output: work.output, view: work.view, send: work.send,
@@ -271,7 +272,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
             }, event => observer.recordActivity(event));
             // Admit priority input before interrupting. A rejected admission must
             // not stop unrelated work; cleanup holds the slot until it can run.
-            if (command.type === "steer" && behaviour.steering === "interrupt") activity.cancel();
+            if (command.type === "steer" && adapter.steering === "interrupt") activity.cancel();
           });
         });
         if ("receive" in behaviour && replyRequested && !replied) throw new Error("Session request completed without a reply");

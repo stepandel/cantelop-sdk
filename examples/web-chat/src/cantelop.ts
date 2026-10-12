@@ -6,7 +6,7 @@ const cantelop = new CantelopClient();
 
 export const app = cantelop.app<ChatMessage, ChatEvent>({
   name: "web-chat",
-  runtime: { create, steering: "queue" },
+  runtime: { create },
   environment: {
     OPENAI_MODEL: { default: "gpt-5-mini" },
     OPENAI_API_KEY: { secret: true, required: true },

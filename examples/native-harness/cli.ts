@@ -145,6 +145,7 @@ export async function runJsonProcess(options: {
 
 /** Scheduling stays in Cantelop; native execution stays in the supplied harness. */
 export abstract class NativeHarness implements SessionHarness<{ type: "prompt"; prompt: string }, NativeOutput> {
+  readonly steering = "interrupt" as const;
   constructor(private readonly lifetime?: AbortSignal) {}
   protected abstract execute(turn: NativeTurn): Promise<void>;
 

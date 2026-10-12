@@ -4,7 +4,7 @@ import type { SessionMessage, SessionEvent } from "./contracts.js";
 
 export const app = new CantelopClient().app<SessionMessage, SessionEvent>({
   name: "codex",
-  runtime: { create, steering: "interrupt" },
+  runtime: { create },
   environment: {
     CODEX_PATH: { default: "/usr/local/bin/codex" },
     CODEX_MODEL: {},

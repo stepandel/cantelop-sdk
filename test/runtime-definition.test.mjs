@@ -238,7 +238,8 @@ test("compiler extracts typed session-scoped harness factories without executing
     '{create() { return {run() {},steer(message) {message.wrong;}};}}',
     '{create() { return {run() {},cancel(message) {}};}}',
     '{create() {return {run() {}};},receive() {}}',
-    '{create() {return {run() {}};},steering:"silent"}',
+    '{create() {return {run() {}};},steering:"interrupt"}',
+    '{create() {return {run() {},steering:"silent"};}}',
   ]) {
     await writeFile(definition, prefix + runtime + '});');
     await assert.rejects(buildSessionRuntime({ definition, outdir }), /Invalid Session runtime/);

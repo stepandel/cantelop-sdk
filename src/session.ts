@@ -124,6 +124,8 @@ export interface SessionHarnessWorkContext<Message, Event = never, View = unknow
 }
 
 export interface SessionHarness<Message, Event = never, Reply = never, View = unknown> {
+  /** Native injection, priority queueing, or interrupt-and-queue; native is the default. */
+  readonly steering?: "native" | "queue" | "interrupt";
   /** Resolves after execution and cleanup; its return value supplies request replies. */
   run(message: Message, context: SessionHarnessWorkContext<Message, Event, View>): Awaitable<[Reply] extends [never] ? void : Reply>;
   steer?(message: Message): Awaitable<void>;
@@ -132,8 +134,6 @@ export interface SessionHarness<Message, Event = never, Reply = never, View = un
 
 export interface SessionHarnessRuntime<Message, Event = never, Reply = never, View = unknown> {
   create(context: SessionHarnessContext): Awaitable<SessionHarness<Message, Event, Reply, View>>;
-  /** Native injection, priority queueing, or interrupt-and-queue; native is the default. */
-  readonly steering?: "native" | "queue" | "interrupt";
   readonly redelivery?: boolean;
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }
