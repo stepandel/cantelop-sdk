@@ -1,5 +1,5 @@
-export type SessionMessage = { type: "prompt"; prompt: string };
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
-export type SessionEvent =
-  | { type: "text_delta"; delta: string }
-  | { type: "done"; answer: string };
+export type SessionMessage = { type: "prompt"; prompt: string };
+/** Forward native Claude Code output, including tools, deltas and turn results. */
+export type SessionEvent = SDKMessage;

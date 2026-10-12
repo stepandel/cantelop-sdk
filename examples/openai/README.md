@@ -1,4 +1,6 @@
-# OpenAI agent integration
+# OpenAI Agents integration
+
+This example uses the OpenAI Agents framework. For the stock Codex CLI harness and a reusable Thread adapter, see [the Codex example](../codex/README.md).
 
 `src/cantelop.ts` creates a client and declares a named App with imported handlers from `src/agent.ts`. Application code imports the named `app` handle to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. The [backend compiler transform](../../docs/runtime-definitions.md) excludes provider dependencies from the backend bundle.
 

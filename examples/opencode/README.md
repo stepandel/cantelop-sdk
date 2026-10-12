@@ -1,39 +1,34 @@
-# OpenCode agent integration
+# Stock OpenCode harness
 
-`src/cantelop.ts` creates a client and declares a named App with imported handlers from `src/agent.ts`. Application code imports the named `app` handle to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. The [backend compiler transform](../../docs/runtime-definitions.md) excludes provider dependencies from the backend bundle.
+This example starts one unmodified OpenCode server and native Session per runtime incarnation, then wraps its official client. OpenCode owns conversation state, tools and its agent loop. Cantelop queues calls and forwards the native completed prompt response (`info` and `parts`).
 
 ```ts
 import { app } from "./src/cantelop.js";
 
-const workspace = app.workspace({ slug: "customer-123" });
-const session = workspace.session({
-  id: "conversation-456",
-  keepAliveSeconds: 300,
-});
-await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+const session = app.workspace({ slug: "project" }).session({ id: "review" });
+await session.dispatch({ type: "prompt", prompt: "Review this repository" });
+await session.steer({ type: "prompt", prompt: "Focus on authentication" });
+await session.cancel();
 for await (const event of session.stream()) {
-  if (event.data.type === "text_delta") console.log(event.data.delta);
+  console.log(event.data.parts.filter(part => part.type === "text").map(part => part.text).join("\n"));
 }
 ```
 
-The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; deploy with the companion platform CLI. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
+Subscribe before dispatching, or use retained replay. This minimal wrapper uses the native `session.prompt` completion API rather than consuming partial text from SSE. `steering: "queue"` selects SDK priority queueing; it does not emulate native steering by issuing concurrent prompts. `cancel()` invokes native `session.abort`. The pending prompt remains open until OpenCode completes the interrupted operation, preserving the execution boundary. The server and Session remain available for the next turn.
 
-Use `session.steer({type:"prompt",prompt:"adjust the task"})` and
-`session.cancel()`. These are SDK work commands delivered through the
-same actor transport. They do not require programmable Edge handlers.
+To wrap a client/session you already construct, import `wrapOpenCode` from `src/agent.ts`:
 
-OpenCode requires the custom image declared in `cantelop.json`. The Dockerfile installs the headless server; Cantelop owns startup and Workspace mounts. Its server conversation state lasts for the warm Sandbox lifetime.
+```ts
+runtime: {
+  create() {
+    return wrapOpenCode(existingClient, existingSessionId);
+  },
+  steering: "queue",
+}
+```
 
-Run `pnpm check:examples` from the SDK root to type-check the backend client and runtime and qualify the runtime-only build artifact.
+The wrapper does not own your server's startup or configuration. The example factory does: it starts the stock server through `createOpencodeServer`, binds it to the incarnation lifetime, and creates one native session through `client.session.create`. Provider errors propagate as failed work; cancellation does not merely close an HTTP reader.
 
-## Image and runtime behavior
+The custom Docker image installs stock `opencode-ai@1.18.30`, aligned with the pinned SDK. Set `ANTHROPIC_API_KEY` as an App secret and optionally configure `OPENCODE_MODEL`. Native OpenCode settings retain control over tools and approvals. Its local session database is distinct from Cantelop's Workspace database; keep the live native database on local disk and use native persistence/recovery when needed.
 
-The SDK and OpenCode binary are pinned to 1.18.30; update them together. The custom image installs Node.js, Git, ripgrep, and the executable. Cantelop supplies Bun, startup, and the `/workspace` working directory. Configure `ANTHROPIC_API_KEY`; `OPENCODE_MODEL` defaults to `anthropic/claude-sonnet-4-5`. Another provider requires updating both the credential declaration and runtime credential check.
-
-Each managed activity starts a localhost-only headless server, connects to its events before submitting work, filters output by conversation and assistant message, and closes the server on completion. The SDK queues ordinary work and prioritizes steer fallback while the current run continues. Targeted SDK cancellation signals the owned activity/provider; its cleanup closes the server. Cancellation does not undo completed file edits.
-
-Workspace files persist, but conversation history is not restored after Sandbox replacement. OpenCode's live database remains in managed ephemeral home. `keepAliveSeconds: 0` can lose continuity between requests; durable conversation restore needs a separate persistence design.
-
-This unattended coding example allows tools by default while denying external-directory access, interactive questions, and doom-loop permission requests. Review the runtime's permission configuration and use trusted Workspaces. The example emits text and errors rather than tool traces or interactive approvals. The application backend owns caller authorization before exposing any client-facing route.
-
-`cantelop.json` selects `src/cantelop.ts` for deployment. `src/contracts.ts` defines the message and event types shared by application calls and agent behavior.
+See [the official OpenCode SDK documentation](https://docs.opencode.ai/docs/sdk/). Run `pnpm check:examples` from the SDK root to type-check and qualify the backend/Edge/native artifacts.

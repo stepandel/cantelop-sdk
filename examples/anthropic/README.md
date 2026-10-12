@@ -1,25 +1,35 @@
-# Anthropic agent integration
+# Stock Claude Code harness
 
-`src/cantelop.ts` creates a client and declares a named App with imported handlers from `src/agent.ts`. Application code imports the named `app` handle to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. The [backend compiler transform](../../docs/runtime-definitions.md) excludes provider dependencies from the backend bundle.
+This example wraps one persistent native `Query` from `@anthropic-ai/claude-agent-sdk`. Claude Code owns its tools, conversation, agent loop and interruption. Cantelop queues work and forwards the SDK's native `SDKMessage` values, including tool events, partial output and turn results.
 
 ```ts
 import { app } from "./src/cantelop.js";
 
-const workspace = app.workspace({ slug: "customer-123" });
-const session = workspace.session({
-  id: "conversation-456",
-  keepAliveSeconds: 300,
-});
-await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+const session = app.workspace({ slug: "project" }).session({ id: "review" });
+await session.dispatch({ type: "prompt", prompt: "Review this repository" });
+await session.steer({ type: "prompt", prompt: "Focus on authentication" });
+await session.cancel();
 for await (const event of session.stream()) {
-  if (event.data.type === "text_delta") console.log(event.data.delta);
+  const message = event.data;
+  if (message.type === "result" && message.subtype === "success") console.log(message.result);
 }
 ```
 
-The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
+Subscribe before dispatching for live output, or use retained replay. Ordinary input is scheduled by Cantelop. Steering sends a native user message with `now` priority into Claude's documented streaming-input API. `cancel()` calls `Query.interrupt()` and keeps the same Query available for subsequent runs. A cancelled run consumes through its native result boundary before Cantelop can reuse the execution slot.
 
-Use `session.dispatch(message)` to queue work, `session.steer(message)` for native steering, and `session.cancel()` to interrupt the active run. The session-scoped factory retains Claude's conversation identity across runs. Each run owns a provider input stream; the SDK remains responsive while that run executes. Steering feeds priority input into its live stream. Cancellation closes that input and aborts the provider operation through the run's signal, preserving queued SDK input.
+To adapt a streaming Query and input transport you already construct, import `wrapClaude` from `src/agent.ts`:
 
-Run `pnpm check:examples` from the SDK root to type-check clients and runtimes and qualify the build artifacts.
+```ts
+runtime: {
+  create(context) {
+    const { query, input } = createExistingClaudeHarness(context);
+    return wrapClaude(query, input);
+  },
+}
+```
 
-Configure `ANTHROPIC_API_KEY` as a runtime secret. `cantelop.json` selects `src/cantelop.ts` for deployment, and `src/contracts.ts` defines the shared message and event types.
+The input transport exposes `send(prompt, priority?)`; it can be your existing channel. The included `ClaudeInput` implements the official `AsyncIterable<SDKUserMessage>` transport contract. It does not implement an agent loop. The wrapper calls `Query.next()` through each turn result without closing the native iterator between turns.
+
+The example factory starts the stock harness, waits for native initialization, and closes it when the runtime incarnation ends. It preserves native prompts, tools and configuration. Set `ANTHROPIC_API_KEY` as an App secret. The custom image installs stock Claude Code `2.1.259`, matching the installed Agent SDK's `claudeCodeVersion`. `CLAUDE_PATH` defaults to `/usr/local/bin/claude`; override it for a local installation. Configure approvals and other provider behavior through native SDK options when constructing your own Query.
+
+Native Claude session persistence/resume remains independent of Cantelop's queue and Workspace database. See [Claude's streaming-input documentation](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode). Run `pnpm check:examples` from the SDK root to type-check and qualify the backend/Edge/native artifacts.

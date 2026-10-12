@@ -2,239 +2,104 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { build } from "esbuild";
 
-// Keep the real generated HTTP/SSE client; replace only process creation and
-// network transport so lifecycle regressions do not require provider credentials.
-async function fixture(mode = "success") {
+// Use the real generated HTTP client. Only replace the server process and HTTP
+// transport; the adapter calls stock session.create/prompt/abort operations.
+async function fixture() {
   const key = `opencode-test-${crypto.randomUUID()}`;
-  let controller;
-  let closed = 0;
-  let subscribed = false;
-  let aborted = 0;
+  const controller = new AbortController();
+  let starts = 0, closes = 0, creates = 0, aborts = 0;
   const prompts = [];
-  const emit = (event) =>
-    controller.enqueue(
-      new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
-    );
+  let finish;
+  const nativeResponse = text => ({
+    info: { id: "message", role: "assistant", sessionID: "ses_test" },
+    parts: [{ id: "part", messageID: "message", sessionID: "ses_test", type: "text", text }],
+  });
   globalThis[key] = {
-    server: async () => ({
-      url: "http://opencode.test",
-      close() {
-        closed++;
-      },
-    }),
-    fetch: async (request) => {
+    async server(options) {
+      starts++;
+      options.signal.addEventListener("abort", () => { closes++; }, { once: true });
+      return { url: "http://opencode.test", close() { closes++; } };
+    },
+    async fetch(request) {
       const url = new URL(request.url);
-      if (url.pathname === "/session" && request.method === "POST") {
-        return Response.json({ id: "ses_test" });
+      if (url.pathname === "/session") { creates++; return Response.json({ id: "ses_test" }); }
+      if (url.pathname.endsWith("/abort")) { aborts++; return Response.json(true); }
+      if (url.pathname.endsWith("/message")) {
+        const body = await request.json();
+        const prompt = body.parts[0].text;
+        prompts.push(prompt);
+        if (prompt === "hold") return new Promise(resolve => { finish = () => resolve(Response.json(nativeResponse("interrupted"))); });
+        if (prompt === "error") return Response.json({ ...nativeResponse(""), info: { error: { name: "ProviderError", data: { message: "native failure" } } } });
+        return Response.json(nativeResponse(prompt));
       }
-      if (url.pathname === "/event") {
-        subscribed = true;
-        return new Response(
-          new ReadableStream({
-            start(c) {
-              controller = c;
-              emit({ type: "server.connected", properties: {} });
-            },
-          }),
-          { headers: { "content-type": "text/event-stream" } },
-        );
-      }
-      if (url.pathname.endsWith("/abort")) {
-        aborted++;
-        return Response.json(true);
-      }
-      if (url.pathname.endsWith("/prompt_async")) {
-        assert.equal(subscribed, true, "subscribe before submitting a prompt");
-        prompts.push((await request.json()).parts[0].text);
-        if (mode === "disconnect") controller.close();
-        if (mode === "success") {
-          emit({
-            type: "message.updated",
-            properties: {
-              info: {
-                id: "msg_answer",
-                role: "assistant",
-                sessionID: "ses_test",
-              },
-            },
-          });
-          emit({
-            type: "message.part.updated",
-            properties: {
-              part: {
-                id: "part_text",
-                messageID: "msg_answer",
-                sessionID: "ses_test",
-                type: "text",
-                text: "",
-              },
-            },
-          });
-          emit({
-            type: "message.part.delta",
-            properties: {
-              partID: "part_text",
-              messageID: "msg_answer",
-              sessionID: "ses_other",
-              field: "text",
-              delta: "wrong",
-            },
-          });
-          emit({
-            type: "message.part.delta",
-            properties: {
-              partID: "part_text",
-              messageID: "msg_answer",
-              sessionID: "ses_test",
-              field: "text",
-              delta: "Hello",
-            },
-          });
-          // Final snapshot must not duplicate the delta already delivered.
-          emit({
-            type: "message.part.updated",
-            properties: {
-              part: {
-                id: "part_text",
-                messageID: "msg_answer",
-                sessionID: "ses_test",
-                type: "text",
-                text: "Hello",
-              },
-            },
-          });
-          emit({ type: "session.idle", properties: { sessionID: "ses_test" } });
-        }
-        return new Response(null, { status: 204 });
-      }
-      throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+      throw new Error(`Unexpected stock API request: ${request.method} ${url.pathname}`);
     },
   };
-  const clientPath = new URL(
-    "../examples/opencode/node_modules/@opencode-ai/sdk/dist/v2/client.js",
-    import.meta.url,
-  ).pathname;
-  const result = await build({
-    entryPoints: [
-      new URL("../examples/opencode/src/agent.ts", import.meta.url).pathname,
-    ],
-    bundle: true,
-    platform: "node",
-    format: "esm",
-    write: false,
-    plugins: [
-      {
-        name: "opencode-fixture",
-        setup(builder) {
-          builder.onResolve(
-            { filter: /^@opencode-ai\/sdk\/v2\/(client|server)$/ },
-            ({ path }) => ({ path, namespace: "mock" }),
-          );
-          builder.onLoad({ filter: /.*/, namespace: "mock" }, ({ path }) => ({
-            contents: path.endsWith("server")
-              ? `export const createOpencodeServer = globalThis[${JSON.stringify(key)}].server;`
-              : `import {createOpencodeClient as create} from ${JSON.stringify(clientPath)}; export const createOpencodeClient = options => create({...options, fetch: globalThis[${JSON.stringify(key)}].fetch});`,
-            resolveDir: process.cwd(),
-          }));
-        },
-      },
-    ],
+  const clientPath = new URL("../examples/opencode/node_modules/@opencode-ai/sdk/dist/v2/client.js", import.meta.url).pathname;
+  const bundle = await build({
+    entryPoints: [new URL("../examples/opencode/src/agent.ts", import.meta.url).pathname],
+    bundle: true, platform: "node", format: "esm", write: false,
+    plugins: [{ name: "stock-opencode-fixture", setup(builder) {
+      builder.onResolve({ filter: /^@opencode-ai\/sdk\/v2\/(client|server)$/ }, ({ path }) => ({ path, namespace: "mock" }));
+      builder.onLoad({ filter: /.*/, namespace: "mock" }, ({ path }) => ({
+        contents: path.endsWith("server")
+          ? `export const createOpencodeServer = globalThis[${JSON.stringify(key)}].server;`
+          : `import {createOpencodeClient as create} from ${JSON.stringify(clientPath)}; export const createOpencodeClient = options => create({...options, fetch: globalThis[${JSON.stringify(key)}].fetch});`,
+        resolveDir: process.cwd(),
+      }));
+    } }],
   });
-  const behaviour = await import(
-    `data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`
-  );
-  let work;
-  const abort = new AbortController();
+  const adapter = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+  const harness = await adapter.create({ signal: controller.signal, session: { id: "test" }, env: {} });
   const events = [];
-  const followups = [];
-  const harness = behaviour.create({
-    session: { id: "cantelop-test" },
-    env: { ANTHROPIC_API_KEY: "test-placeholder" },
-  });
-  const receive = payload => {
-    work = harness.run(payload, {
-      signal: abort.signal,
-      output: { send: async event => events.push(event) },
-      send: event => followups.push(event),
-    });
-  };
   return {
-    receive,
-    cancel: () => abort.abort(),
-    events,
-    followups,
-    prompts,
-    emit,
-    get work() {
-      return work;
-    },
-    get closed() {
-      return closed;
-    },
-    get aborted() {
-      return aborted;
-    },
-    cleanup() {
-      delete globalThis[key];
-    },
+    events, prompts,
+    run: (prompt, signal = new AbortController().signal) => harness.run({ type: "prompt", prompt }, { signal, output: { send: async event => events.push(event) } }),
+    cancel: () => harness.cancel(),
+    finish: () => finish(),
+    counts: () => ({ starts, closes, creates, aborts }),
+    close() { controller.abort(); delete globalThis[key]; },
   };
 }
 
-test(
-  "OpenCode subscribes before prompting and filters/deduplicates text",
-  { timeout: 5_000 },
-  async () => {
-    const f = await fixture();
-    try {
-      f.receive({ type: "prompt", prompt: "hello" });
-      await f.work;
-      assert.deepEqual(f.events, [
-        { type: "text_delta", delta: "Hello" },
-        { type: "done", answer: "Hello" },
-      ]);
-      assert.equal(f.closed, 1);
-      assert.equal(f.aborted, 1);
-    } finally {
-      f.cleanup();
-    }
-  },
-);
+test("OpenCode wraps one stock server/session and forwards native responses across turns", async () => {
+  const f = await fixture();
+  try {
+    await f.run("one"); await f.run("two");
+    assert.deepEqual(f.prompts, ["one", "two"]);
+    assert.deepEqual(f.events.map(event => event.parts[0].text), ["one", "two"]);
+    assert.deepEqual(f.counts(), { starts: 1, closes: 0, creates: 1, aborts: 0 });
+  } finally { f.close(); }
+  assert.equal(f.counts().closes, 1);
+});
 
-test(
-  "OpenCode cancellation signal stops the server",
-  { timeout: 5_000 },
-  async () => {
-    const f = await fixture("waiting");
-    try {
-      f.receive({ type: "prompt", prompt: "hello" });
-      while (!f.prompts.length)
-        await new Promise((resolve) => setImmediate(resolve));
-      f.cancel();
-      await f.work;
-      assert.deepEqual(f.followups, []);
-      assert.deepEqual(f.events, []);
-      assert.equal(f.aborted, 1);
-      assert.equal(f.closed, 1);
-    } finally {
-      f.cleanup();
-    }
-  },
-);
+test("OpenCode cancellation calls native abort and waits for the native prompt boundary", async () => {
+  const f = await fixture();
+  try {
+    const controller = new AbortController();
+    const work = f.run("hold", controller.signal);
+    let settled = false;
+    const outcome = work.then(() => { settled = true; }, error => { settled = true; return error; });
+    while (!f.prompts.length) await new Promise(resolve => setImmediate(resolve));
+    controller.abort();
+    await f.cancel();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(settled, false);
+    assert.equal(f.counts().aborts, 1);
+    assert.equal(f.counts().closes, 0);
+    f.finish();
+    assert.equal((await outcome).name, "AbortError");
+    assert.deepEqual(f.events, []);
+    await f.run("next");
+    assert.equal(f.events[0].parts[0].text, "next");
+    assert.equal(f.counts().creates, 1);
+  } finally { f.close(); }
+});
 
-test(
-  "OpenCode stream loss emits an error instead of a false completion",
-  { timeout: 5_000 },
-  async () => {
-    const f = await fixture("disconnect");
-    try {
-      f.receive({ type: "prompt", prompt: "hello" });
-      await f.work;
-      assert.equal(f.events.length, 1);
-      assert.equal(f.events[0].type, "error");
-      assert.equal(f.closed, 1);
-      assert.equal(f.aborted, 1);
-    } finally {
-      f.cleanup();
-    }
-  },
-);
+test("OpenCode propagates provider failure instead of reporting a successful result", async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(f.run("error"), /native failure/);
+    assert.deepEqual(f.events, []);
+  } finally { f.close(); }
+});

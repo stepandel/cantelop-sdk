@@ -9,5 +9,7 @@ export const app = cantelop.app<SessionMessage, SessionEvent>({
   runtime: { create },
   environment: {
     ANTHROPIC_API_KEY: { secret: true, required: true },
+    CLAUDE_PATH: { default: "/usr/local/bin/claude" },
   },
+  dockerfile: "docker/Dockerfile",
 });

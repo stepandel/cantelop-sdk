@@ -2,12 +2,16 @@
 
 Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through a named App definition and keeps credentials out of browser code.
 
-The OpenAI, Anthropic, Pi, and OpenCode examples define native agent runtimes and ordinary application backend clients:
+[Codex](codex/README.md), [Claude Code](anthropic/README.md), and [OpenCode](opencode/README.md) wrap their stock harnesses through official SDKs. Their exported `wrapCodex(thread)`, `wrapClaude(query, input)`, and `wrapOpenCode(client, sessionId)` adapters also accept harness objects you already construct. Provider tools, conversation state, configuration and agent loops remain native.
+
+[OpenAI Agents](openai/README.md), [Pi](pi/README.md), and the web chat example show additional integrations. OpenAI Agents is a separate framework example; it is not the Codex harness.
+
+The examples define runtime factories and ordinary application backend clients:
 
 ```text
 src/cantelop.ts   Shared client and named App/runtime configuration
 src/contracts.ts  Shared message and event types
-src/agent.ts      Exported runtime handlers and provider behavior
+src/agent.ts      Runtime factory and native harness adapter
 cantelop.json     Definition module selection
 ```
 
@@ -20,15 +24,15 @@ const workspace = app.workspace({ slug: "customer-123" });
 const session = workspace.session({ id: "conversation-456" });
 await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
 for await (const event of session.stream()) {
-  if (event.data.type === "text_delta") render(event.data.delta);
+  render(event.data); // Provider-specific native output type.
 }
 ```
 
 Use the same ID to address an existing Session, or omit it to spawn another Session sharing the Workspace. A canonical Workspace ID can replace the slug selector. Output can be replayed explicitly with the last cursor; disconnecting the iterator does not cancel work. Subscribe before dispatching when live subscription ordering matters, or use retained replay to recover earlier output within the broker's retention window.
 
-Use `session.dispatch(message)` to queue ordinary work, `session.steer(message)` to steer the active harness, and `session.cancel()` to interrupt its current run. Provider examples register a session-scoped `runtime.create` factory. Pi and Anthropic provide native steering; OpenAI, OpenCode and web chat explicitly select priority queueing. Cancellation preserves waiting SDK input, and the execution slot stays occupied until cleanup completes. Custom receive/activity examples remain available for application-owned orchestration.
+Use `session.dispatch(message)` to queue ordinary work, `session.steer(message)` to steer the active harness, and `session.cancel()` to interrupt its current run. Provider examples register a session-scoped `runtime.create` factory. Pi and Claude provide native steering; Codex, OpenAI Agents, OpenCode and web chat explicitly select priority queueing. Cancellation preserves waiting SDK input, and the execution slot stays occupied until cleanup completes. Custom receive/activity examples remain available for application-owned orchestration.
 
-Anthropic feeds its live input stream. OpenCode uses a headless server and the custom image in its manifest. All propagate managed activity cancellation to provider work. Workspace state is durable; warm runtime/provider memory is not.
+Codex, Claude and OpenCode forward native provider output types. Codex and Claude expose native event streams; the minimal OpenCode adapter forwards completed prompt responses. Their custom images install stock CLI binaries. All propagate cancellation to native provider work. Workspace state is durable; warm runtime/provider memory is not.
 
 This 1.0 prerelease requires the coordinated CLI/platform implementation with CLI build protocol 6 and project manifest schema 3. Generated Edge/native deployment and App credential provisioning are handled by that implementation.
 

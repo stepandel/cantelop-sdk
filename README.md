@@ -194,3 +194,5 @@ A view read never opens a Workspace or activates a Sandbox. A missing projection
 returns `session_view_not_found`. Views survive stop and host restart; stream
 resume remains subject to the platform's bounded replay retention. Projection
 commits advance the stream cursor without appearing as application events.
+
+Stock harness integrations are available for [Codex](examples/codex/README.md), [Claude Code](examples/anthropic/README.md), and [OpenCode](examples/opencode/README.md). They wrap existing official SDK objects, forward native output types, and leave provider tools, prompts, configuration and agent loops with the native harness.
