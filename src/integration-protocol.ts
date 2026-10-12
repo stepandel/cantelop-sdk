@@ -1,4 +1,5 @@
 import type { AppCommandEnvelope, WorkspaceSelector } from "./integration.js";
+import { isAuthCommand } from "./runtime-command.js";
 
 export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
 export const APP_COMMAND_PATH = "/commands";
@@ -57,6 +58,13 @@ export function validateCommand(value: unknown): AppCommandEnvelope {
           if (!Number.isSafeInteger(command.timeoutMs) || (command.timeoutMs as number) < 1 || (command.timeoutMs as number) > 300000) throw new TypeError("Invalid timeoutMs");
           keys.push("timeoutMs");
         }
+        break;
+      case "auth":
+        if (value.session.id !== "cantelop-native-auth") throw new TypeError("Auth requires the reserved Session");
+        if (!isAuthCommand(command.auth)) throw new TypeError("Invalid auth command");
+        if (!Number.isSafeInteger(command.timeoutMs) || (command.timeoutMs as number) < 1 || (command.timeoutMs as number) > 300000) throw new TypeError("Invalid timeoutMs");
+        assertKeepAlive(command.keepAliveSeconds);
+        keys = ["type", "auth", "timeoutMs", "keepAliveSeconds"];
         break;
       case "cancel": assertKeepAlive(command.keepAliveSeconds); keys=["type","keepAliveSeconds"]; break;
       case "status": assertMessageID(command.messageId); keys=["type","messageId"]; break;

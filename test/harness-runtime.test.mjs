@@ -17,7 +17,7 @@ async function until(predicate) {
     await tick();
   }
 }
-async function fixture(t, runtime) {
+async function fixture(t, runtime, sessionId = "chat") {
   const server = createServer(createSessionRuntimeHandler(runtime, { sandboxId }));
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
@@ -28,11 +28,12 @@ async function fixture(t, runtime) {
     async send(n, command, reply = false) {
       const response = await fetch("/__cantelop/v2/messages", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session: { id: "chat", workspace_id: "wsp_" + "b".repeat(32), keep_alive_seconds: 300 }, message: { id: id(n), payload: { __cantelop_command: 2, ...command } }, ...(reply ? { reply: true } : {}) }),
+        body: JSON.stringify({ session: { id: sessionId, workspace_id: "wsp_" + "b".repeat(32), keep_alive_seconds: 300 }, message: { id: id(n), payload: { __cantelop_command: 2, ...command } }, ...(reply ? { reply: true } : {}) }),
       });
       assert.equal(response.status, 202, await response.text());
     },
     async output(after = 0) { return (await fetch(`/__cantelop/v2/runtime/events?after=${after}&wait=0`)).json(); },
+    async runtime() { return (await fetch('/__cantelop/v2/runtime')).json(); },
     async ack(through) {
       const response = await fetch("/__cantelop/v2/runtime/events/ack", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ through }) });
       assert.equal(response.status, 200);
@@ -42,6 +43,34 @@ async function fixture(t, runtime) {
     async settled(n) { await until(async () => ["succeeded", "failed", "timed_out"].includes((await this.status(n)).state)); },
   };
 }
+
+test("native auth reaches a reserved harness without entering the agent queue", async t => {
+  let ran = 0, authCalls = 0;
+  const release = deferred();
+  const runtime = { create: () => ({
+    queue() { ran++; }, steer() { ran++; }, cancel() { return false; },
+    auth(command, context) { authCalls++; if (command.type === 'login') context.hold(release.promise); return { type: "status", authenticated: command.type === "status" }; },
+  }) };
+  const denied = await fixture(t, runtime);
+  await denied.send(801, { type: "auth", auth: { type: "status" } }, true);
+  await denied.settled(801);
+  assert.equal((await denied.status(801)).state, "failed");
+  const allowed = await fixture(t, runtime, "cantelop-native-auth");
+  await allowed.send(802, { type: "auth", auth: { type: "status" } }, true);
+  await allowed.settled(802);
+  assert.deepEqual((await allowed.reply(802)).reply, { type: "status", authenticated: true });
+  assert.equal(authCalls, 1);
+  assert.equal(ran, 0);
+  await allowed.send(804, { type: 'dispatch', message: 'not auth' });
+  await allowed.settled(804);
+  assert.equal((await allowed.status(804)).state, 'failed');
+  assert.equal(ran, 0);
+  await allowed.send(803, { type: 'auth', auth: { type: 'login', method: 'browser-code' } }, true);
+  await allowed.settled(803);
+  assert.equal((await allowed.runtime()).quiescent, false);
+  release.resolve();
+  await until(async () => (await allowed.runtime()).quiescent);
+});
 
 test("queue, steer and cancel delegate directly to one session harness", async t => {
   const first = deferred(), next = deferred();

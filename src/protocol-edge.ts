@@ -78,17 +78,17 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
       // Each operation owns its semantics here; no client-selected private path is forwarded.
       const sessionCommand = command as SessionCommand;
       switch (sessionCommand.type) {
-        case "dispatch": case "steer": case "request": {
+        case "dispatch": case "steer": case "request": case "auth": {
           const submission = sessionCommand;
           const defaultValue = bindings.CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS;
           const keepAliveSeconds = submission.keepAliveSeconds ?? (typeof defaultValue === "string" && /^\d+$/.test(defaultValue) ? Number(defaultValue) : defaultValue);
           try { assertKeepAlive(keepAliveSeconds); if (keepAliveSeconds === undefined) throw new TypeError(); }
           catch { throw new EdgeFailure("keep_alive_not_configured", 503); }
           const workspaceId = await resolveWorkspace();
-          return await invoke(`/__cantelop/integration/v2/${submission.type === "request" ? "requests" : "messages"}`, "POST", {
+          return await invoke(`/__cantelop/integration/v2/${submission.type === "request" || submission.type === "auth" ? "requests" : "messages"}`, "POST", {
             session: { id: session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds },
-            message: { id: envelope.id, payload: encodeRuntimeCommand({ type: submission.type === "steer" ? "steer" : "dispatch", message: submission.message }) },
-            ...(submission.type === "request" ? { timeout_ms: submission.timeoutMs } : {}),
+            message: { id: envelope.id, payload: encodeRuntimeCommand(submission.type === "auth" ? { type: "auth", auth: submission.auth } : { type: submission.type === "steer" ? "steer" : "dispatch", message: submission.message }) },
+            ...(submission.type === "request" || submission.type === "auth" ? { timeout_ms: submission.timeoutMs } : {}),
           });
         }
         case "cancel": {

@@ -1,14 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
+import { ClaudeAuth } from "./auth.js";
+import type { NativeAuthCommand, NativeAuthResult, SessionNativeAuthContext } from "@cantelop/sdk/session";
 
 /** Stock claude -p with native Workspace auth and conversation resumption. */
 export class NativeClaude extends CliHarness {
   private readonly store: ConversationStore;
-  constructor(private readonly options: NativeOptions, lifetime?: AbortSignal) {
+  private readonly nativeAuth: ClaudeAuth;
+  constructor(private readonly options: NativeOptions & { loginHelper?: string }, lifetime?: AbortSignal) {
     super(lifetime);
     this.store = new ConversationStore(options.workspace, "claude", options.sessionId);
+    this.nativeAuth = new ClaudeAuth(options.workspace, options.binary, options.loginHelper ?? "/opt/app/login-pty.py", lifetime);
   }
+  auth(command: NativeAuthCommand, context: SessionNativeAuthContext): Promise<NativeAuthResult> { return this.nativeAuth.handle(command, context); }
   protected async execute(turn: NativeTurn): Promise<void> {
     const state = await this.store.load();
     if (!state.id) { state.id = randomUUID(); await this.store.save(state); }

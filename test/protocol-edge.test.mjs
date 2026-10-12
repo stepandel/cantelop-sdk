@@ -15,6 +15,25 @@ const request = (body, headers = {}) => new Request('https://agent.example/comma
 });
 const accepted = id => Response.json({ id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
 
+test('native auth routes through a Workspace-bound request with a reserved Session', async () => {
+  const calls = [];
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', fetch: async req => {
+    calls.push(req.clone());
+    if (req.url.endsWith('/workspaces/open')) return Response.json({ id: workspaceId, slug: 'customer' });
+    return Response.json({ id: messageId, reply: { type: 'status', authenticated: false } });
+  } });
+  const body = { ...envelope({ type: 'auth', auth: { type: 'status' }, timeoutMs: 45_000, keepAliveSeconds: 900 }), session: { id: 'cantelop-native-auth' } };
+  const response = await worker.fetch(request(body), bindings);
+  assert.equal(response.status, 200);
+  const delivered = await calls.at(-1).json();
+  assert.equal(new URL(calls.at(-1).url).pathname, '/__cantelop/integration/v2/requests');
+  assert.deepEqual(delivered.message.payload, { __cantelop_command: 2, type: 'auth', auth: { type: 'status' } });
+  assert.equal(delivered.session.workspace_id, workspaceId);
+  assert.equal(delivered.session.keep_alive_seconds, 900);
+  assert.equal((await worker.fetch(request(envelope(body.command)), bindings)).status, 400);
+  assert.equal((await worker.fetch(request({ ...body, command: { ...body.command, auth: { type: 'submit', attemptId: 'bad', code: 'secret' } } }), bindings)).status, 400);
+});
+
 test('protocol Worker fails closed on auth, old routes, invalid commands and oversized input before private routing', async () => {
   let calls = 0;
   const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async () => { calls++; return accepted(messageId); } });
