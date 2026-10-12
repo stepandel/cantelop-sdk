@@ -108,10 +108,10 @@ export class RuntimeMessages {
     const settled = delivery.settled
       .then(
         () => {
-          receipt.state = controller.signal.aborted ? "timed_out" : "succeeded";
+          receipt.state = !controller.signal.aborted ? "succeeded" : receipt.error_code === "message_timed_out" ? "timed_out" : "failed";
         },
         () => {
-          receipt.state = controller.signal.aborted ? "timed_out" : "failed";
+          receipt.state = controller.signal.aborted && receipt.error_code === "message_timed_out" ? "timed_out" : "failed";
         },
       )
       .finally(() => {
@@ -170,8 +170,9 @@ export class RuntimeMessages {
       record.controller.abort(
         new DOMException("Message execution cancelled", "AbortError"),
       );
+      // Settled messages no longer own their background work.
+      this.onCancel(id, record.controller.signal.reason);
     }
-    this.onCancel(id,record.controller.signal.reason);
     return { ...record.receipt };
   }
 }

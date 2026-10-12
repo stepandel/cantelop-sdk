@@ -35,7 +35,7 @@ import {
   withoutRuntimeLogCapture,
 } from "./runtime-log-capture.js";
 import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
-import { InMemoryActivity, type ActivityLifecycle } from "./activity.js";
+import { FollowupMessages, InMemoryActivity, type ActivityLifecycle } from "./activity.js";
 import { decodeRuntimeCommand, type RuntimeCommand } from "./runtime-command.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
@@ -208,16 +208,19 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
     let replied = false;
     if (command.type === "cancel") {
-      started();
-      pendingControls++;
-      const settled = Promise.resolve().then(async () => {
+      const control = async () => {
         signal.throwIfAborted();
         if ("create" in behaviour) await activate(session, message.id);
         signal.throwIfAborted();
         const requested = "create" in behaviour ? await harness!.cancel() : activity.cancel();
         if (typeof requested !== "boolean") throw new TypeError("Session harness cancel must return a boolean");
         if (replyHolder) replyHolder.value = { id: message.id, state: requested ? "requested" : "idle" };
-      }).finally(() => { pendingControls--; quiescence.changed(); });
+      };
+      // Harness intake only hands submissions over, so FIFO order lets cancel
+      // observe every submission admitted before it without blocking on work.
+      const settled = "create" in behaviour
+        ? mailbox.enqueue(message.id, async () => { started(); await control(); })
+        : (started(), pendingControls++, control().finally(() => { pendingControls--; quiescence.changed(); }));
       return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
     }
 
@@ -275,10 +278,11 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
             // The harness receives every submission directly. The SDK only tracks
             // completion, attribution and deadlines; it never schedules provider work.
             if (harnessOperations.size >= 256) throw new Error("harness operation capacity");
-            const operation: HarnessOperation = { id: randomUUID(), controller: new AbortController(), deadline: Date.now() + 1_800_000 };
+            // Dispatch receipts settle at handoff, so the operation carries the message deadline itself.
+            const operation: HarnessOperation = { id: randomUUID(), controller: new AbortController(), deadline: Date.parse(messages.get(message.id).deadline) };
             harnessOperations.set(message.id, operation);
             const workSignal = AbortSignal.any([signal, lifetime.signal, operation.controller.signal]);
-            const timer = setTimeout(() => operation.controller.abort(new DOMException("Harness operation timed out", "AbortError")), 1_800_000);
+            const timer = setTimeout(() => operation.controller.abort(new DOMException("Harness operation timed out", "AbortError")), Math.max(0, operation.deadline - Date.now()));
             timer.unref();
             const markCancellation = () => {
               operation.cancelledAt = new Date().toISOString();
@@ -286,8 +290,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
             };
             operation.controller.signal.addEventListener("abort", markCancellation, { once: true });
             let workOpen = true;
-            let pendingBytes = 0;
-            const followups: Input[] = [];
+            const followups = new FollowupMessages<Input>();
             const assertWorkOpen = () => {
               if (!workOpen) throw new Error("Session harness operation settled");
               workSignal.throwIfAborted();
@@ -302,9 +305,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
               view: createViewCapability(message.id, workSignal, assertWorkOpen),
               send: (payload: Input) => {
                 assertWorkOpen();
-                const bytes = Buffer.byteLength(JSON.stringify(payload));
-                if (followups.length >= 256 || pendingBytes + bytes > 8 * 1024 * 1024) throw new Error("harness mailbox capacity");
-                pendingBytes += bytes; followups.push(payload);
+                followups.push(payload);
               },
             });
             quiescence.changed();
@@ -312,11 +313,10 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
               workOpen = false;
               clearTimeout(timer);
               operation.controller.signal.removeEventListener("abort", markCancellation);
-              for (const payload of followups) {
-                try { sendMessage(payload); } catch (error) { console.error("Harness completion message rejected", error); }
-              }
-              harnessOperations.delete(message.id);
-              quiescence.changed();
+              void followups.flush(sendMessage, "Harness completion message rejected").finally(() => {
+                harnessOperations.delete(message.id);
+                quiescence.changed();
+              });
             };
             let execution: unknown;
             try {
@@ -334,7 +334,8 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
                 replyHolder!.value = JSON.parse(encoded);
               }
             }).finally(closeWork);
-            void workCompletion.catch(() => undefined);
+            // Request failures surface through the receipt; dispatch receipts settled at handoff.
+            void workCompletion.catch(error => { if (!replyRequested) console.error("Session harness operation failed", error); });
           });
         });
         if ("receive" in behaviour && replyRequested && !replied) throw new Error("Session request completed without a reply");
@@ -596,7 +597,7 @@ async function handleRequest<Input>(
     writeJSON(response, 200, { reply: messages.reply(status[1]!) }); return;
   }
   if (status && ((request.method === "GET" && !status[2]) || (request.method === "POST" && status[3] === "cancel"))) {
-    writeJSON(response, 200, status[2] ? messages.cancel(status[1]!) : messages.get(status[1]!)); return;
+    writeJSON(response, 200, status[2] ? messages.cancel(status[1]!, "message_cancelled") : messages.get(status[1]!)); return;
   }
   if (url.pathname !== MESSAGE_PATH || url.search !== "") { writeError(response, 404, "not_found"); return; }
   if (request.method !== "POST") { writeError(response, 405, "method_not_allowed"); return; }
