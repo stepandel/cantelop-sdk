@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConversationStore, nativeEnvironment, runJsonProcess, NativeHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
+import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
 
 /** Stock CLI with native export/import; the live SQLite database stays on local disk. */
-export class NativeOpenCode extends NativeHarness {
+export class NativeOpenCode extends CliHarness {
   private readonly store: ConversationStore;
   private readonly snapshot: string;
   private environment: Promise<NodeJS.ProcessEnv> | undefined;

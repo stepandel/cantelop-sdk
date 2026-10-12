@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { ConversationStore, nativeEnvironment, runJsonProcess, NativeHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
+import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
 
 /** Stock claude -p with native Workspace auth and conversation resumption. */
-export class NativeClaude extends NativeHarness {
+export class NativeClaude extends CliHarness {
   private readonly store: ConversationStore;
   constructor(private readonly options: NativeOptions, lifetime?: AbortSignal) {
     super(lifetime);

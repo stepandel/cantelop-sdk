@@ -148,7 +148,7 @@ export async function runJsonProcess(options: {
 }
 
 /** Shared turn signals and output publication for stock CLI harnesses. */
-export abstract class NativeHarness implements SessionHarness<{ type: "prompt"; prompt: string }, NativeEvent> {
+export abstract class CliHarness implements SessionHarness<{ type: "prompt"; prompt: string }, NativeEvent> {
   private readonly turns: TurnQueue<{ type: "prompt"; prompt: string }, NativeEvent>;
   constructor(lifetime?: AbortSignal) {
     this.turns = new TurnQueue((message, work) => this.executeSubmission(message, work), lifetime);

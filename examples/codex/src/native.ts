@@ -1,8 +1,8 @@
 import { mkdir } from "node:fs/promises";
-import { ConversationStore, nativeEnvironment, runJsonProcess, NativeHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
+import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
 
 /** Stock codex exec, resumed by its native thread ID; no replacement agent loop. */
-export class NativeCodex extends NativeHarness {
+export class NativeCodex extends CliHarness {
   private readonly store: ConversationStore;
   constructor(private readonly options: NativeOptions, lifetime?: AbortSignal) {
     super(lifetime);

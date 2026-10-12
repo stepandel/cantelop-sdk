@@ -140,9 +140,9 @@ for (const [name, Native] of providers) {
 }
 
 test("large native frames are fragmented below the output limit and round-trip Unicode", async () => {
-  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
+  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   const nativeEvent = { type: "assistant", text: "😀".repeat(30_000) };
-  const harness = new class extends NativeHarness { async execute(turn) { await turn.emit(nativeEvent); } }();
+  const harness = new class extends CliHarness { async execute(turn) { await turn.emit(nativeEvent); } }();
   const events = [];
   await harness.queue({ type: "prompt", prompt: "test" }, { signal: new AbortController().signal, output: { send: async event => events.push(event) } });
   assert.equal(events.length > 1, true);
@@ -151,10 +151,10 @@ test("large native frames are fragmented below the output limit and round-trip U
 });
 
 test("incarnation shutdown interrupts a blocked output handoff and still waits for native cleanup", async () => {
-  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
+  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   const lifetime = new AbortController();
   let publishing = false, exited = false;
-  const harness = new class extends NativeHarness { async execute(turn) {
+  const harness = new class extends CliHarness { async execute(turn) {
     try { await turn.emit({ type: "assistant" }); }
     finally { await new Promise(resolve => setTimeout(resolve, 10)); exited = true; }
   } }(lifetime.signal);
@@ -169,13 +169,13 @@ test("incarnation shutdown interrupts a blocked output handoff and still waits f
 });
 
 test("CLI harness steer owns interruption, priority FIFO and its cleanup barrier", async () => {
-  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
+  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   let release;
   const cleanup = new Promise(resolve => { release = resolve; });
   const started = [], origins = [];
   const context = new AsyncLocalStorage();
   let active;
-  const native = new class extends NativeHarness {
+  const native = new class extends CliHarness {
     async execute(turn) {
       started.push(turn.text); origins.push(context.getStore());
       if (turn.text === "hold") {
@@ -201,10 +201,10 @@ test("CLI harness steer owns interruption, priority FIFO and its cleanup barrier
 });
 
 test("CLI harness rejects a full queue before steer can interrupt unrelated work", async () => {
-  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
+  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   let release, active;
   const exit = new Promise(resolve => { release = resolve; });
-  const native = new class extends NativeHarness {
+  const native = new class extends CliHarness {
     async execute(turn) { if (turn.text === "hold") { active = turn.signal; await exit; } }
   }();
   const work = () => ({ signal: new AbortController().signal, output: { send: async () => {} } });
@@ -218,11 +218,11 @@ test("CLI harness rejects a full queue before steer can interrupt unrelated work
 
 
 test("queued input expiry removes only that harness submission", async () => {
-  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
+  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   let release, active;
   const started = [];
   const exit = new Promise(resolve => { release = resolve; });
-  const native = new class extends NativeHarness {
+  const native = new class extends CliHarness {
     async execute(turn) {
       started.push(turn.text);
       if (turn.text === "hold") { active = turn.signal; await exit; }
