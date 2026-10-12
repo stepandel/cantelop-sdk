@@ -2,7 +2,7 @@ import type { HomepageHandler, WebhookRoutes } from "./webhooks.js";
 import type { AppDeploymentConfiguration } from "./app-definition.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import type { WorkspaceDatabase } from "./database.js";
-import type { NativeAuthCommand, NativeAuthResult } from "./native-auth.js";
+import type { AppAuth, AuthCommand } from "./native-auth.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 
 /** Exactly one canonical ID or App-scoped slug. */
@@ -40,6 +40,8 @@ export type AppOptions<Message = unknown, Event = never, Reply = never, View = u
   readonly webhooks?: WebhookRoutes<Message, Event, Reply, View>;
   /** Optional GET/HEAD handler for the App root. */
   readonly homepage?: HomepageHandler<Message, Event, Reply, View>;
+  /** Native CLI sign-in for each Workspace; runs only in the Workspace auth Sandbox. */
+  readonly auth?: AppAuth;
 } & AppDeploymentConfiguration & (
   | { readonly connection?: never; readonly edgeUrl?: never; readonly accessToken?: never }
   | { readonly connection: AppConnection; readonly edgeUrl?: never; readonly accessToken?: never }
@@ -51,19 +53,33 @@ export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = 
   /** Resolves/provisions a slug, or retrieves an existing canonical ID. */
   resolve(): Promise<Workspace>;
   database(): Promise<WorkspaceDatabase>;
-  /** Native CLI authentication shared by Sessions in this Workspace. */
+  /** Native CLI authentication shared by Sessions in this Workspace. Requires `auth` on the App. */
   auth(): WorkspaceAuthRef;
   /** A lazy reference; omitting id generates a fresh App-scoped identity. */
   session(options?: IntegrationSessionOptions): SessionRef<Message, Event, Reply, View>;
 }
 
 export interface WorkspaceAuthRef {
-  methods(options?: SessionCommandOptions): Promise<readonly string[]>;
   status(options?: SessionCommandOptions): Promise<boolean>;
-  login(options: { readonly method: string; readonly force?: boolean } & SessionCommandOptions): Promise<Extract<NativeAuthResult, { type: "login" | "status" }>>;
-  submit(options: { readonly attemptId: string; readonly code: string } & SessionCommandOptions): Promise<Extract<NativeAuthResult, { type: "status" }>>;
-  cancel(options: { readonly attemptId: string } & SessionCommandOptions): Promise<void>;
+  /**
+   * Starts the native CLI login and returns a single-use terminal for the user's browser:
+   * `new WebSocket(terminal.url, terminal.protocols)`. Binary frames carry raw terminal
+   * bytes in both directions; the code the user pastes never reaches the App.
+   */
+  terminal(options?: SessionCommandOptions): Promise<WorkspaceAuthTerminal>;
+  /** Ends an unfinished login. */
+  close(options: { readonly terminalId: string } & SessionCommandOptions): Promise<void>;
   logout(options?: SessionCommandOptions): Promise<boolean>;
+}
+
+export interface WorkspaceAuthTerminal {
+  readonly terminalId: string;
+  /** Public `wss:` URL on the App Edge. */
+  readonly url: string;
+  /** Pass unchanged as the WebSocket subprotocols; the second entry is the single-use ticket. */
+  readonly protocols: readonly [string, string];
+  /** The browser must connect before this time. */
+  readonly expiresAt: Date;
 }
 
 export interface SessionRef<Message, Event = unknown, Reply = unknown, View = unknown> {
@@ -110,7 +126,7 @@ export interface SessionView<View = unknown> {
 
 /** Public App ↔ Edge command protocol. Edge ↔ Sandbox remains the actor protocol. */
 export type SessionCommand<Message = unknown> =
-  | { readonly type: "auth"; readonly auth: NativeAuthCommand; readonly timeoutMs: number; readonly keepAliveSeconds?: number }
+  | { readonly type: "auth"; readonly auth: AuthCommand; readonly timeoutMs: number; readonly keepAliveSeconds?: number }
   | { readonly type: "dispatch" | "steer"; readonly message: Message; readonly keepAliveSeconds?: number }
   | { readonly type: "request"; readonly message: Message; readonly keepAliveSeconds?: number; readonly timeoutMs: number }
   | { readonly type: "cancel"; readonly keepAliveSeconds?: number }

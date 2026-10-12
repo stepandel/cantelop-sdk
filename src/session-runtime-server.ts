@@ -37,7 +37,8 @@ import {
 import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
 import { FollowupMessages, InMemoryActivity, type ActivityLifecycle } from "./activity.js";
 import { decodeRuntimeCommand, type RuntimeCommand } from "./runtime-command.js";
-import { NATIVE_AUTH_SESSION_ID } from "./native-auth.js";
+import { AUTH_SESSION_ID, isAppAuth, type AppAuth } from "./native-auth.js";
+import { AUTH_TERMINAL_ROUTE, AuthTerminals } from "./auth-terminal.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
 import { SessionOutputBuffer } from "./output.js";
@@ -64,6 +65,8 @@ export interface SessionRuntimeHandlerOptions {
   env?: SessionEnvironment;
   sandboxId?: string;
   executionTimeoutMs?: number;
+  /** The App's declared auth provider; only the reserved auth Session uses it. */
+  auth?: AppAuth;
 }
 
 export interface SessionRuntimeServer {
@@ -119,6 +122,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
   options: SessionRuntimeHandlerOptions = {},
 ): { handler: SessionRuntimeHandler; observationBuffer: RuntimeObservationBuffer; closeDatabase(): void; } {
   assertSessionRuntime(behaviour);
+  if (options.auth !== undefined && !isAppAuth(options.auth)) throw new TypeError("Invalid App auth");
   const sandboxId = options.sandboxId ?? process.env.CANTELOP_SANDBOX_ID ?? "";
   const messages = new RuntimeMessages(sandboxId, options.executionTimeoutMs, 4096, (id, reason) => {
     mailbox.cancel(id, reason);
@@ -138,14 +142,14 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
   let harness: SessionHarness<Input, Event, Reply, View> | undefined;
   let pendingControls = 0;
   const harnessOperations = new Map<string, HarnessOperation>();
-  let activeAuth = 0;
+  const terminals = options.auth === undefined ? undefined
+    : new AuthTerminals(options.auth, options.env ?? process.env, lifetime.signal, () => quiescence.changed());
   const activate = (session: SessionIdentity, messageId: string): Promise<void> => {
     activation ??= Promise.resolve().then(async () => {
       if ("create" in behaviour) {
         harness = await behaviour.create(Object.freeze({ signal: lifetime.signal, session, env: options.env ?? process.env, database }));
         if (!harness || ["queue", "steer", "cancel"].some(method =>
-          typeof harness![method as keyof typeof harness] !== "function") ||
-          harness.auth !== undefined && typeof harness.auth !== "function") throw new TypeError("Invalid Session harness");
+          typeof harness![method as keyof typeof harness] !== "function")) throw new TypeError("Invalid Session harness");
         return;
       }
       await behaviour.onActivate?.(Object.freeze({
@@ -210,9 +214,9 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     const sequence = nextIntakeSequence++;
     const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
     let replied = false;
-    if (session.id === NATIVE_AUTH_SESSION_ID && command.type !== "auth") {
+    if (session.id === AUTH_SESSION_ID && command.type !== "auth") {
       started();
-      return Object.freeze({ generation, settled: Promise.reject(new TypeError("Reserved native auth Session requires an auth command")), ...(replyHolder ? { reply: replyHolder } : {}) });
+      return Object.freeze({ generation, settled: Promise.reject(new TypeError("Reserved auth Session requires an auth command")), ...(replyHolder ? { reply: replyHolder } : {}) });
     }
     if (command.type === "cancel") {
       const control = async () => {
@@ -231,26 +235,15 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
       return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
     }
     if (command.type === "auth") {
+      // Auth never activates the Session runtime: no harness or agent state exists in the auth Sandbox.
       const settled = mailbox.enqueue(message.id, async () => {
         signal.throwIfAborted();
         started();
-        if (session.id !== NATIVE_AUTH_SESSION_ID || !replyHolder || !("create" in behaviour)) throw new TypeError("Invalid native auth request");
-        await activate(session, message.id);
-        if (!harness?.auth) throw new TypeError("Session harness does not support native auth");
-        signal.throwIfAborted();
-        const result = await harness.auth(command.auth, Object.freeze({
-          signal: lifetime.signal,
-          hold(completion: Promise<unknown>) {
-            activeAuth++;
-            quiescence.changed();
-            void Promise.resolve(completion).then(
-              () => { activeAuth--; quiescence.changed(); },
-              () => { activeAuth--; quiescence.changed(); },
-            );
-          },
-        }));
+        if (session.id !== AUTH_SESSION_ID || !replyHolder) throw new TypeError("Invalid auth request");
+        if (!terminals) throw new TypeError("App does not declare auth");
+        const result = await terminals.handle(command.auth, session);
         const encoded = JSON.stringify(result);
-        if (encoded === undefined || Buffer.byteLength(encoded) > 64 * 1024) throw new TypeError("Invalid native auth reply");
+        if (encoded === undefined || Buffer.byteLength(encoded) > 64 * 1024) throw new TypeError("Invalid auth reply");
         replyHolder.value = JSON.parse(encoded);
       });
       return Object.freeze({ generation, settled, ...(replyHolder ? { reply: replyHolder } : {}) });
@@ -460,7 +453,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     () => quiescence.changed(),
     (messageId, state, signal) => outputBuffer.publish(messageId, state, AbortSignal.any([signal, AbortSignal.timeout(30_000)]), true),
   );
-  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle && harnessOperations.size === 0 && pendingControls === 0 && activeAuth === 0);
+  quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle && harnessOperations.size === 0 && pendingControls === 0 && !terminals?.active);
   const supervisedWork = {
     get active() { return activity.active || harnessOperations.size > 0; },
     snapshot() {
@@ -489,6 +482,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
       behaviour.onRecover !== undefined,
       behaviour.redelivery === true,
       recover,
+      boundSession?.id === AUTH_SESSION_ID ? terminals : undefined,
       () => boundSession,
       (session) => {
         if (boundSession !== undefined &&
@@ -514,10 +508,11 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
  */
 export function serveSessionRuntime<Input, Event = never, Reply = never, View = unknown>(
   behaviour: SessionRuntime<Input, Event, Reply, View>,
+  options: { readonly auth?: AppAuth } = {},
 ): SessionRuntimeServer {
   const port = readInternalPort(process.env[INTERNAL_PORT_VARIABLE]);
   const inheritedFD = readInternalFD(process.env[INTERNAL_FD_VARIABLE]);
-  const adapter = createSessionRuntimeAdapter(behaviour);
+  const adapter = createSessionRuntimeAdapter(behaviour, options.auth === undefined ? {} : { auth: options.auth });
   const unregisterLogBuffer = registerRuntimeLogBuffer(adapter.observationBuffer);
   const server = createServer(adapter.handler);
   withoutRuntimeLogCapture(() => markSessionRuntimeStartup("server_created"));
@@ -574,6 +569,7 @@ async function handleRequest<Input>(
   recoverySupported: boolean,
   redeliverySupported: boolean,
   recover: (recoveryId: string, interruptedMessageId: string, session: SessionIdentity) => RuntimeRecovery,
+  terminals: AuthTerminals | undefined,
   boundSession: () => SessionIdentity | undefined,
   bindSession: (session: SessionIdentity) => void,
 ): Promise<void> {
@@ -590,6 +586,12 @@ async function handleRequest<Input>(
       quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true, redelivery: redeliverySupported, steering: true, messageCancellation: true, durableView: true },
       observations: observationBuffer.metadata(), events: outputBuffer.metadata()
     });
+    return;
+  }
+  const terminal = AUTH_TERMINAL_ROUTE.exec(url.pathname);
+  if (terminal) {
+    if (!terminals || url.search) throw new ProtocolError(404, "not_found");
+    await terminals.serve(request, response, terminal[1]!, terminal[2] as "attach" | "input" | "resize");
     return;
   }
   if (url.pathname === RECOVERY_PATH && request.method === "POST") {

@@ -179,4 +179,4 @@ commits advance the stream cursor without appearing as application events.
 
 Stock harness integrations are available for [Codex](examples/codex/README.md), [Claude Code](examples/anthropic/README.md), and [OpenCode](examples/opencode/README.md). They wrap stock CLI runners directly, preserve native Workspace authentication and conversation IDs, and use interrupt-and-queue steering with process-group cleanup.
 
-The Claude Code example exposes native Workspace authentication through `app.workspace(selector).auth()`. Other harnesses can implement the optional auth capability; see [native auth](docs/native-auth.md).
+Apps can declare `auth` to let each Workspace sign in to a stock CLI with the user's own subscription. The user completes sign-in in the CLI's own terminal in their browser, and the App never sees the code or credentials. The Claude Code example uses this; see [native auth](docs/native-auth.md).

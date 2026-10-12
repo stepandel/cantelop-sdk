@@ -17,8 +17,8 @@ async function until(predicate) {
     await tick();
   }
 }
-async function fixture(t, runtime, sessionId = "chat") {
-  const server = createServer(createSessionRuntimeHandler(runtime, { sandboxId }));
+async function fixture(t, runtime, sessionId = "chat", options = {}) {
+  const server = createServer(createSessionRuntimeHandler(runtime, { sandboxId, ...options }));
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -44,32 +44,38 @@ async function fixture(t, runtime, sessionId = "chat") {
   };
 }
 
-test("native auth reaches a reserved harness without entering the agent queue", async t => {
-  let ran = 0, authCalls = 0;
-  const release = deferred();
-  const runtime = { create: () => ({
-    queue() { ran++; }, steer() { ran++; }, cancel() { return false; },
-    auth(command, context) { authCalls++; if (command.type === 'login') context.hold(release.promise); return { type: "status", authenticated: command.type === "status" }; },
-  }) };
-  const denied = await fixture(t, runtime);
-  await denied.send(801, { type: "auth", auth: { type: "status" } }, true);
-  await denied.settled(801);
-  assert.equal((await denied.status(801)).state, "failed");
-  const allowed = await fixture(t, runtime, "cantelop-native-auth");
-  await allowed.send(802, { type: "auth", auth: { type: "status" } }, true);
-  await allowed.settled(802);
-  assert.deepEqual((await allowed.reply(802)).reply, { type: "status", authenticated: true });
-  assert.equal(authCalls, 1);
-  assert.equal(ran, 0);
-  await allowed.send(804, { type: 'dispatch', message: 'not auth' });
-  await allowed.settled(804);
-  assert.equal((await allowed.status(804)).state, 'failed');
-  assert.equal(ran, 0);
-  await allowed.send(803, { type: 'auth', auth: { type: 'login', method: 'browser-code' } }, true);
+test("App auth serves the reserved Session without creating a harness or entering the agent queue", async t => {
+  let creates = 0, statuses = 0, logouts = 0;
+  const runtime = { create: () => { creates++; return { queue() {}, steer() {}, cancel() { return false; } }; } };
+  const auth = {
+    status(context) { statuses++; assert.equal(context.session.id, "cantelop-native-auth"); return logouts === 0; },
+    logout() { logouts++; },
+    terminal() { throw new Error("not started in this test"); },
+  };
+  const ordinary = await fixture(t, runtime, "chat", { auth });
+  await ordinary.send(801, { type: "auth", auth: { type: "status" } }, true);
+  await ordinary.settled(801);
+  assert.equal((await ordinary.status(801)).state, "failed");
+  const undeclared = await fixture(t, runtime, "cantelop-native-auth");
+  await undeclared.send(802, { type: "auth", auth: { type: "status" } }, true);
+  await undeclared.settled(802);
+  assert.equal((await undeclared.status(802)).state, "failed");
+  const allowed = await fixture(t, runtime, "cantelop-native-auth", { auth });
+  await allowed.send(803, { type: "auth", auth: { type: "status" } }, true);
   await allowed.settled(803);
-  assert.equal((await allowed.runtime()).quiescent, false);
-  release.resolve();
-  await until(async () => (await allowed.runtime()).quiescent);
+  assert.deepEqual((await allowed.reply(803)).reply, { type: "status", authenticated: true });
+  await allowed.send(804, { type: "dispatch", message: "not auth" });
+  await allowed.settled(804);
+  assert.equal((await allowed.status(804)).state, "failed");
+  await allowed.send(805, { type: "auth", auth: { type: "logout" } }, true);
+  await allowed.settled(805);
+  assert.deepEqual((await allowed.reply(805)).reply, { type: "status", authenticated: false });
+  await allowed.send(806, { type: "auth", auth: { type: "terminal" } }, true);
+  await allowed.settled(806);
+  assert.equal((await allowed.status(806)).state, "failed");
+  assert.equal((await allowed.runtime()).quiescent, true);
+  assert.deepEqual({ creates, statuses, logouts }, { creates: 0, statuses: 2, logouts: 1 });
+  assert.throws(() => createSessionRuntimeHandler(runtime, { sandboxId, auth: { status() {} } }), /Invalid App auth/);
 });
 
 test("queue, steer and cancel delegate directly to one session harness", async t => {

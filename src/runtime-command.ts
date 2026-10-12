@@ -1,12 +1,12 @@
 /** SDK commands are opaque application payloads to the delivery transport. */
-import type { NativeAuthCommand } from "./native-auth.js";
+import { TERMINAL_ID_PATTERN, type AuthCommand } from "./native-auth.js";
 export type RuntimeCommand<Message> =
   | {
       readonly type: "dispatch" | "steer";
       readonly message: Message;
     }
   | { readonly type: "cancel" }
-  | { readonly type: "auth"; readonly auth: NativeAuthCommand };
+  | { readonly type: "auth"; readonly auth: AuthCommand };
 
 export function encodeRuntimeCommand<Message>(
   command: RuntimeCommand<Message>,
@@ -49,17 +49,11 @@ export function decodeRuntimeCommand<Message>(
   throw new TypeError("Invalid SDK runtime command");
 }
 
-export function isAuthCommand(value: unknown): value is NativeAuthCommand {
+export function isAuthCommand(value: unknown): value is AuthCommand {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const command = value as Record<string, unknown>;
-  const base = command.type === "login" ? ["type", "method", "force"]
-    : command.type === "submit" ? ["type", "attemptId", "code"]
-    : command.type === "cancel" ? ["type", "attemptId"] : ["type"];
-  if (Object.keys(command).some(key => !base.includes(key))) return false;
-  if (command.type === "methods" || command.type === "status" || command.type === "logout") return true;
-  if (command.type === "login") return typeof command.method === "string" && command.method.length <= 64 && (command.force === undefined || typeof command.force === "boolean");
-  const attemptId = typeof command.attemptId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(command.attemptId);
-  if (command.type === "cancel") return attemptId;
-  if (command.type === "submit") return attemptId && typeof command.code === "string" && /^[\x21-\x7e]{1,2048}$/.test(command.code);
-  return false;
+  const keys = command.type === "close" ? ["type", "terminalId"] : ["type"];
+  if (Object.keys(command).some(key => !keys.includes(key))) return false;
+  if (command.type === "status" || command.type === "logout" || command.type === "terminal") return true;
+  return command.type === "close" && typeof command.terminalId === "string" && TERMINAL_ID_PATTERN.test(command.terminalId);
 }

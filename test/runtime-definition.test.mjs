@@ -79,6 +79,38 @@ test("compiler splits imports and closures without executing runtime code; all a
   assert.notEqual((await compileClientDefinition(definition)).definition.id, compiled.definition.id);
 });
 
+test("compiler places App auth only in the Sandbox bundle and marks it in the backend, Edge and manifests", async t => {
+  const { directory, definition, outdir } = await project(t);
+  const sessionModule = new URL("../dist/session.js", import.meta.url).pathname;
+  await writeFile(path.join(directory, 'login.ts'), `import { spawn } from "node:child_process"; import type { AppAuth } from ${JSON.stringify(sessionModule)};
+export const login: AppAuth = { status: () => false, logout() {}, terminal: () => spawn("login-provider-marker") };`);
+  await writeFile(definition, clientSource('receive() {}', 'import { login } from "./login.js";').replace('runtime:', 'edgeUrl:"https://test.example", accessToken:"scoped", auth: login, runtime:'));
+  const compiled = await compileClientDefinition(definition);
+  assert.equal(compiled.definition.auth, true);
+  assert.match(compiled.runtimeModule, /login-provider-marker/);
+  assert.match(compiled.runtimeModule, /var auth = login;[\s\S]*export \{[^}]*\bauth\b/);
+  assert.doesNotMatch(compiled.backendSource, /login|node:child_process/);
+  assert.match(compiled.backendSource, /dev\.cantelop\.sdk\.compiled-auth\.v1/);
+  assert.doesNotMatch(compiled.webhookModule, /login-provider-marker/);
+  const native = await buildSessionRuntime({ definition, outdir });
+  assert.equal(native.manifest.capabilities.authTerminal, true);
+  assert.match(await readFile(native.mainModule, 'utf8'), /login-provider-marker/);
+  const edge = await buildEdgeApi({ definition, outdir: path.join(directory, 'edge') });
+  assert.equal(edge.manifest.auth, true);
+  assert.doesNotMatch(await readFile(edge.mainModule, 'utf8'), /login-provider-marker/);
+  const backend = await buildBackendClient({ definition, outdir: path.join(directory, 'backend') });
+  assert.doesNotMatch(await readFile(backend.mainModule, 'utf8'), /login-provider-marker|node:child_process/);
+  const evaluated = await import('data:text/javascript,' + encodeURIComponent(compiled.backendSource.replace(JSON.stringify(clientModule), JSON.stringify(new URL('../dist/client.js', import.meta.url).href))));
+  assert.equal(typeof evaluated.cantelop.workspace({ slug: 'customer' }).auth().terminal, 'function');
+  await writeFile(path.join(directory, 'login.ts'), `import { spawn } from "node:child_process"; import type { AppAuth } from ${JSON.stringify(sessionModule)};
+export const login: AppAuth = { status: () => true, logout() {}, terminal: () => spawn("login-provider-marker") };`);
+  assert.notEqual((await compileClientDefinition(definition)).definition.id, compiled.definition.id);
+  await writeFile(definition, clientSource('receive() {}').replace('runtime:', 'edgeUrl:"https://test.example", accessToken:"scoped", runtime:'));
+  const plain = await compileClientDefinition(definition);
+  assert.equal('auth' in plain.definition, false);
+  assert.equal((await buildEdgeApi({ definition, outdir: path.join(directory, 'edge-plain') })).manifest.auth, undefined);
+});
+
 test("compiler enforces contextual payload, output, lifecycle and reply contracts", async t => {
   const {definition, outdir} = await project(t);
   const prefix = `import { CantelopClient } from ${JSON.stringify(clientModule)}; export default new CantelopClient().app<{prompt:string},{text:string},{answer:string}>({ name: "first-agent",runtime:`;

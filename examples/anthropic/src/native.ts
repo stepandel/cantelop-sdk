@@ -1,19 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
-import { ClaudeAuth } from "./auth.js";
-import type { NativeAuthCommand, NativeAuthResult, SessionNativeAuthContext } from "@cantelop/sdk/session";
 
-/** Stock claude -p with native Workspace auth and conversation resumption. */
+/** Stock claude -p with conversation resumption; sign-in is the App-level `claudeAuth`. */
 export class NativeClaude extends CliHarness {
   private readonly store: ConversationStore;
-  private readonly nativeAuth: ClaudeAuth;
-  constructor(private readonly options: NativeOptions & { loginHelper?: string }, lifetime?: AbortSignal) {
+  constructor(private readonly options: NativeOptions, lifetime?: AbortSignal) {
     super(lifetime);
     this.store = new ConversationStore(options.workspace, "claude", options.sessionId);
-    this.nativeAuth = new ClaudeAuth(options.workspace, options.binary, options.loginHelper ?? "/opt/app/login-pty.py", lifetime);
   }
-  auth(command: NativeAuthCommand, context: SessionNativeAuthContext): Promise<NativeAuthResult> { return this.nativeAuth.handle(command, context); }
   protected async execute(turn: NativeTurn): Promise<void> {
     const state = await this.store.load();
     // An interrupted turn may have claimed its --session-id before init; never reuse it.
@@ -25,7 +20,7 @@ export class NativeClaude extends CliHarness {
       binary: this.options.binary, cwd: this.options.workspace, env,
       args: ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
         ...(this.options.model ? ["--model", this.options.model] : []),
-        state.resumable ? "--resume" : "--session-id", state.id],
+        state.resumable ? "--resume" : "--session-id", state.id!],
       turn: { ...turn, emit: async event => {
         if (event.type === "system" && event.subtype === "init") { state.resumable = true; await this.store.save(state); }
         completed ||= event.type === "result";

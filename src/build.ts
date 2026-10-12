@@ -13,6 +13,8 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { compileClientDefinition as readRuntimeDefinition, compileAppDefinitions, RuntimeContractError } from "./compiler.js";
 export { createCantelopCompilerPlugin } from "./compiler.js";
+export { bridgeAuthTerminal } from "./auth-terminal-bridge.js";
+export type { AuthTerminalBridgeOptions } from "./auth-terminal-bridge.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -61,7 +63,7 @@ export interface SessionRuntimeManifest extends AppDeploymentConfiguration {
   readonly session_runtime_id: string;
   readonly app_name: string;
   /** Advertised only after coordinated actor scheduling, attribution and projection support. */
-  readonly capabilities: Readonly<{ steering: true; messageCancellation: true; durableView: true }>;
+  readonly capabilities: Readonly<{ steering: true; messageCancellation: true; durableView: true; authTerminal?: true }>;
   readonly database_schema?: ApplicationDatabaseSchema;
 }
 
@@ -114,6 +116,8 @@ export interface EdgeApiArtifact {
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS";
     webhooks: readonly { readonly path: string; readonly method: "GET" | "POST" }[];
     homepage: boolean;
+    /** The App declares auth: the platform must route auth terminal upgrades to the auth Sandbox. */
+    auth?: true;
   }>;
 }
 
@@ -140,6 +144,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
     runtimeId: runtime.definition.id,
     appName: runtime.definition.name,
     environment: runtime.definition.environment ?? {},
+    ...(runtime.definition.auth ? { auth: true } : {}),
     ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }),
   };
   await build({
@@ -159,6 +164,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS",
     webhooks: Object.freeze(runtime.webhookRoutes.map(route => Object.freeze({ ...route }))),
     homepage: runtime.hasHomepage,
+    ...(runtime.definition.auth ? { auth: true } : {}),
   });
   const manifestFile = path.join(outdir, "cantelop-edge.json");
   await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
@@ -201,7 +207,7 @@ function evaluateBuildModule(source: string): Promise<unknown> {
   });
 }
 
-async function writeSessionManifest(outdir: string, schemaPath: string, runtimeId: string, appName: string, configuration: AppDeploymentConfiguration): Promise<SessionRuntimeManifest> {
+async function writeSessionManifest(outdir: string, schemaPath: string, runtimeId: string, appName: string, configuration: AppDeploymentConfiguration & { readonly auth?: true }): Promise<SessionRuntimeManifest> {
   const databaseSchema = await buildDatabaseSchema(schemaPath);
   const manifest: SessionRuntimeManifest = Object.freeze({
     schema_version: 1,
@@ -214,7 +220,7 @@ async function writeSessionManifest(outdir: string, schemaPath: string, runtimeI
     app_name: appName,
     ...(configuration.environment === undefined ? {} : { environment: configuration.environment }),
     ...(configuration.dockerfile === undefined ? {} : { dockerfile: configuration.dockerfile }),
-    capabilities: Object.freeze({ steering: true, messageCancellation: true, durableView: true }),
+    capabilities: Object.freeze({ steering: true, messageCancellation: true, durableView: true, ...(configuration.auth ? { authTerminal: true } : {}) }),
     ...(databaseSchema === undefined ? {} : { database_schema: databaseSchema }),
   });
   await writeFile(path.join(outdir, SESSION_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8" });
@@ -308,10 +314,10 @@ function sessionRuntimeBootstrap(): string {
     "};",
     "mark(\"bun_entry\");",
     `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
-    'const { default: behaviour } = await import("cantelop:extracted-runtime");',
+    'const { default: behaviour, auth } = await import("cantelop:extracted-runtime");',
     'if (typeof behaviour.receive !== "function" && typeof behaviour.create !== "function") throw new Error("Session runtime must export create or receive");',
     "mark(\"module_evaluated\");",
-    "const sessionRuntime = serveSessionRuntime(behaviour);",
+    "const sessionRuntime = serveSessionRuntime(behaviour, auth === undefined ? {} : { auth });",
     "await sessionRuntime.ready;",
   ].join("\n");
 }

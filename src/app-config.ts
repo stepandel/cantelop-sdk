@@ -2,6 +2,7 @@ import { validateWebhookRoutes } from "./webhooks.js";
 import { validateAppDeploymentConfiguration } from "./app-definition.js";
 import type { AppSelector, AppOptions } from "./integration.js";
 import { SLUG_PATTERN } from "./integration-protocol.js";
+import { isAppAuth } from "./native-auth.js";
 
 /** Reserved CLI/runtime injection point. Never includes control-plane login credentials. */
 export const APP_CONFIGURATION_CONTEXT_KEY = "dev.cantelop.sdk.app-config.v1";
@@ -54,10 +55,11 @@ function selector(value: unknown): AppSelector {
   return invalid();
 }
 export function assertAppOptions(value: AppOptions<any, any, any, any>): void {
-  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "homepage", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
+  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "homepage", "auth", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
   validateAppDeploymentConfiguration(value);
   validateWebhookRoutes(value.webhooks);
   if (value.homepage !== undefined && typeof value.homepage !== "function") throw new TypeError("Invalid App homepage");
+  if (value.auth !== undefined && !isAppAuth(value.auth)) throw new TypeError("App auth requires status, logout and terminal functions");
   if (value.connection !== undefined) {
     if (typeof value.connection.fetch !== "function" || value.edgeUrl !== undefined || value.accessToken !== undefined) throw new TypeError("An App connection cannot be combined with other transport configuration");
   } else if (value.edgeUrl !== undefined || value.accessToken !== undefined) {

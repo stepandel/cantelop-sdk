@@ -110,6 +110,48 @@ test("a built Session runtime receives messages on the local development port", 
   );
 });
 
+test("a built runtime serves the App's auth provider and its terminal relay", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-auth-runtime-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, "auth.ts"), [
+    'import { spawn } from "node:child_process";',
+    'export const login = { status: () => true, logout() {}, terminal: () => spawn(process.execPath, ["-e", "console.log(\'built-login\'); setInterval(() => {}, 1000)"], { stdio: ["pipe", "pipe", "ignore"] }) };',
+  ].join("\n"));
+  const definition = path.join(directory, "definition.mjs");
+  await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; import { login } from "./auth.ts"; export default new CantelopClient().app({ name: "first-agent", auth: login, runtime: { receive() {} } });`);
+  const artifact = await buildSessionRuntime({ definition, outdir: path.join(directory, "artifact") });
+  assert.equal(artifact.manifest.capabilities.authTerminal, true);
+  const port = await reservePort(), sandboxId = "sbx-" + "1".repeat(32);
+  const child = spawn(process.execPath, [artifact.mainModule], { env: { ...process.env, CANTELOP_INTERNAL_PORT: String(port), CANTELOP_SANDBOX_ID: sandboxId }, stdio: ["ignore", "ignore", "ignore"] });
+  t.after(async () => stopChild(child));
+  const base = `127.0.0.1:${port}`, headers = { "X-Cantelop-Sandbox-ID": sandboxId };
+  const command = async (n, auth) => {
+    const id = `msg_${String(n).padStart(32, "0")}`;
+    for (const deadline = Date.now() + 5_000; ;) {
+      try {
+        const response = await fetch(`http://${base}/__cantelop/v2/messages`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({
+          session: { id: "cantelop-native-auth", workspace_id: "wsp_0123456789abcdef0123456789abcdef", keep_alive_seconds: 300 },
+          message: { id, payload: { __cantelop_command: 2, type: "auth", auth } }, reply: true }) });
+        assert.equal(response.status, 202);
+        break;
+      } catch (error) { if (Date.now() > deadline) throw error; await new Promise(resolve => setTimeout(resolve, 25)); }
+    }
+    for (const deadline = Date.now() + 5_000; Date.now() < deadline; await new Promise(resolve => setTimeout(resolve, 25))) {
+      const reply = await fetch(`http://${base}/__cantelop/v2/messages/${id}/reply`, { headers });
+      if (reply.status === 200) { const value = (await reply.json()).reply; if (value !== null && value !== undefined) return value; }
+    }
+    throw new Error("auth reply timed out");
+  };
+  assert.deepEqual(await command(1, { type: "status" }), { type: "status", authenticated: true });
+  const terminal = await command(2, { type: "terminal" });
+  const attached = await fetch(`http://${base}/__cantelop/v2/runtime/auth/terminals/${terminal.terminalId}/attach`, { method: "POST", headers: { ...headers, "X-Cantelop-Terminal-Ticket": terminal.ticket } });
+  assert.equal(attached.status, 200);
+  const reader = attached.body.getReader();
+  let output = "";
+  while (!output.includes("built-login")) output += Buffer.from((await reader.read()).value).toString("utf8");
+  await reader.cancel();
+});
+
 test("watchLocalProject incrementally rebuilds changed components", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-watch-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
