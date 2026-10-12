@@ -10,11 +10,14 @@
     "check": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@cantelop/sdk": "workspace:*",
-    "@openai/codex-sdk": "0.162.1"
+    "@cantelop/sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.6.3"
+  },
+  "nativeCli": {
+    "package": "@openai/codex",
+    "version": "0.162.1"
   }
 }

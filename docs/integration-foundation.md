@@ -85,7 +85,7 @@ The SDK serializes message intake, which stays responsive while work runs in
 work or `activity.queue(work, options)` to schedule a task in the single activity
 slot. `queue` returns immediately; its closure retains the submission's ownership.
 Steering submissions default to priority when they queue work, preserving FIFO
-within each priority. An explicit queue `priority` option overrides the default.
+within each priority. An explicit queue `priority` option overrides the default. Harness definitions can select `steering: "interrupt"` to admit priority work and interrupt the active operation before it runs; failed admission does not interrupt existing work, and cleanup holds the slot.
 
 `activity.steer(message)` invokes the current activity's registered `onSteer`
 adapter. No separate runtime handler is required. An absent adapter or inactive

@@ -1,6 +1,6 @@
 FROM node:22-bookworm-slim
 
-# Stock CLI; this version is the installed Agent SDK's claudeCodeVersion.
+# Stock CLI; keep aligned with nativeCli in package.json.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates git ripgrep \
     && rm -rf /var/lib/apt/lists/* \

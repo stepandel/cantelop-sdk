@@ -94,7 +94,7 @@ export function create(context: SessionHarnessContext): SessionHarness<Message, 
 
 The factory runs once per Session runtime incarnation, on first input or recovery. It returns `run` and optional `steer` and `cancel` methods sharing one harness instance. The SDK queues ordinary input without blocking intake. `run` resolves after execution and cleanup; its return value supplies `session.request()` replies. Work receives its own signal, output, view, message identity, and Session resources. The compiler bundles the factory and its dependencies into the Sandbox while excluding them from backend and Edge artifacts.
 
-Native steering invokes the active harness's `steer` method. Steering while idle schedules a new run. Missing native steering rejects explicitly; configure `runtime: { create, steering: "queue" }` to schedule steering input ahead of waiting ordinary work, preserving FIFO within each priority.
+Native steering invokes the active harness's `steer` method. Steering while idle schedules a new run. Missing native steering rejects explicitly; `steering: "queue"` selects priority queueing, while `steering: "interrupt"` admits priority input and interrupts the active operation before its next run. Both preserve FIFO within each priority. Interrupt admission failures leave active work untouched, and cleanup must complete before a queued turn starts.
 
 Custom runtimes can use `runtime: { receive, onActivate?, onRecover?, redelivery? }`. Their intake is serialized; move long-running work into `context.activity` to keep control intake responsive.
 
@@ -195,4 +195,4 @@ returns `session_view_not_found`. Views survive stop and host restart; stream
 resume remains subject to the platform's bounded replay retention. Projection
 commits advance the stream cursor without appearing as application events.
 
-Stock harness integrations are available for [Codex](examples/codex/README.md), [Claude Code](examples/anthropic/README.md), and [OpenCode](examples/opencode/README.md). They wrap existing official SDK objects, forward native output types, and leave provider tools, prompts, configuration and agent loops with the native harness.
+Stock harness integrations are available for [Codex](examples/codex/README.md), [Claude Code](examples/anthropic/README.md), and [OpenCode](examples/opencode/README.md). They wrap stock CLI runners directly, preserve native Workspace authentication and conversation IDs, and use interrupt-and-queue steering with process-group cleanup.

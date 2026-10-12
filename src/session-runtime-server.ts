@@ -246,11 +246,11 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
           await observer.span("session.receive", async () => {
             if ("receive" in behaviour) return behaviour.receive(context);
             const adapter = harness!;
-            if (command.type === "steer" && activity.active && behaviour.steering !== "queue") {
+            if (command.type === "steer" && activity.active && (behaviour.steering ?? "native") === "native") {
               await activity.steer(message.payload);
               return;
             }
-            if (command.type === "steer" && !adapter.steer && behaviour.steering !== "queue") throw new Error("Session harness does not support steering");
+            if (command.type === "steer" && !adapter.steer && (behaviour.steering ?? "native") === "native") throw new Error("Session harness does not support steering");
             workCompletion = activity.queue(message.id, async work => {
               const result = await adapter.run(message.payload, Object.freeze({
                 signal: work.signal, output: work.output, view: work.view, send: work.send,
@@ -269,6 +269,9 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
               ...(adapter.cancel ? { onCancel: () => adapter.cancel!() } : {}),
               priority: command.type === "steer",
             }, event => observer.recordActivity(event));
+            // Admit priority input before interrupting. A rejected admission must
+            // not stop unrelated work; cleanup holds the slot until it can run.
+            if (command.type === "steer" && behaviour.steering === "interrupt") activity.cancel();
           });
         });
         if ("receive" in behaviour && replyRequested && !replied) throw new Error("Session request completed without a reply");

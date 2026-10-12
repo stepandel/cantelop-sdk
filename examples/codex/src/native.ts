@@ -1,0 +1,32 @@
+import { mkdir } from "node:fs/promises";
+import { ConversationStore, nativeEnvironment, runJsonProcess, type NativeHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
+
+/** Stock codex exec, resumed by its native thread ID; no replacement agent loop. */
+export class NativeCodex implements NativeHarness {
+  private readonly store: ConversationStore;
+  constructor(private readonly options: NativeOptions) {
+    this.store = new ConversationStore(options.workspace, "codex", options.sessionId);
+  }
+  async run(turn: NativeTurn): Promise<void> {
+    const state = await this.store.load();
+    const env = nativeEnvironment(this.options.workspace);
+    await mkdir(env.CODEX_HOME!, { recursive: true, mode: 0o700 });
+    await mkdir(env.CODEX_SQLITE_HOME!, { recursive: true, mode: 0o700 });
+    let completed = false, failed = false;
+    await runJsonProcess({
+      binary: this.options.binary, cwd: this.options.workspace, env,
+      args: ["exec", "--json", "--skip-git-repo-check",
+        ...(this.options.model ? ["--model", this.options.model] : []),
+        ...(state.id ? ["resume", state.id] : []), "-"],
+      turn: { ...turn, emit: async event => {
+        if (event.type === "thread.started" && typeof event.thread_id === "string") {
+          state.id = event.thread_id; state.resumable = true; await this.store.save(state);
+        }
+        completed ||= event.type === "turn.completed";
+        failed ||= event.type === "turn.failed" || event.type === "error";
+        await turn.emit(event);
+      } },
+    });
+    if (!completed || failed) throw new Error("Codex turn did not complete successfully");
+  }
+}

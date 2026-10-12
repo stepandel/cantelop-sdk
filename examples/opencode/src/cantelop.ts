@@ -6,10 +6,10 @@ const cantelop = new CantelopClient();
 
 export const app = cantelop.app<SessionMessage, SessionEvent>({
   name: "opencode",
-  runtime: { create, steering: "queue" },
+  runtime: { create, steering: "interrupt" },
   environment: {
-    ANTHROPIC_API_KEY: { secret: true, required: true },
-    OPENCODE_MODEL: { default: "anthropic/claude-sonnet-4-5" },
+    OPENCODE_PATH: { default: "/usr/local/bin/opencode" },
+    OPENCODE_MODEL: {},
   },
   dockerfile: "docker/Dockerfile",
 });

@@ -190,3 +190,43 @@ test("failed harness initialization is fenced for subsequent input in the incarn
   assert.equal((await f.status(2)).state, "failed");
   assert.equal(creates, 1);
 });
+
+test("interrupt steering admits priority input, aborts the current run and waits for cleanup", async t => {
+  const exit = deferred(), cleanup = deferred();
+  const started = [];
+  let signal, cancels = 0;
+  const f = await fixture(t, { steering: "interrupt", create: () => ({
+    async run(message, work) {
+      started.push(message);
+      if (message === "hold") { signal = work.signal; await exit.promise; }
+    },
+    steer() { throw new Error("Interrupt mode must not inject native input"); },
+    async cancel() { cancels++; await cleanup.promise; },
+  }) });
+  await f.send(1, { type: "dispatch", message: "hold" }); await f.settled(1);
+  await until(() => signal);
+  await f.send(2, { type: "dispatch", message: "normal" }); await f.settled(2);
+  await f.send(3, { type: "steer", message: "direction-1" }); await f.settled(3);
+  await f.send(4, { type: "steer", message: "direction-2" }); await f.settled(4);
+  assert.equal(signal.aborted, true);
+  assert.equal(cancels, 1);
+  exit.resolve(); await tick();
+  assert.deepEqual(started, ["hold"]);
+  cleanup.resolve(); await until(() => started.length === 4);
+  assert.deepEqual(started, ["hold", "direction-1", "direction-2", "normal"]);
+});
+
+test("rejected interrupt steering cannot cancel active work", async t => {
+  const exit = deferred();
+  let signal;
+  const f = await fixture(t, { steering: "interrupt", create: () => ({
+    async run(message, work) { if (message === "hold") { signal = work.signal; await exit.promise; } },
+  }) });
+  await f.send(1, { type: "dispatch", message: "hold" }); await f.settled(1);
+  await until(() => signal);
+  for (let n = 2; n < 258; n++) { await f.send(n, { type: "dispatch", message: "queued" }); await f.settled(n); }
+  await f.send(258, { type: "steer", message: "overflow" }); await f.settled(258);
+  assert.equal((await f.status(258)).state, "failed");
+  assert.equal(signal.aborted, false);
+  exit.resolve();
+});

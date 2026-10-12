@@ -1,191 +1,149 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm, writeFile, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { build } from "esbuild";
 
-async function load(example, provider, exports) {
-  const key = `native-harness-${crypto.randomUUID()}`;
-  globalThis[key] = exports;
-  const bundle = await build({
-    entryPoints: [new URL(`../examples/${example}/src/agent.ts`, import.meta.url).pathname],
-    bundle: true, platform: "node", format: "esm", write: false,
-    plugins: [{ name: "native-api-fixture", setup(builder) {
-      builder.onResolve({ filter: new RegExp(`^${provider}$`) }, () => ({ path: provider, namespace: "mock" }));
-      builder.onLoad({ filter: /.*/, namespace: "mock" }, () => ({ contents: Object.keys(exports).map(name => `export const ${name} = globalThis[${JSON.stringify(key)}][${JSON.stringify(name)}];`).join("\n") }));
-    } }],
+async function load(path) {
+  const bundle = await build({ entryPoints: [new URL(path, import.meta.url).pathname], bundle: true, platform: "node", format: "esm", write: false });
+  return import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+}
+const providers = [
+  ["codex", (await load("../examples/codex/src/native.ts")).NativeCodex, (await load("../examples/codex/src/agent.ts")).wrapCodex],
+  ["claude", (await load("../examples/anthropic/src/native.ts")).NativeClaude, (await load("../examples/anthropic/src/agent.ts")).wrapClaude],
+  ["opencode", (await load("../examples/opencode/src/native.ts")).NativeOpenCode, (await load("../examples/opencode/src/agent.ts")).wrapOpenCode],
+];
+
+// Real subprocess/stdin/JSONL/process-group boundaries; no provider credentials or model calls.
+async function fixture(t) {
+  const workspace = await mkdtemp(join(tmpdir(), "native-cli-example-"));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  const binary = join(workspace, "native-cli");
+  await writeFile(binary, `#!/usr/bin/env node
+const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto'), {spawn} = require('node:child_process');
+const args = process.argv.slice(2);
+const provider = args[0] === 'exec' ? 'codex' : args[0] === '-p' ? 'claude' : 'opencode';
+const root = provider === 'codex' ? process.env.CODEX_HOME : provider === 'claude' ? process.env.CLAUDE_CONFIG_DIR : path.join(process.env.XDG_DATA_HOME,'opencode');
+fs.mkdirSync(root,{recursive:true});
+const store = path.join(root,'fake-sessions.json');
+let sessions = fs.existsSync(store) ? JSON.parse(fs.readFileSync(store,'utf8')) : {};
+if(args[0] === 'import') {
+ const value = JSON.parse(fs.readFileSync(args[1],'utf8')); sessions[value.info.id] = value.messages;
+ fs.writeFileSync(store,JSON.stringify(sessions)); console.log('Imported session: '+value.info.id); process.exit(0);
+}
+if(args[0] === 'export') {
+ const id = args[1]; console.log(JSON.stringify({info:{id},messages:sessions[id] || []},null,2)); process.exit(0);
+}
+let text=''; process.stdin.on('data',chunk=>text+=chunk); process.stdin.on('end',()=>{
+ let id;
+ if(provider==='codex') { const at=args.indexOf('resume'); id=at<0?crypto.randomUUID():args[at+1]; }
+ if(provider==='claude') {const at=args.indexOf('--resume')>=0?args.indexOf('--resume'):args.indexOf('--session-id'); id=args[at+1];}
+ if(provider==='opencode') {const at=args.indexOf('--session'); id=at<0?'ses_'+crypto.randomUUID().replaceAll('-',''):args[at+1];}
+ sessions[id] ||= []; sessions[id].push(text); fs.writeFileSync(store,JSON.stringify(sessions));
+ const meta={args,stdin:text,id,history:sessions[id],cwd:process.cwd(),home:process.env.HOME,config:process.env.CLAUDE_CONFIG_DIR,codex:process.env.CODEX_HOME,sqlite:process.env.CODEX_SQLITE_HOME,xdg:process.env.XDG_DATA_HOME,sharedKey:!!process.env.ANTHROPIC_API_KEY||!!process.env.OPENAI_API_KEY||!!process.env.CANTELOP_INTEGRATION_TOKEN};
+ const emit=e=>console.log(JSON.stringify(e));
+ if(provider==='codex')emit({type:'thread.started',thread_id:id});
+ if(provider==='claude')emit({type:'system',subtype:'init',session_id:id});
+ if(provider==='opencode')emit({type:'step_start',sessionID:id});
+ emit({type:'metadata',...meta});
+ if(text==='wait') {
+  process.on('SIGTERM',()=>{});
+  spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});console.log(JSON.stringify({type:'tool.ready',pid:process.pid}));setInterval(()=>{},1000)"],{stdio:['ignore','inherit','inherit']});
+  setInterval(()=>{},1000);return;
+ }
+ if(text==='malformed'){process.stdout.write('{bad json');return;}
+ if(text==='missing'){process.stdout.write(JSON.stringify({type:'text',text:'incomplete'}));return;}
+ if(provider==='codex')process.stdout.write(JSON.stringify(text==='fail'?{type:'turn.failed',error:{message:'failed'}}:{type:'turn.completed',text:'Hello 😀'}));
+ if(provider==='claude')process.stdout.write(JSON.stringify({type:'result',is_error:text==='fail',text:'Hello 😀'}));
+ if(provider==='opencode')process.stdout.write(JSON.stringify(text==='fail'?{type:'error',sessionID:id}:{type:'step_finish',sessionID:id,part:{reason:'stop'},text:'Hello 😀'}));
+});
+`, { mode: 0o755 });
+  return { workspace, binary };
+}
+const turn = (text, events, signal = new AbortController().signal) => ({ text, signal, emit: async event => { events.push(event); } });
+
+for (const [name, Native, wrap] of providers) {
+  test(`${name} wraps the stock CLI command, keeps prompts on stdin, and resumes after replacement`, async t => {
+    const options = { ...await fixture(t), sessionId: "one" };
+    const events = [];
+    const native = new Native(options);
+    await native.run(turn("first", events));
+    const first = events.find(event => event.type === "metadata");
+    assert.equal(first.stdin, "first");
+    assert.equal(first.args.includes("first"), false);
+    assert.equal(first.sharedKey, false);
+    assert.equal(first.home, options.workspace);
+    const next = [];
+    await new Native(options).run(turn("second", next));
+    const metadata = next.find(event => event.type === "metadata");
+    assert.equal(metadata.id, first.id);
+    assert.deepEqual(metadata.history, ["first", "second"]);
+    assert.equal(next.at(-1).text, "Hello 😀"); // Final JSON frame has no newline.
+    const other = [];
+    await new Native({ ...options, sessionId: "other" }).run(turn("other", other));
+    assert.notEqual(other.find(event => event.type === "metadata").id, first.id);
+    if (name === "opencode") {
+      assert.equal(metadata.xdg.startsWith(options.workspace), false, "live SQLite stays local");
+      const snapshotDirectory = join(options.workspace,".cantelop","native-harness","opencode");
+      assert.equal((await stat(snapshotDirectory)).mode & 0o777, 0o700);
+    }
+    if (name === "codex") assert.equal(metadata.sqlite.startsWith(options.workspace), false);
+    // The adapter just maps the existing runner into SessionHarness.run.
+    const output = [];
+    await wrap(native).run({ type: "prompt", prompt: "adapted" }, { signal: new AbortController().signal, output: { send: async event => output.push(event) } });
+    assert.equal(output.some(event => event.type === "metadata" && event.stdin === "adapted"), true);
   });
-  try { return await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`); }
-  finally { delete globalThis[key]; }
+
+  test(`${name} cancellation waits for real process-group exit and stubborn tool cleanup`, async t => {
+    const native = new Native({ ...await fixture(t), sessionId: "one" });
+    const controller = new AbortController();
+    let toolPid, abortedAt;
+    const run = native.run({ text: "wait", signal: controller.signal, emit: async event => {
+      if (event.type === "tool.ready") { toolPid = event.pid; abortedAt = Date.now(); controller.abort(); }
+    } });
+    await assert.rejects(run, /abort/i);
+    assert.ok(Date.now() - abortedAt >= 900);
+    assert.throws(() => process.kill(toolPid, 0), error => error.code === "ESRCH");
+  });
+
+  test(`${name} output failure cleans up before returning; native failures never become success`, async t => {
+    const native = new Native({ ...await fixture(t), sessionId: "one" });
+    let toolPid;
+    await assert.rejects(native.run({ text: "wait", signal: new AbortController().signal, emit: async event => {
+      if (event.type === "tool.ready") { toolPid = event.pid; throw new Error("handoff failed"); }
+    } }), /handoff failed/);
+    assert.throws(() => process.kill(toolPid, 0), error => error.code === "ESRCH");
+    for (const prompt of ["fail", "missing", "malformed"]) await assert.rejects(native.run(turn(prompt, [])));
+  });
 }
-const codex = await load("codex", "@openai/codex-sdk", { Codex: class {} });
-const tick = () => new Promise(resolve => setImmediate(resolve));
-const work = (events, signal = new AbortController().signal) => ({ signal, output: { send: async event => events.push(event) } });
 
-test("Codex wrapper delegates to the same native Thread and forwards native tool/turn events", async () => {
-  const calls = [], output = [];
-  const thread = { async runStreamed(prompt, options) {
-    calls.push({ prompt, signal: options.signal });
-    return { events: (async function* () {
-      yield { type: "thread.started", thread_id: "native-thread" };
-      yield { type: "item.completed", item: { type: "command_execution", id: "tool", command: "pwd", status: "completed", aggregated_output: "/workspace" } };
-      yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
-    })() };
-  } };
-  const harness = codex.wrapCodex(thread);
-  const context = work(output);
-  await harness.run({ prompt: "first" }, context);
-  await harness.run({ prompt: "next" }, context);
-  assert.deepEqual(calls.map(call => call.prompt), ["first", "next"]);
-  assert.equal(calls.every(call => call.signal === context.signal), true);
-  assert.equal(output.length, 6);
-  assert.equal(output[1].item.command, "pwd");
-  assert.equal("steer" in harness, false);
+test("large native frames are fragmented below the output limit and round-trip Unicode", async () => {
+  const { wrapNativeHarness } = await load("../examples/native-harness/cli.ts");
+  const nativeEvent = { type: "assistant", text: "😀".repeat(30_000) };
+  const harness = wrapNativeHarness({ run: async turn => turn.emit(nativeEvent) });
+  const events = [];
+  await harness.run({ type: "prompt", prompt: "test" }, { signal: new AbortController().signal, output: { send: async event => events.push(event) } });
+  assert.equal(events.length > 1, true);
+  assert.equal(events.every(event => event.type === "native.fragment" && Buffer.byteLength(JSON.stringify(event)) < 64 * 1024), true);
+  assert.deepEqual(JSON.parse(events.map(event => event.json).join("")), nativeEvent);
 });
 
-test("Codex wrapper passes interruption to the native SDK and propagates turn failure", async () => {
-  const controller = new AbortController(), output = [];
-  const harness = codex.wrapCodex({ async runStreamed(_, { signal }) {
-    assert.equal(signal, controller.signal);
-    return { events: (async function* () {
-      await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
-      signal.throwIfAborted();
-    })() };
-  } });
-  const result = assert.rejects(harness.run({ prompt: "hold" }, work(output, controller.signal)), /abort/i);
-  await tick(); controller.abort(); await result;
-  assert.deepEqual(output, []);
-  const failed = codex.wrapCodex({ async runStreamed() {
-    return { events: (async function* () { yield { type: "turn.failed", error: { message: "native failure" } }; })() };
-  } });
-  await assert.rejects(failed.run({ prompt: "fail" }, work(output)), /native failure/);
-});
-
-test("Codex wrapper rejects a truncated stream without claiming turn completion", async () => {
-  const harness = codex.wrapCodex({ async runStreamed() { return { events: (async function* () {})() }; } });
-  await assert.rejects(harness.run({ prompt: "hello" }, work([])), /before turn completion/);
-});
-
-function nativeQuery() {
-  const messages = [];
-  let reader, interrupts = 0, returned = 0;
-  return {
-    next() {
-      if (messages.length) return Promise.resolve({ value: messages.shift(), done: false });
-      return new Promise(resolve => { reader = resolve; });
-    },
-    emit(message) {
-      if (reader) { const resolve = reader; reader = undefined; resolve({ value: message, done: false }); }
-      else messages.push(message);
-    },
-    async interrupt() { interrupts++; },
-    async return() { returned++; return { done: true }; },
-    close() {},
-    counts: () => ({ interrupts, returned }),
-  };
-}
-const claude = await load("anthropic", "@anthropic-ai/claude-agent-sdk", { query() {} });
-const success = result => ({ type: "result", subtype: "success", is_error: false, result, session_id: "native-session" });
-
-test("Claude wrapper preserves one native Query across turns and forwards native input priority/output", async () => {
-  const query = nativeQuery(), prompts = [], output = [];
-  const harness = claude.wrapClaude(query, { send: (...args) => prompts.push(args) });
-  const first = harness.run({ prompt: "first" }, work(output));
-  const event = { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Hello" } }, session_id: "native-session" };
-  query.emit(event);
-  await harness.steer({ prompt: "adjust" });
-  query.emit(success("first answer")); await first;
-  const next = harness.run({ prompt: "next" }, work(output));
-  query.emit(success("next answer")); await next;
-  assert.deepEqual(prompts, [["first"], ["adjust", "now"], ["next"]]);
-  assert.equal(output[0], event);
-  assert.deepEqual(output.slice(1).map(event => event.result), ["first answer", "next answer"]);
-  assert.deepEqual(query.counts(), { interrupts: 0, returned: 0 });
-});
-
-test("Claude cancellation uses native interrupt, waits for its result, and preserves the Query for later work", async () => {
-  const query = nativeQuery(), controller = new AbortController(), output = [];
-  const harness = claude.wrapClaude(query, { send() {} });
-  let settled = false;
-  const outcome = harness.run({ prompt: "hold" }, work(output, controller.signal)).catch(error => { settled = true; return error; });
-  controller.abort(); await harness.cancel(); await tick();
-  assert.equal(settled, false);
-  query.emit(success("interrupted"));
-  assert.equal((await outcome).name, "AbortError");
-  assert.deepEqual(output, []);
-  const next = harness.run({ prompt: "next" }, work(output));
-  query.emit(success("next answer")); await next;
-  assert.equal(output[0].result, "next answer");
-  assert.deepEqual(query.counts(), { interrupts: 1, returned: 0 });
-});
-
-test("Claude native result errors propagate and input transport closes on incarnation shutdown", async () => {
-  const query = nativeQuery();
-  const harness = claude.wrapClaude(query, { send() {} });
-  const result = assert.rejects(harness.run({ prompt: "fail" }, work([])), /provider failure/);
-  query.emit({ type: "result", subtype: "error_during_execution", errors: ["provider failure"] }); await result;
-  const input = new claude.ClaudeInput();
-  const iterator = input[Symbol.asyncIterator]();
-  input.send("one");
-  assert.equal((await iterator.next()).value.message.content, "one");
-  const pending = iterator.next();
-  input.send("steer", "now");
-  assert.equal((await pending).value.priority, "now");
-  const end = iterator.next(); input.close();
-  assert.equal((await end).done, true);
-  assert.throws(() => input.send("late"), /closed/);
-});
-
-test("Claude factory waits for native initialization and closes only with the incarnation", async () => {
-  let options, ready, closed = 0;
-  const query = nativeQuery();
-  query.initializationResult = () => new Promise(resolve => { ready = resolve; });
-  query.close = () => { closed++; };
-  const adapter = await load("anthropic", "@anthropic-ai/claude-agent-sdk", { query(input) { options = input; return query; } });
+test("incarnation shutdown interrupts a blocked output handoff and still waits for native cleanup", async () => {
+  const { wrapNativeHarness } = await load("../examples/native-harness/cli.ts");
   const lifetime = new AbortController();
-  let created = false;
-  const creation = adapter.create({ signal: lifetime.signal, env: { CLAUDE_PATH: "/stock/claude" } }).then(harness => { created = true; return harness; });
-  await tick(); assert.equal(created, false);
-  ready({}); const harness = await creation;
-  assert.equal(options.options.pathToClaudeCodeExecutable, "/stock/claude");
-  assert.equal("systemPrompt" in options.options, false);
-  assert.equal("tools" in options.options, false);
-  const result = harness.run({ prompt: "hello" }, work([]));
-  query.emit(success("hello")); await result;
-  assert.equal(closed, 0);
+  let publishing = false, exited = false;
+  const native = { async run(turn) {
+    try { await turn.emit({ type: "assistant" }); }
+    finally { await new Promise(resolve => setTimeout(resolve, 10)); exited = true; }
+  } };
+  const harness = wrapNativeHarness(native, lifetime.signal);
+  const outcome = assert.rejects(harness.run({ type: "prompt", prompt: "hold" }, {
+    signal: new AbortController().signal,
+    output: { send: () => { publishing = true; return new Promise(() => {}); } },
+  }), /abort/i);
+  while (!publishing) await new Promise(resolve => setImmediate(resolve));
   lifetime.abort();
-  assert.equal(closed, 1);
-});
-
-test("Claude drains an interrupted turn when cancellation interrupts an output handoff", async () => {
-  const query = nativeQuery(), controller = new AbortController();
-  const harness = claude.wrapClaude(query, { send() {} });
-  let publishing = false, settled = false;
-  const outcome = harness.run({ prompt: "hold" }, {
-    signal: controller.signal,
-    output: { send: () => new Promise((_, reject) => {
-      publishing = true;
-      controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
-    }) },
-  }).catch(error => { settled = true; return error; });
-  query.emit({ type: "assistant", message: { content: [] } });
-  while (!publishing) await tick();
-  controller.abort(); await harness.cancel(); await tick();
-  assert.equal(settled, false);
-  query.emit(success("old turn"));
-  assert.equal((await outcome).name, "AbortError");
-  const output = [];
-  const next = harness.run({ prompt: "new turn" }, work(output));
-  query.emit(success("new answer")); await next;
-  assert.equal(output[0].result, "new answer");
-});
-
-test("Claude output failure interrupts and drains the native turn before surfacing the error", async () => {
-  const query = nativeQuery();
-  const harness = claude.wrapClaude(query, { send() {} });
-  let settled = false;
-  const outcome = harness.run({ prompt: "hold" }, { ...work([]), output: { async send() { throw new Error("handoff failed"); } } }).catch(error => { settled = true; return error; });
-  query.emit({ type: "assistant", message: { content: [] } }); await tick();
-  assert.equal(query.counts().interrupts, 1);
-  assert.equal(settled, false);
-  query.emit(success("interrupted"));
-  assert.match((await outcome).message, /handoff failed/);
+  await outcome;
+  assert.equal(exited, true);
 });

@@ -132,8 +132,8 @@ export interface SessionHarness<Message, Event = never, Reply = never, View = un
 
 export interface SessionHarnessRuntime<Message, Event = never, Reply = never, View = unknown> {
   create(context: SessionHarnessContext): Awaitable<SessionHarness<Message, Event, Reply, View>>;
-  /** Explicitly queue steering when native steering is unavailable; default is rejection. */
-  readonly steering?: "native" | "queue";
+  /** Native injection, priority queueing, or interrupt-and-queue; native is the default. */
+  readonly steering?: "native" | "queue" | "interrupt";
   readonly redelivery?: boolean;
   onRecover?(context: SessionRecoveryContext<Message, Event>): Awaitable<void>;
 }

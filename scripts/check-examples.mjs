@@ -24,6 +24,7 @@ try {
     for (const input of Object.keys(client.metafile.inputs)) {
       assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
       assert.doesNotMatch(input, /node_modules\/.*(?:@openai\/(?:agents|codex)|@anthropic-ai|@earendil-works|@opencode-ai)/);
+      assert.doesNotMatch(input, /examples\/(?:native-harness|(?:codex|anthropic|opencode)\/src\/(?:agent|native))/);
     }
     const session = typeof manifest.definition === "string" ? manifest.definition : manifest.definition.entrypoint;
     const artifact = await buildSessionRuntime({
@@ -44,11 +45,10 @@ try {
     assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);
     if (["codex", "anthropic", "opencode"].includes(name)) {
       assert.equal(artifact.manifest.dockerfile, "docker/Dockerfile");
-      const packageName = name === "codex" ? "@openai/codex-sdk" : name === "anthropic" ? "@anthropic-ai/claude-agent-sdk" : "@opencode-ai/sdk";
-      const provider = JSON.parse(await readFile(path.join(projectRoot, "node_modules", packageName, "package.json"), "utf8"));
-      const cli = name === "codex" ? `@openai/codex@${provider.version}` : name === "anthropic" ? `@anthropic-ai/claude-code@${provider.claudeCodeVersion}` : `opencode-ai@${provider.version}`;
+      const example = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
+      const cli = `${example.nativeCli.package}@${example.nativeCli.version}`;
       const image = await readFile(path.join(projectRoot, "docker/Dockerfile"), "utf8");
-      assert.ok(image.includes(cli), `${name} image must install the stock CLI matching its SDK`);
+      assert.ok(image.includes(cli), `${name} image must install the pinned stock CLI`);
     }
     assert.equal(artifact.manifest.kind, "cantelop-session-runtime");
     assert.doesNotMatch(await readFile(artifact.mainModule, "utf8"), /class CantelopClient/);
