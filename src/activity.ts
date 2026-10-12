@@ -32,6 +32,7 @@ export class InMemoryActivity<Message, Event> {
     private readonly sendMessage: (payload: Message) => void | Promise<void>,
     private readonly sendOutput: (messageId: string, event: Event, signal: AbortSignal) => Promise<void>,
     private readonly stateChanged: () => void = () => undefined,
+    private readonly commitView: (messageId:string,state:unknown,signal:AbortSignal)=>Promise<void> = async () => {throw new Error("Session view handoff unavailable");},
   ) { }
 
   get active(): boolean {
@@ -68,6 +69,7 @@ export class InMemoryActivity<Message, Event> {
     const context: SessionActivityContext<Message, Event> = Object.freeze({
       signal: controller.signal,
       output,
+      view: Object.freeze({commit:async(state:unknown)=>{if(activity.settled)throw new Error("Session activity settled");await this.commitView(messageId,state,controller.signal);}}),
       send: (payload: Message) => {
         if (activity.settled) {
           throw new Error("Session runtime activity has already settled");

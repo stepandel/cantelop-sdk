@@ -12,6 +12,7 @@ export interface SessionOutput<Event> {
 }
 
 export interface SessionActivityContext<Message, Event> {
+  readonly view: SessionViewWriter;
   readonly signal: AbortSignal;
   readonly output: SessionOutput<Event>;
   send(message: Message): void;

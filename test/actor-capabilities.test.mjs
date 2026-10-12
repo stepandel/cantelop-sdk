@@ -66,3 +66,32 @@ test("projection commits preserve source order and wait for platform acknowledgm
   await pending;
   assert.equal(committed, true);
 });
+
+test("supervised activity owns a projection capability until its work settles", async () => {
+  const { InMemoryActivity } = await import("../dist/activity.js");
+  const projections = [];
+  let context;
+  let release;
+  const committed = new Promise((resolve) => {
+    release = resolve;
+  });
+  const activity = new InMemoryActivity(
+    () => undefined,
+    async () => undefined,
+    () => undefined,
+    async (id, state, signal) => {
+      signal.throwIfAborted();
+      projections.push({ id, state });
+      release();
+    },
+  );
+  activity.start("message", async (value) => {
+    context = value;
+    await value.view.commit({ text: "answer" });
+  });
+  await committed;
+  while (!activity.isIdle)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(projections, [{ id: "message", state: { text: "answer" } }]);
+  await assert.rejects(context.view.commit({ text: "late" }), /settled/);
+});

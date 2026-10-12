@@ -302,6 +302,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never>(
     sendMessage,
     (messageId, event, signal) => outputBuffer.publish(messageId, event, AbortSignal.any([signal, AbortSignal.timeout(30_000)])),
     () => quiescence.changed(),
+    (messageId,state,signal)=>outputBuffer.publish(messageId,state,AbortSignal.any([signal,AbortSignal.timeout(30_000)]),true),
   );
   quiescence = new RuntimeQuiescence(() => mailbox.isIdle && activity.isIdle);
   const handler = (request: IncomingMessage, response: ServerResponse) => {

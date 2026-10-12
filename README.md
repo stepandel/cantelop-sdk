@@ -162,6 +162,10 @@ for await (const event of session.stream({ after: snapshot.cursor })) {
 }
 ```
 
+Supervised activity can also call its own `view.commit(state)` capability while
+it is active. This capability follows the activity signal and closes when that
+activity settles.
+
 A view read never opens a Workspace or activates a Sandbox. A missing projection
 returns `session_view_not_found`. Views survive stop and host restart; stream
 resume remains subject to the platform's bounded replay retention. Projection
