@@ -2,16 +2,22 @@
 
 Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through a named App definition and keeps credentials out of browser code.
 
-The OpenAI, Anthropic, Pi, and OpenCode examples define native agent runtimes and ordinary application backend clients:
+[Codex](codex/README.md), [Claude Code](anthropic/README.md), and [OpenCode](opencode/README.md) wrap published stock CLIs directly, following the [claude-code-api pattern](https://github.com/stepandel/claude-code-api). Each starts a subprocess per turn, uses native Workspace-owned authentication, forwards JSON events and resumes its persisted native conversation. Each native runner implements `SessionHarness` with `queue`, `steer` and `cancel` and is returned directly from `runtime.create`.
+
+All three implement `steer` by admitting priority input and interrupting the current turn; app constructors register `runtime: { create }`. Steering will prioritize the new prompt, interrupt the active operation, wait for process-group cleanup, then resume the native conversation. Provider tools, prompts, permissions and agent loops remain native.
+
+[OpenAI Agents](openai/README.md), [Pi](pi/README.md), and the web chat example show additional integrations. OpenAI Agents is a separate framework example; it is not the Codex harness.
+
+The examples define runtime factories and ordinary application backend clients:
 
 ```text
 src/cantelop.ts   Shared client and named App/runtime configuration
 src/contracts.ts  Shared message and event types
-src/agent.ts      Exported runtime handlers and provider behavior
+src/agent.ts      Runtime factory and native harness adapter
 cantelop.json     Definition module selection
 ```
 
-Each provider example exports a named `app` on an App-agnostic client with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider SDKs and secrets stay in the runtime. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
+Each provider example exports a named `app` on an App-agnostic client with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider CLIs/SDKs stay in the runtime; native authentication remains in the user's Workspace. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
 
 ```ts
 import { app } from "./src/cantelop.js";
@@ -20,17 +26,17 @@ const workspace = app.workspace({ slug: "customer-123" });
 const session = workspace.session({ id: "conversation-456" });
 await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
 for await (const event of session.stream()) {
-  if (event.data.type === "text_delta") render(event.data.delta);
+  render(event.data); // Provider-specific native output type.
 }
 ```
 
 Use the same ID to address an existing Session, or omit it to spawn another Session sharing the Workspace. A canonical Workspace ID can replace the slug selector. Output can be replayed explicitly with the last cursor; disconnecting the iterator does not cancel work. Subscribe before dispatching when live subscription ordering matters, or use retained replay to recover earlier output within the broker's retention window.
 
-The examples preserve each provider's application-defined `prompt`, `steer`, and `cancel` protocol and managed activity behavior. They can send those custom commands via `dispatch()`. Protocol-level `session.steer(message)` prioritizes an ordinary message; `session.cancel(messageId)` targets one submission. These require coordinated actor/platform support, which is not advertised by these runtime artifacts yet.
+Use `session.dispatch(message)` to queue ordinary work, `session.steer(message)` to steer the active harness, and `session.cancel()` to interrupt its current run. Provider examples register a session-scoped `runtime.create` factory. Pi supports native steering, OpenAI Agents and web chat select priority queueing, and the three direct CLI examples select interrupt-and-queue steering. Cancellation preserves waiting harness input, and each harness retains its provider slot until cleanup completes. Custom receive/activity examples remain available for application-owned orchestration.
 
-OpenAI queues ordinary work while a run is busy. Anthropic feeds its live input stream. Pi can steer an active Agent. OpenCode uses a headless server and the custom image in its manifest. All propagate managed activity cancellation to provider work. Workspace state is durable; warm runtime/provider memory is not.
+Codex, Claude and OpenCode forward native JSON events, fragmenting oversized frames. They require no shared provider API keys. Native authentication and conversation metadata live in the user's Workspace; live SQLite state stays local (OpenCode restores through native export/import). Custom images install pinned stock CLIs. These examples’ queues remain incarnation-local; durable pending jobs and recovery are application-owned.
 
-This 1.0 prerelease requires CLI build protocol 6 and project manifest schema 3. Generated Edge/native deployment and App credential provisioning are platform/CLI follow-ups. The current CLI must reject this prerelease rather than deploy it as a legacy Edge API project.
+This 1.0 prerelease requires the coordinated CLI/platform implementation with CLI build protocol 6 and project manifest schema 3. Generated Edge/native deployment and App credential provisioning are handled by that implementation.
 
 Each deployment example has one `tsconfig.json` covering its application and runtime code.
 

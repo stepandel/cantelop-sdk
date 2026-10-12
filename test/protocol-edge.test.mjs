@@ -37,7 +37,7 @@ test('protocol Worker fails closed on auth, old routes, invalid commands and ove
   assert.equal(calls, 0);
 });
 
-test('dispatch and steer use clean admission handlers: canonical Workspace, stable ID, distinct priority, explicit/default keep-alive', async () => {
+test('dispatch and steer use clean admission handlers: canonical Workspace, stable ID, opaque SDK command payloads, explicit/default keep-alive', async () => {
   const calls = [];
   const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async req => {
     calls.push(req.clone());
@@ -49,7 +49,7 @@ test('dispatch and steer use clean admission handlers: canonical Workspace, stab
     assert.equal(response.status, 202); assert.equal((await response.json()).protocolVersion, 2);
     const admission = calls.at(-1);
     assert.equal(new URL(admission.url).pathname, '/__cantelop/integration/v2/messages');
-    assert.deepEqual(await admission.json(), { session: { id: 'chat', workspace_id: workspaceId, keep_alive_seconds: 120 }, message: { id: messageId, payload: { text: 'hi' } }, priority: type === 'steer' ? 'priority' : 'normal' });
+    assert.deepEqual(await admission.json(), { session: { id: 'chat', workspace_id: workspaceId, keep_alive_seconds: 120 }, message: { id: messageId, payload: {__cantelop_command:2,type,message:{text:"hi"}} } });
     assert.equal(admission.headers.get('Authorization'), null);
     assert.equal(admission.headers.get('X-Cantelop-App-Id'), null);
   }
@@ -61,27 +61,18 @@ test('dispatch and steer use clean admission handlers: canonical Workspace, stab
   assert.equal(calls.length, count);
 });
 
-test('cancel, stop, status, view and stream never open Workspaces; their private handlers are selector-bound', async () => {
-  const calls = [];
-  const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async req => {
-    calls.push(req.clone());
-    if (req.headers.get('Accept') === 'text/event-stream') return new Response('event: error\ndata: {"code":"event_stream_reset"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
-    return Response.json({ id: messageId, state: 'requested', messageId });
-  } });
-  for (const command of [
-    { type: 'cancel', messageId }, { type: 'stop' }, { type: 'status', messageId }, { type: 'view' },
-    { type: 'stream', after: { streamId: 'a'.repeat(32), sequence: 7 } },
-  ]) await worker.fetch(request(envelope(command)), bindings);
-  assert.deepEqual(calls.map(req => req.method), ['POST', 'DELETE', 'GET', 'GET', 'GET']);
-  assert.deepEqual(calls.map(req => new URL(req.url).pathname), [
-    `/__cantelop/integration/v2/sessions/chat/messages/${messageId}/cancel`,
-    '/__cantelop/integration/v2/sessions/chat',
-    `/__cantelop/integration/v2/sessions/chat/messages/${messageId}`,
-    '/__cantelop/integration/v2/sessions/chat/view', '/__cantelop/integration/v2/sessions/chat/events',
-  ]);
-  assert.ok(calls.every(req => new URL(req.url).searchParams.get('workspace_slug') === 'customer'));
-  assert.deepEqual(await calls[0].json(), { id: messageId });
-  assert.equal(new URL(calls[4].url).searchParams.get('after'), '7');
+test("cancel uses uniform request delivery; read operations retain selector scope",async()=>{
+ const calls=[];const worker=createProtocolWorker({runtimeId:"test.v1",fetch:async req=>{
+  calls.push(req.clone());
+  if(req.headers.get("Accept")==="text/event-stream")return new Response("event: error\ndata: {\"code\":\"event_stream_reset\"}\n\n",{headers:{"Content-Type":"text/event-stream"}});
+  if(new URL(req.url).pathname.endsWith("/requests"))return Response.json({id:messageId,reply:{id:messageId,state:"requested"}});
+  return Response.json({id:messageId,state:"handling",workspace_id:workspaceId});
+ }});
+ for(const command of [{type:"cancel"},{type:"stop"},{type:"status",messageId},{type:"view"},{type:"stream",after:{streamId:"a".repeat(32),sequence:7}}])assert.equal((await worker.fetch(request(envelope(command)),bindings)).status,200);
+ assert.deepEqual(calls.map(req=>req.method),["POST","DELETE","GET","GET","GET"]);
+ assert.equal(new URL(calls[0].url).pathname,"/__cantelop/integration/v2/sessions/chat/requests");
+ const delivered=await calls[0].json();assert.deepEqual(delivered.message,{id:messageId,payload:{__cantelop_command:2,type:"cancel"}});assert.equal(new URL(calls[0].url).searchParams.get("workspace_slug"),"customer");assert.equal(delivered.keep_alive_seconds,120);
+ assert.ok(calls.every(req=>!req.url.includes("/cancel")&&!req.url.endsWith("/workspaces/open")));
 });
 
 test('SDK receipts traverse Edge and private admission/status handlers with no direct platform calls', async () => {

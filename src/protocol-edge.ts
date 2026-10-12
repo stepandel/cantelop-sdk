@@ -1,3 +1,4 @@
+import {encodeRuntimeCommand} from "./runtime-command.js";
 import { App } from "./app.js";
 import { validateAppDeploymentConfiguration, type AppEnvironmentDeclaration } from "./app-definition.js";
 import { RUNTIME_ID } from "./session-runtime-contract.js";
@@ -86,14 +87,30 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           const workspaceId = await resolveWorkspace();
           return await invoke(`/__cantelop/integration/v2/${submission.type === "request" ? "requests" : "messages"}`, "POST", {
             session: { id: session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds },
-            message: { id: envelope.id, payload: submission.message },
-            priority: submission.type === "steer" ? "priority" : "normal",
+            message: { id: envelope.id, payload: encodeRuntimeCommand({ type: submission.type === "steer" ? "steer" : "dispatch", message: submission.message }) },
             ...(submission.type === "request" ? { timeout_ms: submission.timeoutMs } : {}),
           });
         }
         case "cancel": {
           const cancel = sessionCommand;
-          return await invoke(scopedPath(`/messages/${cancel.messageId}/cancel`), "POST", { id: envelope.id });
+          const value = bindings.CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS;
+          const keepAliveSeconds = cancel.keepAliveSeconds ??
+            (typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value);
+          try {
+            assertKeepAlive(keepAliveSeconds);
+            if (keepAliveSeconds === undefined) throw new TypeError();
+          } catch {
+            throw new EdgeFailure("keep_alive_not_configured", 503);
+          }
+          const response = await invoke(scopedPath("/requests"), "POST", {
+            message: { id: envelope.id, payload: encodeRuntimeCommand({ type: "cancel" }) },
+            keep_alive_seconds: keepAliveSeconds,
+            timeout_ms: 30_000,
+          });
+          if (!response.ok) return response;
+          const result = await readPlatformJSON(response);
+          if (!record(result) || !record(result.reply)) throw new EdgeFailure("invalid_platform_response", 502);
+          return Response.json({ ...result.reply, protocolVersion: 2 });
         }
         case "status": {
           const status = sessionCommand;

@@ -1,7 +1,4 @@
-export type SessionMessage =
-  | { type: "prompt" | "steer"; prompt: string }
-  | { type: "cancel" };
+import type { NativeEvent } from "../../native-harness/cli.js";
 
-export type SessionEvent =
-  | { type: "text_delta"; delta: string }
-  | { type: "done"; answer: string };
+export type SessionMessage = { type: "prompt"; prompt: string };
+export type SessionEvent = NativeEvent;

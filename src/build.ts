@@ -61,7 +61,7 @@ export interface SessionRuntimeManifest extends AppDeploymentConfiguration {
   readonly session_runtime_id: string;
   readonly app_name: string;
   /** Advertised only after coordinated actor scheduling, attribution and projection support. */
-  readonly capabilities: Readonly<{ priority: false; messageCancellation: false; durableView: false }>;
+  readonly capabilities: Readonly<{ steering: true; messageCancellation: true; durableView: true }>;
   readonly database_schema?: ApplicationDatabaseSchema;
 }
 
@@ -214,7 +214,7 @@ async function writeSessionManifest(outdir: string, schemaPath: string, runtimeI
     app_name: appName,
     ...(configuration.environment === undefined ? {} : { environment: configuration.environment }),
     ...(configuration.dockerfile === undefined ? {} : { dockerfile: configuration.dockerfile }),
-    capabilities: Object.freeze({ priority: false, messageCancellation: false, durableView: false }),
+    capabilities: Object.freeze({ steering: true, messageCancellation: true, durableView: true }),
     ...(databaseSchema === undefined ? {} : { database_schema: databaseSchema }),
   });
   await writeFile(path.join(outdir, SESSION_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8" });
@@ -309,7 +309,7 @@ function sessionRuntimeBootstrap(): string {
     "mark(\"bun_entry\");",
     `const { serveSessionRuntime } = await import(${JSON.stringify(SESSION_RUNTIME_ADAPTER_MODULE)});`,
     'const { default: behaviour } = await import("cantelop:extracted-runtime");',
-    'if (typeof behaviour.receive !== "function") throw new Error("Session runtime must export receive");',
+    'if (typeof behaviour.receive !== "function" && typeof behaviour.create !== "function") throw new Error("Session runtime must export create or receive");',
     "mark(\"module_evaluated\");",
     "const sessionRuntime = serveSessionRuntime(behaviour);",
     "await sessionRuntime.ready;",

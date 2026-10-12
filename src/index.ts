@@ -9,7 +9,7 @@ export type {
   AppConnection, AppSelector, AppOptions, CantelopClientOptions, IntegrationSessionOptions,
   SessionRef, WorkspaceRef, WorkspaceSelector,
   SessionEvent, SessionEventCursor, SessionStreamOptions,
-  SessionCommandOptions, SessionSubmissionOptions, MessageCancellation, SessionView,
+  SessionCommandOptions, SessionSubmissionOptions, SessionCancellation, SessionView,
   SessionCommand, AppCommandEnvelope,
 } from "./integration.js";
 export { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";

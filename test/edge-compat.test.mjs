@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import ts from "typescript";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(
@@ -48,8 +49,10 @@ test("only native Session behaviour exposes event output", async () => {
   assert.doesNotMatch(runtimeContract, /defineSessionBehaviour/);
 });
 
-test("provider client entrypoints do not import native dependencies", async () => {
+test("provider client entrypoints do not import native dependencies at runtime", async () => {
   const files = [
+    "examples/codex/src/cantelop.ts",
+    "examples/codex/src/contracts.ts",
     "examples/openai/src/cantelop.ts",
     "examples/openai/src/contracts.ts",
     "examples/anthropic/src/cantelop.ts",
@@ -61,7 +64,12 @@ test("provider client entrypoints do not import native dependencies", async () =
   ];
 
   for (const file of files) {
-    const source = await readFile(path.join(repositoryRoot, file), "utf8");
+    const typescript = await readFile(path.join(repositoryRoot, file), "utf8");
+    // Native output contracts are type-only. Preserve all value imports so
+    // this still rejects accidental runtime dependencies rather than tree-shaking them.
+    const source = ts.transpileModule(typescript, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, verbatimModuleSyntax: true },
+    }).outputText;
     assert.doesNotMatch(source, /["']node:/);
     assert.doesNotMatch(
       source,

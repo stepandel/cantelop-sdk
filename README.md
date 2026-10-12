@@ -10,13 +10,13 @@ This repository currently targets **1.0.0-alpha.0**. The SDK authoring/build bou
 // src/cantelop.ts — the application and deployment definition.
 import { CantelopClient } from "@cantelop/sdk";
 import type { Message, Event, Reply } from "./contracts.js";
-import { receive } from "./agent.js";
+import { create } from "./agent.js";
 
 const cantelop = new CantelopClient();
 
 export const support = cantelop.app<Message, Event, Reply>({
   name: "support-agent",
-  runtime: { receive },
+  runtime: { create },
 });
 ```
 
@@ -59,9 +59,9 @@ await session.dispatch({ type: "prompt", prompt: "Continue" });
 
 `stop()` releases the current Sandbox and closes streams, potentially interrupting work. It retains current errors for an unmaterialized Session. The integration route includes the Workspace selector for platform ownership/binding checks without provisioning.
 
-Dispatch and steer accept the same message type and return an ID/status reference. Dispatch queues normal work; steer prioritizes its message at the next safe scheduling boundary. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
+Dispatch and steer accept the same message type and return an ID/status reference. Dispatch invokes the harness’s `queue` method; steer invokes its `steer` method. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
 
-`cancel(messageId)` targets one queued/running message. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Actor priority, cancellation attribution and view publication/storage still require coordinated platform/runtime support; runtime artifacts advertise those capabilities as false.
+`cancel()` interrupts the active harness run and preserves queued input. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Steering and run cancellation are implemented by the harness; the platform delivers their envelopes as ordinary messages. Durable views require the coordinated platform implementation.
 
 ## Stream output
 
@@ -78,22 +78,21 @@ Breaking iteration or aborting the subscription only closes its stream. It does 
 ## Define the runtime
 
 ```ts
-// src/agent.ts — the runtime module referenced by the client.
-import type { SessionContext } from "@cantelop/sdk/session";
+// src/agent.ts — the harness factory compiled into the Sandbox.
+import type { SessionHarness, SessionHarnessContext } from "@cantelop/sdk/session";
 import type { Message, Event, Reply } from "./contracts.js";
-import { receive } from "./agent.js";
-import { runAgent } from "./agent.js";
+import { createHarness } from "./harness.js";
 
-export async function receive({ message, session, env, output, reply, signal }: SessionContext<Message, Event, Reply>) {
-  const answer = await runAgent(message.payload.prompt, {
-    sessionId: session.id, apiKey: env.PROVIDER_API_KEY, signal,
-  });
-  await output.send({ type: "done" });
-  reply({ answer });
+export function create(context: SessionHarnessContext): SessionHarness<Message, Event, Reply> {
+  return createHarness(context); // Implements queue(message, work), steer(message, work), cancel().
 }
 ```
 
-`runAgent` is application code. The runtime module exports `receive` and optional `onActivate`, `onRecover` and `redelivery`; the build validates the handlers configured on the App against its contract without executing agent code. The Sandbox bundle includes this implementation and the SDK listener, with no API client. Each activation runs one Session runtime in a dedicated Sandbox. Inline handlers serialize subsequent intake. Move long-running work into `context.activity` when the mailbox must remain responsive to commands.
+The factory runs once per Session runtime incarnation, on the first harness command or recovery. It returns one harness implementing `queue(message, work)`, `steer(message, work)`, and `cancel()`. Each implementation owns ordering, steering behavior, interruption, and cleanup. The SDK calls those methods directly and keeps intake responsive while their promises remain pending. `queue` resolves after the submitted operation and its cleanup; its return value supplies `session.request()` replies. `steer` resolves at the implementation's completion boundary: native input may be accepted immediately, while an interrupt-and-resume implementation can wait for the redirected turn.
+
+Work receives a signal, typed output/view, submission identity and Session resources. The SDK tracks operation lifetimes, attribution and deadlines without selecting provider scheduling behavior. `cancel()` returns whether an active operation was signalled and preserves waiting input. The compiler bundles the factory and its dependencies into the Sandbox while excluding them from backend and Edge artifacts.
+
+Custom runtimes can use `runtime: { receive, onActivate?, onRecover?, redelivery? }`. Their intake is serialized; move long-running work into `context.activity` to keep control intake responsive.
 
 Applications own durable jobs, checkpoints, and idempotency. The optional `onActivate` hook restores state once per incarnation; the optional `onRecover` hook opts into replacement-Sandbox recovery. Redelivery remains opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies retain their JSON and size limits.
 
@@ -130,3 +129,52 @@ Package qualification checks the actual npm tarball, removed exports/files, gene
 All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope at `POST /commands`. The Edge interprets each operation through its own handler; Edge ↔ Sandbox remains the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
 
 For a runnable browser and server integration, see [the web chat example](examples/web-chat/README.md).
+
+### Harness controls and durable Session views
+
+Dispatch, steer and cancel share ordinary delivery. The platform treats their SDK command payloads as opaque. The harness implementation owns queueing, steering and active-operation cancellation. The SDK owns command receipts and operation-scoped output and replies.
+
+```ts
+await session.dispatch(message);
+await session.steer(newDirection);
+await session.cancel();
+```
+
+`session.cancel({ id?, signal? })` takes no target message ID and returns `{ state: "requested" | "idle" }`. It invokes the harness’s `cancel()` method, which selects and signals its active operation. `requested` acknowledges interruption, not completed cleanup. The harness retains ownership of the active operation until cleanup settles before reusing provider resources. Queued input is preserved; cancellation while idle does not affect later input. Retrying the same command ID reuses its result and cannot interrupt a subsequent run.
+
+Submission IDs remain available for receipts, retries and output correlation. Dispatch status describes intake; a queued run may outlive intake completion. Requests wait for `queue` to return its reply while other input and control remain responsive. `stop()` releases the Sandbox and retains Session identity. Harness memory belongs to one incarnation; recovery remains application-owned.
+
+For custom receive runtimes, `activity.start`, `queue`, `steer`, and `cancel` remain available. Register provider methods through activity options `onSteer` and `onCancel`; those hooks belong to the active execution.
+
+The runtime explicitly commits the application's read model:
+
+```ts
+async function receive(context: SessionContext<Message, Event, Reply, State>) {
+  const state = await updateApplicationState(context.message.payload);
+  await context.view.commit(state);
+  context.reply(state);
+}
+```
+
+`view.commit` resolves after the platform stores the projection and its atomic
+event boundary. Customer code owns application state and recovery; committing a
+view does not replace the application's database or replay its runtime closures.
+
+```ts
+const snapshot = await session.view();
+render(snapshot.state);
+for await (const event of session.stream({ after: snapshot.cursor })) {
+  apply(event.data);
+}
+```
+
+Supervised activity can also call its own `view.commit(state)` capability while
+it is active. This capability follows the activity signal and closes when that
+activity settles.
+
+A view read never opens a Workspace or activates a Sandbox. A missing projection
+returns `session_view_not_found`. Views survive stop and host restart; stream
+resume remains subject to the platform's bounded replay retention. Projection
+commits advance the stream cursor without appearing as application events.
+
+Stock harness integrations are available for [Codex](examples/codex/README.md), [Claude Code](examples/anthropic/README.md), and [OpenCode](examples/opencode/README.md). They wrap stock CLI runners directly, preserve native Workspace authentication and conversation IDs, and use interrupt-and-queue steering with process-group cleanup.

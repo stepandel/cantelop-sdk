@@ -2,22 +2,22 @@ import { assertSessionRuntime, RUNTIME_ID } from "./session-runtime-contract.js"
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import { AppConfigurationError, type ConfigurationContext } from "./app-config.js";
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
-import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, MessageCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector } from "./integration.js";
+import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, SessionCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector } from "./integration.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** A named App with a typed runtime and its own Workspace namespace. */
-export class App<Message = unknown, Event = never, Reply = never, View = never> {
+export class App<Message = unknown, Event = never, Reply = never, View = unknown> {
   readonly #name: string;
   get name(): string { return this.#name; }
   readonly #connection: AppConnection;
 
-  readonly #sessionRuntime: SessionRuntime<Message, Event, Reply>;
+  readonly #sessionRuntime: SessionRuntime<Message, Event, Reply, View>;
   readonly #runtimeId: string | undefined;
 
-  get runtime(): SessionRuntime<Message, Event, Reply> { return this.#sessionRuntime; }
+  get runtime(): SessionRuntime<Message, Event, Reply, View> { return this.#sessionRuntime; }
 
   constructor(options: AppOptions<Message, Event, Reply, View>, context: ConfigurationContext, profile?: string) {
     if (!options || typeof options.name !== "string" || !SLUG_PATTERN.test(options.name)) throw new TypeError("A valid App name is required");
@@ -109,16 +109,14 @@ export class App<Message = unknown, Event = never, Reply = never, View = never> 
             const command = envelope({ type: "stream", ...(after === undefined ? {} : { after }) });
             return edgeFetch(new Request(`https://edge.cantelop.internal${APP_COMMAND_PATH}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(command), signal: request.signal }));
           }, id, options),
-          async cancel(messageId: string, options: SessionCommandOptions = {}): Promise<MessageCancellation> {
-            assertMessageID(messageId);
+          async cancel(options: SessionCommandOptions = {}): Promise<SessionCancellation> {
+            if (!options || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some(key => !["id", "signal"].includes(key))) throw new TypeError("Invalid cancellation options");
             const commandId = options.id ?? messageID(); assertMessageID(commandId);
             let value: unknown;
-            try { value = await send(envelope({ type: "cancel", messageId }, commandId), options.signal); }
+            try { value = await send(envelope({ type: "cancel", ...keepAlive({}) }, commandId), options.signal); }
             catch (error) { throw submissionError(error, commandId, options.signal); }
-            if (!record(value) || value.protocolVersion !== 2 || value.id !== commandId || value.messageId !== messageId || typeof value.state !== "string" || !["requested", "cancelled", "settled"].includes(value.state)) throw new RemoteAppError("invalid_cancellation_response", 0, commandId);
-            const status = value.status === undefined ? undefined : readMessageStatus(value.status, messageId);
-            if (value.state === "settled" && (!status || !["handled", "failed"].includes(status.state))) throw new RemoteAppError("invalid_cancellation_response", 0, commandId);
-            return Object.freeze({ messageId, state: value.state as MessageCancellation["state"], ...(status === undefined ? {} : { status }) });
+            if (!record(value) || value.protocolVersion !== 2 || value.id !== commandId || !["requested", "idle"].includes(value.state as string)) throw new RemoteAppError("invalid_cancellation_response", 0, commandId);
+            return Object.freeze({ state: value.state as SessionCancellation["state"] });
           },
           async view(options: { readonly signal?: AbortSignal } = {}): Promise<SessionView<View>> {
             const value = await send(envelope({ type: "view" }), options.signal);

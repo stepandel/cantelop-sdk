@@ -10,11 +10,14 @@
     "check": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@cantelop/sdk": "workspace:*",
-    "@opencode-ai/sdk": "1.18.30"
+    "@cantelop/sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.6.3"
+  },
+  "nativeCli": {
+    "package": "opencode-ai",
+    "version": "1.18.30"
   }
 }

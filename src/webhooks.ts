@@ -1,22 +1,22 @@
 import type { App } from "./app.js";
 
-export interface AppRequestContext<Message = unknown, Event = never, Reply = never, View = never> {
+export interface AppRequestContext<Message = unknown, Event = never, Reply = never, View = unknown> {
   readonly request: Request;
   /** The current App, using the same Workspace/Session interface as backend code. */
   readonly app: App<Message, Event, Reply, View>;
   /** Declared environment values from this App's Edge bindings, including secrets. */
   readonly env: Readonly<Record<string, string | undefined>>;
 }
-export type WebhookContext<Message = unknown, Event = never, Reply = never, View = never> = AppRequestContext<Message, Event, Reply, View>;
-export type HomepageHandler<Message = unknown, Event = never, Reply = never, View = never> =
+export type WebhookContext<Message = unknown, Event = never, Reply = never, View = unknown> = AppRequestContext<Message, Event, Reply, View>;
+export type HomepageHandler<Message = unknown, Event = never, Reply = never, View = unknown> =
   (context: AppRequestContext<Message, Event, Reply, View>) => Response | Promise<Response>;
-export type WebhookHandler<Message = unknown, Event = never, Reply = never, View = never> =
+export type WebhookHandler<Message = unknown, Event = never, Reply = never, View = unknown> =
   (context: WebhookContext<Message, Event, Reply, View>) => Response | Promise<Response>;
-export interface WebhookRoute<Message = unknown, Event = never, Reply = never, View = never> {
+export interface WebhookRoute<Message = unknown, Event = never, Reply = never, View = unknown> {
   readonly method: "GET" | "POST";
   readonly handle: WebhookHandler<Message, Event, Reply, View>;
 }
-export type WebhookRoutes<Message = unknown, Event = never, Reply = never, View = never> =
+export type WebhookRoutes<Message = unknown, Event = never, Reply = never, View = unknown> =
   Readonly<Record<string, WebhookRoute<Message, Event, Reply, View>>>;
 
 /** Exact paths under the reserved webhook prefix; no general-purpose router. */

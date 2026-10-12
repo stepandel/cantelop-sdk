@@ -1,28 +1,17 @@
+import { TurnQueue } from "../../harness/queue.js";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type { SessionContext } from "@cantelop/sdk/session";
+import type { SessionHarnessContext, SessionHarness } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
-
-type Context = SessionContext<SessionMessage, SessionEvent>;
-
 const models = builtinModels();
-let agent: Agent | undefined;
-const promptQueue: string[] = [];
-
-function sessionAgent(
-  { session, env }: Context,
-): Agent {
-  if (agent !== undefined) return agent;
-
+export function create({ session, env, signal: lifetime }: SessionHarnessContext): SessionHarness<SessionMessage, SessionEvent> {
   const provider = env.PI_PROVIDER ?? "anthropic";
   const modelId = env.PI_MODEL ?? "claude-sonnet-5";
   const model = models.getModel(provider, modelId);
-
   if (!model) {
     throw new Error(`Pi model not found: ${provider}/${modelId}`);
   }
-
-  agent = new Agent({
+  const agent = new Agent({
     initialState: {
       systemPrompt: "You are a concise, helpful assistant.",
       model,
@@ -30,68 +19,44 @@ function sessionAgent(
     streamFn: models.streamSimple.bind(models),
     sessionId: session.id,
   });
-  return agent;
-}
-
-export function receive(context: Context): void {
-  const command = context.message.payload;
-
-  if (command.type === "cancel") {
-    promptQueue.length = 0;
-    agent?.clearAllQueues();
-    context.activity.cancel();
-    return;
-  }
-
-  if (command.type === "steer" && context.activity.active && agent !== undefined) {
-    agent.steer({
-      role: "user",
-      content: command.prompt,
-      timestamp: Date.now(),
-    });
-    return;
-  }
-
-  if (context.activity.active) {
-    promptQueue.push(command.prompt);
-    return;
-  }
-
-  startPrompt(context, command.prompt);
-}
-
-function startPrompt(context: Context, prompt: string): void {
-  const currentAgent = sessionAgent(context);
-
-  context.activity.start(async ({ signal, send, output }) => {
+  const turns = new TurnQueue<SessionMessage, SessionEvent>(async (message, { signal, output }) => {
     let answer = "";
     let pendingOutput = Promise.resolve();
-    const unsubscribe = currentAgent.subscribe((event) => {
-      if (
-        event.type === "message_update" &&
-        event.assistantMessageEvent.type === "text_delta"
-      ) {
+    let outputFailure: { error: unknown } | undefined;
+    const workSignal = AbortSignal.any([signal, lifetime]);
+    const abort = () => agent.abort();
+    workSignal.addEventListener("abort", abort, { once: true });
+    const unsubscribe = agent.subscribe((event) => {
+      if (event.type === "message_update" &&
+        event.assistantMessageEvent.type === "text_delta") {
         const delta = event.assistantMessageEvent.delta;
         answer += delta;
-        pendingOutput = pendingOutput.then(() =>
-          output.send({ type: "text_delta", delta })
-        );
+        pendingOutput = pendingOutput.then(async () => {
+          if (!outputFailure) await output.send({ type: "text_delta", delta });
+        }).catch(error => { outputFailure ??= { error }; agent.abort(); });
       }
     });
-    const abort = () => currentAgent.abort();
-    signal.addEventListener("abort", abort, { once: true });
-
     try {
-      await currentAgent.prompt(prompt);
+      workSignal.throwIfAborted();
+      await agent.prompt(message.prompt);
       await pendingOutput;
+      if (outputFailure) throw outputFailure.error;
+      workSignal.throwIfAborted();
       await output.send({ type: "done", answer });
-    } finally {
-      signal.removeEventListener("abort", abort);
-      unsubscribe();
-      const nextPrompt = promptQueue.shift();
-      if (!signal.aborted && nextPrompt !== undefined) {
-        send({ type: "prompt", prompt: nextPrompt });
-      }
     }
-  });
+    finally {
+      unsubscribe();
+      workSignal.removeEventListener("abort", abort);
+      await pendingOutput;
+    }
+  }, lifetime);
+  return {
+    queue: (message, work) => turns.enqueue(message, work),
+    steer(message, work) {
+      if (!turns.active) return turns.enqueue(message, work, true);
+      work.signal.throwIfAborted();
+      agent.steer({ role: "user", content: message.prompt, timestamp: Date.now() });
+    },
+    cancel: () => turns.cancel(),
+  };
 }

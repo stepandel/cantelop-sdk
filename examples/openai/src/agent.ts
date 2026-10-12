@@ -1,52 +1,25 @@
+import { TurnQueue } from "../../harness/queue.js";
 import { Agent, MemorySession, run } from "@openai/agents";
-import type { SessionContext } from "@cantelop/sdk/session";
+import type { SessionHarnessContext, SessionHarness } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.js";
 
-type Context = SessionContext<SessionMessage, SessionEvent>;
-
-let agent: Agent | undefined;
-let conversation: MemorySession | undefined;
-const promptQueue: string[] = [];
-
-export function receive(context: Context): void {
-  const command = context.message.payload;
-
-  if (command.type === "cancel") {
-    promptQueue.length = 0;
-    context.activity.cancel();
-    return;
-  }
-
-  if (context.activity.active) {
-    promptQueue.push(command.prompt);
-    return;
-  }
-
-  startPrompt(context, command.prompt);
-}
-
-function startPrompt(context: Context, prompt: string): void {
-  if (!context.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not configured");
-  }
-
-  agent ??= new Agent({
+export function create(context: SessionHarnessContext): SessionHarness<SessionMessage, SessionEvent> {
+  if (!context.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
+  const agent = new Agent({
     name: "Cantelop OpenAI example",
     instructions: "You are a concise, helpful assistant.",
     model: context.env.OPENAI_MODEL ?? "gpt-5-mini",
   });
-  conversation ??= new MemorySession({ sessionId: context.session.id });
-  const currentAgent = agent;
-  const currentConversation = conversation;
-
-  context.activity.start(async ({ signal, send, output }) => {
+  const conversation = new MemorySession({ sessionId: context.session.id });
+  const turns = new TurnQueue<SessionMessage, SessionEvent>(async (message, { signal, output }) => {
+    const interruption = new AbortController();
+    let result: Awaited<ReturnType<typeof run>> | undefined;
     try {
-      const result = await run(currentAgent, prompt, {
-        session: currentConversation,
-        signal,
+      result = await run(agent, message.prompt, {
+        session: conversation,
+        signal: AbortSignal.any([signal, context.signal, interruption.signal]),
         stream: true,
       });
-
       let answer = "";
       for await (const delta of result.toTextStream()) {
         answer += delta;
@@ -55,10 +28,14 @@ function startPrompt(context: Context, prompt: string): void {
       await result.completed;
       await output.send({ type: "done", answer: result.finalOutput ?? answer });
     } finally {
-      const nextPrompt = promptQueue.shift();
-      if (!signal.aborted && nextPrompt !== undefined) {
-        send({ type: "prompt", prompt: nextPrompt });
-      }
+      // A failed output handoff must stop and drain provider work before reuse.
+      interruption.abort();
+      await result?.completed.catch(() => undefined);
     }
-  });
+  }, context.signal);
+  return {
+    queue: (message, work) => turns.enqueue(message, work),
+    steer: (message, work) => turns.enqueue(message, work, true),
+    cancel: () => turns.cancel(),
+  };
 }

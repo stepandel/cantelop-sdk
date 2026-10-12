@@ -905,3 +905,117 @@ test("failed activation fences later intake in the same incarnation", async (t) 
   assert.equal(activations, 1);
   assert.deepEqual(received, []);
 });
+
+test("activity steering and run cancellation share a responsive runtime process", async t => {
+  const calls = [];
+  let activeSignal;
+  const server = createServer(createSessionRuntimeHandler({
+    async receive(context) {
+      const prompt = context.message.payload.prompt;
+      calls.push({ type: context.command.type, prompt, pid: process.pid });
+      if (context.command.type === "steer" && context.activity.active) {
+        await context.activity.steer(context.message.payload);
+        return;
+      }
+      context.activity.queue(async ({ signal }) => {
+        calls.push({ work: prompt, pid: process.pid });
+        if (prompt === "hold") {
+          activeSignal = signal;
+          await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+        }
+      }, { onSteer: message => calls.push({ steering: message.prompt, pid: process.pid }) });
+    },
+  }));
+  await listen(server);
+  t.after(() => close(server));
+  const id = n => `msg_${n.toString(16).padStart(32, "0")}`;
+  const send = async (n, command) => {
+    const input = messageEnvelope({ __cantelop_command: 2, ...command }, "thread", id(n));
+    if (command.type === "cancel") input.reply = true;
+    const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    });
+    assert.equal(response.status, 202);
+    await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(n)}`)).json()).state === "succeeded");
+  };
+  await send(101, { type: "dispatch", message: { prompt: "hold" } });
+  await waitFor(() => activeSignal !== undefined);
+  await send(102, { type: "dispatch", message: { prompt: "queued" } });
+  await send(103, { type: "steer", message: { prompt: "change direction" } });
+  assert.equal(activeSignal.aborted, false);
+  assert.equal(calls.some(call => call.steering === "change direction"), true);
+  await send(104, { type: "cancel" });
+  const reply = await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(104)}/reply`)).json();
+  assert.equal(reply.reply.state, "requested");
+  await waitFor(() => activeSignal.aborted);
+  await waitFor(() => calls.some(call => call.work === "queued"));
+  assert.equal(new Set(calls.map(call => call.pid)).size, 1);
+  await send(106, { type: "cancel" });
+  assert.equal((await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(106)}/reply`)).json()).reply.state, "idle");
+});
+
+test("activity queue keeps intake responsive, preserves priority, and runs one harness", async t => {
+  let signal, active = 0, peak = 0;
+  const received = [], worked = [];
+  const server = createServer(createSessionRuntimeHandler(behaviour(context => {
+    const prompt = context.message.payload.prompt;
+    received.push(prompt);
+    context.activity.queue(async activity => {
+      worked.push(prompt);
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        if (prompt === "hold") {
+          signal = activity.signal;
+          await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+        }
+      } finally { active--; }
+    });
+  })));
+  await listen(server);
+  t.after(() => close(server));
+  const id = n => `msg_${n.toString(16).padStart(32, "0")}`;
+  const send = async (n, command) => {
+    const input = messageEnvelope({ __cantelop_command: 2, ...command }, "thread", id(n));
+    if (command.type === "cancel") input.reply = true;
+    const result = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    });
+    assert.equal(result.status, 202);
+    await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(n)}`)).json()).state === "succeeded");
+  };
+  await send(301, { type: "dispatch", message: { prompt: "hold" } });
+  await waitFor(() => signal !== undefined);
+  await send(302, { type: "dispatch", message: { prompt: "ordinary" } });
+  await send(303, { type: "steer", message: { prompt: "priority" } });
+  assert.deepEqual(received, ["hold", "ordinary", "priority"]);
+  assert.deepEqual(worked, ["hold"]);
+  const busy = await (await fetch(`${origin(server)}/__cantelop/v2/runtime`)).json();
+  assert.equal(busy.quiescent, false);
+  await send(304, { type: "cancel" });
+  await waitFor(() => worked.length === 3);
+  assert.deepEqual(worked, ["hold", "priority", "ordinary"]);
+  assert.equal(peak, 1);
+});
+
+test("activity scheduling capabilities close with intake while queued work keeps its own context", async t => {
+  let capability, queuedContext;
+  let release;
+  const running = new Promise(resolve => { release = resolve; });
+  const server = createServer(createSessionRuntimeHandler(behaviour(context => {
+    capability = context.activity;
+    context.activity.queue(async activity => { queuedContext = activity; await running; });
+  })));
+  await listen(server);
+  t.after(() => close(server));
+  const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(messageEnvelope({})),
+  });
+  assert.equal(response.status, 202);
+  await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`)).json()).state === "succeeded");
+  assert.throws(() => capability.queue(() => undefined), /invocation.*settled/);
+  assert.throws(() => capability.start(() => undefined), /invocation.*settled/);
+  assert.throws(() => capability.cancel(), /invocation.*settled/);
+  assert.equal(queuedContext.signal.aborted, false);
+  release();
+});

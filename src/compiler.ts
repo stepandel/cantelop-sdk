@@ -186,6 +186,10 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     if (!runtimeProperty || !ts.isPropertyAssignment(runtimeProperty)) return fail("Define runtime directly in the App options");
     const runtime = runtimeProperty.initializer;
     if (!ts.isObjectLiteralExpression(runtime) || runtime.properties.some(p => ts.isSpreadAssignment(p))) return fail("App runtime must be an inline handler object without spreads");
+    const runtimeKeys = runtime.properties.map(p => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : "");
+    const harnessRuntime = runtimeKeys.includes("create");
+    const allowedRuntimeKeys = harnessRuntime ? ["create", "onRecover", "redelivery"] : ["receive", "onActivate", "onRecover", "redelivery"];
+    if (!runtimeKeys.includes(harnessRuntime ? "create" : "receive") || runtimeKeys.some(key => !allowedRuntimeKeys.includes(key))) return fail("Invalid Session runtime: define exactly one create or receive implementation");
     const contextual = checker.getContextualType(runtime);
     if (contextual) for (const property of checker.getPropertiesOfType(contextual)) {
       const actual = checker.getPropertyOfType(checker.getTypeAtLocation(runtime), property.name);

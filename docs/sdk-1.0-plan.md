@@ -13,7 +13,7 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 - Add automatic App configuration from runtime context/environment/CLI integration profiles; retain explicit ID/slug selection and test connection overrides. Keep credentials separate from deployment login and scope them to selected Apps.
 - Define common `{ protocolVersion, id, workspace, session, command }` envelopes and strict discriminated command validation. Workspace-only commands use a null Session.
 - Dispatch and steer carry the same typed message and optional keep-alive. Return message references and expose stable retry IDs. Edge owns routing, normal/priority admission, App-default resolution, and read-only handlers.
-- Replace session-wide abort with message-targeted cancellation. Distinguish queued withdrawal, running cancellation request and existing settled outcomes.
+- Expose active-run cancellation without a target message ID. Preserve queued input and distinguish interruption requested from idle.
 - Qualify SSE parsing, explicit resume, subscription cleanup, durable typed view response metadata, generated artifacts, dependency boundaries and clean consumer types.
 
 **Gate:** SDK/Edge contract tests and npm tarball qualification pass; native runtime artifacts accurately advertise unsupported new capabilities. No claim of complete hosted rollout.
@@ -36,14 +36,14 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 
 **Gate:** init → dev → dry-run → deploy works with runtime-only authoring and both artifacts, including managed databases/custom images. Cross-App and wrong-Workspace requests fail before side effects.
 
-## Phase 3 — Actor priority and targeted cancellation
+## Phase 3 — Harness scheduling and active-run cancellation
 
-- Negotiate priority capability through the Edge ↔ Sandbox protocol. Dispatch is normal work; steer has priority at safe scheduling boundaries. Preserve FIFO within each priority and do not preempt a running receiver. Idle steer admits normally.
-- Persist message identity, payload and scheduling mode before acknowledgment. Deduplicate exact retries; reject conflicting reuse across commands/payloads. Recovery must preserve priority and admission order.
+- Deliver queue and steer intent through the Edge ↔ Sandbox protocol. Each harness implements ordering, idle steering, and safe native interruption through its required interface.
+- Persist message identity, payload and command intent before acknowledgment. Deduplicate exact retries; reject conflicting reuse across commands/payloads. Recovery must preserve priority and admission order.
 - Define busy work consistently across intake and background activity. Provider adapters must consume prioritized input at safe points without introducing a separate steering payload type.
 - Keep keep-alive optional in the public contract; resolve method/reference/App defaults in order. Preserve existing quiescence/stop semantics and specify active lease effects in platform tests.
-- Implement targeted cancellation with durable queued withdrawal and message-to-activity/descendant ownership. Existing runtime message-cancel/activity-cancel machinery is a starting point, not proof that attribution already works after intake acknowledgment.
-- Handle admission/start/settlement/cancellation races, unknown targets, repeated cancellation, shared work, lost acknowledgments and replacement incarnations. Acceptance never claims cooperative work has stopped.
+- Implement session-scoped harness factories with queue, steer and cancel methods. Each harness owns scheduling and retains its provider slot through cleanup; deduplicate cancellation retries so they cannot interrupt a later run.
+- Handle admission/start/settlement/cancellation races, idle operations, repeated cancellation, shared work, lost acknowledgments and replacement incarnations. Acceptance never claims cooperative work has stopped.
 - Convert provider examples from their existing application-defined control messages only after actor support exists. Maintain generic non-agent and durable application queue examples.
 
 **Gate:** priority ordering, idle admission, cancellation attribution, exact retries, late cancellation, process loss/redelivery and provider completion distinctions pass cross-repository tests. Advertise capabilities only then.
@@ -65,7 +65,7 @@ The architecture is backend → SDK → App dispatcher → protocol-managed Edge
 - Verify packed SDK exports, generated artifacts, deployment negotiation, dependency boundaries, provider examples and supported Node/Bun runtime environments.
 - Release only after SDK, CLI, platform and native actor capabilities are coordinated and migration gates pass. npm publication/tagging remains a separate authorized operation.
 
-**1.0 gate:** backend integration, generated Edge/native deployment, normal/priority messages, targeted cancellation, durable typed view plus synchronized subscriptions, database integration and migration are complete.
+**1.0 gate:** backend integration, generated Edge/native deployment, normal/priority messages, active-run cancellation, durable typed view plus synchronized subscriptions, database integration and migration are complete.
 
 ## Optional App webhook ingress
 

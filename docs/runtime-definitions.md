@@ -4,21 +4,21 @@
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
-import { receiveSupport } from "./support.js";
-import { receiveResearch } from "./research.js";
+import { createSupport } from "./support.js";
+import { createResearch } from "./research.js";
 import type { SupportMessage, SupportEvent, ResearchMessage, ResearchReply } from "./contracts.js";
 
 const cantelop = new CantelopClient();
 
 export const support = cantelop.app<SupportMessage, SupportEvent>({
   name: "support-agent",
-  runtime: { receive: receiveSupport },
+  runtime: { create: createSupport },
   environment: { OPENAI_API_KEY: { secret: true, required: true } },
 });
 
 export const research = cantelop.app<ResearchMessage, never, ResearchReply>({
   name: "research-agent",
-  runtime: { receive: receiveResearch },
+  runtime: { create: createResearch },
 });
 
 support.workspace({ slug: "customer-123" }).session({ id: "conversation-456" });
@@ -26,7 +26,9 @@ support.workspace({ slug: "customer-123" }).session({ id: "conversation-456" });
 
 An App name is its existing deployment slug within the selected account/environment. Export names are JavaScript names; renaming `support` does not rename the App. Multiple Apps can share one client. Multiple clients can use different profiles. Names must be unique within a client and within a definition module; there is no process-wide singleton. App construction is local and never provisions or deploys resources.
 
-The required `runtime` contains `receive` and optional `onActivate`, `onRecover`, and boolean `redelivery`. Handlers can be inline or ordinary imported functions. The first three App generics type messages, events and replies, including contextual handler types; the fourth types view state. Runtime IDs remain compiler-owned. No decorators, default exports, implementation path, behavior factory, or client subclass are required. Workspace/Session lifecycle is unchanged.
+The primary runtime contract is `{ create, onRecover?, redelivery? }`. `create` receives Session identity, environment, database access, and an incarnation lifetime signal. It returns one `SessionHarness` implementing `queue(message, work)`, `steer(message, work)`, and `cancel()`. The harness owns ordering, steering and interruption behavior; there are no SDK-selected steering modes. Both input methods receive operation-scoped signals, output/view writers and submission identity. `queue` resolves after its submitted operation and cleanup, returning the request reply. `steer` resolves at the implementation’s completion boundary. `cancel` returns a boolean: true when an active operation was signalled, false when idle, preserving waiting input. Factories can be inline or imported. The SDK tracks operation lifetimes and attribution while keeping intake responsive.
+
+For custom orchestration, the lower-level `{ receive, onActivate?, onRecover?, redelivery? }` contract remains available. A runtime must select exactly one factory or receive handler. The first three App generics type messages, events and replies; the fourth types view state, including harness work commits. Runtime IDs remain compiler-owned.
 
 App `environment` declares secret/required values and non-secret defaults; actual secrets stay in external CLI/platform configuration. Secret declarations cannot include defaults. An optional project-relative `dockerfile` selects a custom Sandbox image. These belong to each App, allowing different providers/configuration in one project.
 
@@ -58,7 +60,7 @@ The build module remains tooling and stays out of application runtime bundles. `
 
 Definitions must export Apps created by top-level `cantelop.app({...})` calls on an SDK client. Names must be string literals. App options and runtime must be static object literals without spreads; deployment declarations use literal values. Aliases of one App count once; duplicate names on distinct App definitions fail. Local helper declarations and closures are supported, with one top-level variable declaration per statement. Runtime handlers cannot capture App/client instances. Keep definitions declarative: top-level effects, bare side-effect imports, ambiguous unused value declarations, and unrelated value exports are rejected. Put initialization in a referenced runtime module or lifecycle hook.
 
-Build validation checks reachable source with TypeScript and the nearest project config, including handler parameter compatibility. JavaScript and `any` retain their normal checking limits. Priority scheduling, targeted cancellation attribution, and durable view publication still need coordinated actor/platform support.
+Build validation checks reachable source with TypeScript and the nearest project config, including handler parameter compatibility. JavaScript and `any` retain their normal checking limits. The compiler validates harness factories and their returned methods without executing customer code. Session cancellation uses selector-bound generic request delivery and requires the companion platform route.
 
 ## Build and deployment
 
