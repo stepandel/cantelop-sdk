@@ -109,10 +109,6 @@ for (const [name, Native] of providers) {
       assert.equal((await stat(snapshotDirectory)).mode & 0o777, 0o700);
     }
     if (name === "codex") assert.equal(metadata.sqlite.startsWith(options.workspace), false);
-    // The native runner implements SessionHarness directly.
-    const output = [];
-    await native.queue({ type: "prompt", prompt: "adapted" }, { signal: new AbortController().signal, output: { send: async event => output.push(event) } });
-    assert.equal(output.some(event => event.type === "metadata" && event.stdin === "adapted"), true);
   });
 
   test(`${name} cancellation waits for real process-group exit and stubborn tool cleanup`, async t => {

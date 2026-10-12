@@ -152,27 +152,6 @@ test("a built runtime serves the App's auth provider and its terminal relay", as
   await reader.cancel();
 });
 
-test("watchLocalProject incrementally rebuilds changed components", async (t) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-watch-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const sessionEntrypoint = path.join(directory, "session.ts");
-  const sessionRuntimeOutdir = path.join(directory, "session-runtime-artifact");
-  await writeFile(sessionEntrypoint, 'export async function receive() { console.log("runtime-one"); }\n');
-
-  const events = [];
-  const watcher = await watchLocalProject({
-    sessionDefinition: await runtimeDefinition(sessionEntrypoint),
-    sessionRuntimeOutdir,
-    onBuild: (event) => events.push(event),
-  });
-  t.after(() => watcher.dispose());
-  assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-one/);
-
-  await writeFile(sessionEntrypoint, 'export async function receive() { console.log("runtime-two"); }\n');
-  await waitFor(() => events.some((event) => event.component === "session-runtime"));
-  assert.match(await readFile(path.join(sessionRuntimeOutdir, "session-runtime.mjs"), "utf8"), /runtime-two/);
-});
-
 test("runtime-only schema discovery and watching preserve managed database artifacts", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-runtime-schema-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

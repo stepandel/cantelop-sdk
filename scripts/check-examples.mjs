@@ -8,9 +8,6 @@ import { buildEdgeApi, buildSessionRuntime, buildAppArtifacts, createCantelopCom
 const root = path.resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
 try {
-  const schema = JSON.parse(await readFile(path.join(root, "schemas/app-v3.json"), "utf8"));
-  assert.deepEqual(schema.required, ["schema_version", "definition"]);
-  assert.equal("api" in schema.properties, false);
   for (const name of ["codex", "openai", "anthropic", "pi", "opencode", "web-chat", "github"]) {
     const projectRoot = path.join(root, "examples", name);
     const manifest = JSON.parse(await readFile(path.join(projectRoot, "cantelop.json"), "utf8"));

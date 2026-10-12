@@ -142,9 +142,13 @@ test("watch follows imported runtime and type contracts and recovers after inval
   t.after(()=>watcher.dispose());
   const manifest=()=>readFile(path.join(outdir,'cantelop-runtime.json'),'utf8').then(JSON.parse);
   const initial=(await manifest()).session_runtime_id;
+  const runtimeSource=()=>readFile(path.join(outdir,'session-runtime.mjs'),'utf8');
+  assert.match(await runtimeSource(), /first-runtime/);
   await writeFile(agent,(await readFile(agent,'utf8')).replace('first-runtime','second-runtime'));
-  await waitFor(()=>events.length>0);
+  await waitFor(()=>events.some(event=>event.component === "session-runtime"));
   assert.equal(events.at(-1).error,undefined);
+  assert.match(await runtimeSource(), /second-runtime/);
+  assert.doesNotMatch(await runtimeSource(), /first-runtime/);
   const second=(await manifest()).session_runtime_id;
   assert.notEqual(second,initial);
   events.length=0;

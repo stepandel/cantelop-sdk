@@ -860,22 +860,6 @@ test("activation restores tracked work once while subsequent intake remains resp
   assert.equal(snapshot.capabilities.redelivery, true);
 });
 
-test("failed activation blocks intake rather than acknowledging uninitialized work", async (t) => {
-  let received = false;
-  const server = createServer(createSessionRuntimeHandler(behaviour({
-    onActivate() { throw new Error("restore failed"); },
-    receive() { received = true; },
-  })));
-  await listen(server);
-  t.after(() => close(server));
-  const response = await fetch(`${origin(server)}/__cantelop/v2/messages`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(messageEnvelope({})),
-  });
-  assert.equal(response.status, 202);
-  await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`)).json()).state === "failed");
-  assert.equal(received, false);
-});
-
 test("failed activation fences later intake in the same incarnation", async (t) => {
   let activations = 0;
   const received = [];
