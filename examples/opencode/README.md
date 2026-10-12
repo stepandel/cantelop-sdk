@@ -21,7 +21,19 @@ Cancellation sends SIGTERM and escalates to SIGKILL after one second. Cleanup al
 
 ## Native authentication and state
 
-Use OpenCode's own login in the user's Workspace, for example `XDG_DATA_HOME=/workspace/.local/share XDG_CONFIG_HOME=/workspace/.config HOME=/workspace opencode auth login`. The adapter does not collect tokens or inject inherited API keys. Native provider credentials and configuration remain provider-owned. The child environment is scoped to the Workspace; the host's auth/config environment is unchanged.
+The App declares `auth: opencodeAuth` ([src/auth.ts](src/auth.ts)), so each Workspace can store its own provider credential with OpenCode's stock login. Resolve the Workspace from your verified user identity, then hand the returned terminal to that user's browser:
+
+```ts
+const auth = app.workspace({ slug: verifiedUserWorkspace }).auth();
+if (!await auth.status()) {
+  const { url, protocols } = await auth.terminal();
+  // Browser: new WebSocket(url, protocols), rendered with a terminal such as xterm.js.
+}
+```
+
+The browser shows `opencode auth login --provider <id>` in its own PTY, and the user completes OpenCode's own prompts there. `OPENCODE_LOGIN_PROVIDER` picks the provider (default `opencode`). It must appear in `OPENCODE_LOGIN_PROVIDERS` in [src/auth.ts](src/auth.ts). Anthropic is deliberately excluded: Anthropic does not allow Claude subscription sign-in through third-party tools, so use the [Claude Code example](../anthropic/README.md) instead. Before adding a provider, confirm that its terms allow hosted use, especially for subscription (OAuth) methods. `auth.status()` checks whether OpenCode's credential file has an entry for that provider, and `auth.logout()` runs `opencode auth logout <provider>`. See [native auth](../../docs/native-auth.md) for the browser snippet and lifecycle.
+
+The adapter does not collect tokens or inject inherited API keys. The child environment is scoped to the Workspace; the host's auth/config environment is unchanged.
 
 OpenCode auth lives at `/workspace/.local/share/opencode/auth.json`, with native configuration under `/workspace/.config/opencode`. The live native SQLite database is created on local disk per runtime incarnation. Native auth files are linked into that local data directory without reading their credentials. After every known-session turn (including interruption), the adapter runs stock `opencode export` and atomically saves the native snapshot under `.cantelop/native-harness/opencode`. A replacement incarnation restores it through stock `opencode import`, then resumes the recorded session ID. The snapshot is capped at 16 MiB; export/import failures surface rather than silently discarding state.
 

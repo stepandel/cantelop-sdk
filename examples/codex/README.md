@@ -21,7 +21,19 @@ Cancellation sends SIGTERM and escalates to SIGKILL after one second. Cleanup al
 
 ## Native authentication and state
 
-Use Codex's own login in the user's Workspace, for example `CODEX_HOME=/workspace/.codex HOME=/workspace codex login`. The adapter does not collect tokens or inject inherited API keys. Native provider credentials and configuration remain provider-owned. The child environment is scoped to the Workspace; the host's auth/config environment is unchanged.
+The App declares `auth: codexAuth` ([src/auth.ts](src/auth.ts)), so each Workspace can sign in to Codex with the user's own ChatGPT plan. Resolve the Workspace from your verified user identity, then hand the returned terminal to that user's browser:
+
+```ts
+const auth = app.workspace({ slug: verifiedUserWorkspace }).auth();
+if (!await auth.status()) {
+  const { url, protocols } = await auth.terminal();
+  // Browser: new WebSocket(url, protocols), rendered with a terminal such as xterm.js.
+}
+```
+
+The browser shows the stock `codex login --device-auth` in its own PTY. The CLI prints a link and a one-time code. The user enters the code on OpenAI's own page, and the CLI completes the sign-in by itself, so nothing is pasted into the terminal. Device-code login must first be enabled in the user's ChatGPT security settings, or by a workspace admin. `auth.status()` runs `codex login status`, and `auth.logout()` runs `codex logout`. See [native auth](../../docs/native-auth.md) for the browser snippet and lifecycle.
+
+OpenAI's docs don't yet say whether a hosting platform may offer ChatGPT-plan sign-in, so confirm with OpenAI before offering it to users. The adapter does not collect tokens or inject inherited API keys. The child environment is scoped to the Workspace; the host's auth/config environment is unchanged.
 
 Codex auth, configuration and native rollout files use `/workspace/.codex`. `CODEX_SQLITE_HOME` defaults to a local cache directory; the native `sqlite_home` configuration takes precedence. The adapter saves the `thread.started` ID and resumes that exact thread instead of selecting the most recent conversation.
 
