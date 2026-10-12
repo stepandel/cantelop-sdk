@@ -1,13 +1,14 @@
 import { mkdir } from "node:fs/promises";
-import { ConversationStore, nativeEnvironment, runJsonProcess, type NativeHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
+import { ConversationStore, nativeEnvironment, runJsonProcess, NativeHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
 
 /** Stock codex exec, resumed by its native thread ID; no replacement agent loop. */
-export class NativeCodex implements NativeHarness {
+export class NativeCodex extends NativeHarness {
   private readonly store: ConversationStore;
-  constructor(private readonly options: NativeOptions) {
+  constructor(private readonly options: NativeOptions, lifetime?: AbortSignal) {
+    super(lifetime);
     this.store = new ConversationStore(options.workspace, "codex", options.sessionId);
   }
-  async run(turn: NativeTurn): Promise<void> {
+  protected async execute(turn: NativeTurn): Promise<void> {
     const state = await this.store.load();
     const env = nativeEnvironment(this.options.workspace);
     await mkdir(env.CODEX_HOME!, { recursive: true, mode: 0o700 });

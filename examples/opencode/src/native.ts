@@ -2,14 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConversationStore, nativeEnvironment, runJsonProcess, type NativeHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
+import { ConversationStore, nativeEnvironment, runJsonProcess, NativeHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.js";
 
 /** Stock CLI with native export/import; the live SQLite database stays on local disk. */
-export class NativeOpenCode implements NativeHarness {
+export class NativeOpenCode extends NativeHarness {
   private readonly store: ConversationStore;
   private readonly snapshot: string;
   private environment: Promise<NodeJS.ProcessEnv> | undefined;
-  constructor(private readonly options: NativeOptions) {
+  constructor(private readonly options: NativeOptions, lifetime?: AbortSignal) {
+    super(lifetime);
     this.store = new ConversationStore(options.workspace, "opencode", options.sessionId);
     this.snapshot = join(options.workspace, ".cantelop", "native-harness", "opencode", createHash("sha256").update(options.sessionId).digest("hex") + ".export.json");
   }
@@ -41,7 +42,7 @@ export class NativeOpenCode implements NativeHarness {
     });
     return result;
   }
-  async run(turn: NativeTurn): Promise<void> {
+  protected async execute(turn: NativeTurn): Promise<void> {
     turn.signal.throwIfAborted();
     const state = await this.store.load();
     const env = await this.initialize();

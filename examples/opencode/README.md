@@ -6,12 +6,11 @@ This example follows the [claude-code-api native runner pattern](https://github.
 opencode run --format json [--session SESSION_ID]
 ```
 
-The `create` factory wraps a session-scoped `NativeOpenCode` runner. To use a runner you already own, import `wrapOpenCode` from `src/agent.ts` and adapt its `run({ text, signal, emit })` method:
-
+The `create` factory returns a session-scoped `NativeOpenCode` runner directly. Each runner implements Cantelop’s `SessionHarness` interface, `run(message, work)`. An existing runner implementing that interface can be returned directly too:
 ```ts
 runtime: {
   create(context) {
-    return wrapOpenCode(createExistingNativeRunner(context), context.signal);
+    return createExistingNativeRunner(context);
   },
   steering: "interrupt",
 }

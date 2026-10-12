@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { SessionHarness } from "@cantelop/sdk/session";
+import type { SessionHarness, SessionHarnessWorkContext } from "@cantelop/sdk/session";
 
 export type NativeEvent = Readonly<Record<string, unknown>>;
 export type NativeOutput = NativeEvent;
@@ -11,7 +11,6 @@ export interface NativeTurn {
   signal: AbortSignal;
   emit(event: NativeEvent): Promise<void>;
 }
-export interface NativeHarness { run(turn: NativeTurn): Promise<void> }
 export interface NativeOptions { workspace: string; sessionId: string; binary: string; model?: string }
 
 /** Only the child receives this environment; host auth/config is never changed. */
@@ -145,9 +144,12 @@ export async function runJsonProcess(options: {
 }
 
 /** Scheduling stays in Cantelop; native execution stays in the supplied harness. */
-export function wrapNativeHarness(harness: NativeHarness, lifetime?: AbortSignal): SessionHarness<{ type: "prompt"; prompt: string }, NativeOutput> {
-  return { run: (message, work) => {
-    const signal = lifetime ? AbortSignal.any([work.signal, lifetime]) : work.signal;
+export abstract class NativeHarness implements SessionHarness<{ type: "prompt"; prompt: string }, NativeOutput> {
+  constructor(private readonly lifetime?: AbortSignal) {}
+  protected abstract execute(turn: NativeTurn): Promise<void>;
+
+  run(message: { type: "prompt"; prompt: string }, work: SessionHarnessWorkContext<{ type: "prompt"; prompt: string }, NativeOutput>): Promise<void> {
+    const signal = this.lifetime ? AbortSignal.any([work.signal, this.lifetime]) : work.signal;
     const publish = async (event: NativeOutput) => {
       signal.throwIfAborted();
       let abort!: () => void;
@@ -158,7 +160,7 @@ export function wrapNativeHarness(harness: NativeHarness, lifetime?: AbortSignal
       try { await Promise.race([work.output.send(event), interrupted]); }
       finally { signal.removeEventListener("abort", abort); }
     };
-    return harness.run({
+    return this.execute({
       text: message.prompt, signal,
       emit: async event => {
         const json = JSON.stringify(event);
@@ -169,5 +171,5 @@ export function wrapNativeHarness(harness: NativeHarness, lifetime?: AbortSignal
         }
       },
     });
-  } };
+  }
 }

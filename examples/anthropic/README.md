@@ -6,12 +6,11 @@ This example follows the [claude-code-api native runner pattern](https://github.
 claude -p --output-format stream-json --verbose --include-partial-messages [--session-id ID | --resume ID]
 ```
 
-The `create` factory wraps a session-scoped `NativeClaude` runner. To use a runner you already own, import `wrapClaude` from `src/agent.ts` and adapt its `run({ text, signal, emit })` method:
-
+The `create` factory returns a session-scoped `NativeClaude` runner directly. Each runner implements Cantelop’s `SessionHarness` interface, `run(message, work)`. An existing runner implementing that interface can be returned directly too:
 ```ts
 runtime: {
   create(context) {
-    return wrapClaude(createExistingNativeRunner(context), context.signal);
+    return createExistingNativeRunner(context);
   },
   steering: "interrupt",
 }

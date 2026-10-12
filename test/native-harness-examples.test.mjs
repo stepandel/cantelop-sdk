@@ -10,9 +10,9 @@ async function load(path) {
   return import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
 }
 const providers = [
-  ["codex", (await load("../examples/codex/src/native.ts")).NativeCodex, (await load("../examples/codex/src/agent.ts")).wrapCodex],
-  ["claude", (await load("../examples/anthropic/src/native.ts")).NativeClaude, (await load("../examples/anthropic/src/agent.ts")).wrapClaude],
-  ["opencode", (await load("../examples/opencode/src/native.ts")).NativeOpenCode, (await load("../examples/opencode/src/agent.ts")).wrapOpenCode],
+  ["codex", (await load("../examples/codex/src/native.ts")).NativeCodex],
+  ["claude", (await load("../examples/anthropic/src/native.ts")).NativeClaude],
+  ["opencode", (await load("../examples/opencode/src/native.ts")).NativeOpenCode],
 ];
 
 // Real subprocess/stdin/JSONL/process-group boundaries; no provider credentials or model calls.
@@ -61,27 +61,28 @@ let text=''; process.stdin.on('data',chunk=>text+=chunk); process.stdin.on('end'
 `, { mode: 0o755 });
   return { workspace, binary };
 }
+const run = (native, turn) => native.run({ type: "prompt", prompt: turn.text }, { signal: turn.signal, output: { send: turn.emit } });
 const turn = (text, events, signal = new AbortController().signal) => ({ text, signal, emit: async event => { events.push(event); } });
 
-for (const [name, Native, wrap] of providers) {
+for (const [name, Native] of providers) {
   test(`${name} wraps the stock CLI command, keeps prompts on stdin, and resumes after replacement`, async t => {
     const options = { ...await fixture(t), sessionId: "one" };
     const events = [];
     const native = new Native(options);
-    await native.run(turn("first", events));
+    await run(native, turn("first", events));
     const first = events.find(event => event.type === "metadata");
     assert.equal(first.stdin, "first");
     assert.equal(first.args.includes("first"), false);
     assert.equal(first.sharedKey, false);
     assert.equal(first.home, options.workspace);
     const next = [];
-    await new Native(options).run(turn("second", next));
+    await run(new Native(options), turn("second", next));
     const metadata = next.find(event => event.type === "metadata");
     assert.equal(metadata.id, first.id);
     assert.deepEqual(metadata.history, ["first", "second"]);
     assert.equal(next.at(-1).text, "Hello 😀"); // Final JSON frame has no newline.
     const other = [];
-    await new Native({ ...options, sessionId: "other" }).run(turn("other", other));
+    await run(new Native({ ...options, sessionId: "other" }), turn("other", other));
     assert.notEqual(other.find(event => event.type === "metadata").id, first.id);
     if (name === "opencode") {
       assert.equal(metadata.xdg.startsWith(options.workspace), false, "live SQLite stays local");
@@ -89,9 +90,9 @@ for (const [name, Native, wrap] of providers) {
       assert.equal((await stat(snapshotDirectory)).mode & 0o777, 0o700);
     }
     if (name === "codex") assert.equal(metadata.sqlite.startsWith(options.workspace), false);
-    // The adapter just maps the existing runner into SessionHarness.run.
+    // The native runner implements SessionHarness directly.
     const output = [];
-    await wrap(native).run({ type: "prompt", prompt: "adapted" }, { signal: new AbortController().signal, output: { send: async event => output.push(event) } });
+    await native.run({ type: "prompt", prompt: "adapted" }, { signal: new AbortController().signal, output: { send: async event => output.push(event) } });
     assert.equal(output.some(event => event.type === "metadata" && event.stdin === "adapted"), true);
   });
 
@@ -99,10 +100,10 @@ for (const [name, Native, wrap] of providers) {
     const native = new Native({ ...await fixture(t), sessionId: "one" });
     const controller = new AbortController();
     let toolPid, abortedAt;
-    const run = native.run({ text: "wait", signal: controller.signal, emit: async event => {
+    const execution = run(native, { text: "wait", signal: controller.signal, emit: async event => {
       if (event.type === "tool.ready") { toolPid = event.pid; abortedAt = Date.now(); controller.abort(); }
     } });
-    await assert.rejects(run, /abort/i);
+    await assert.rejects(execution, /abort/i);
     assert.ok(Date.now() - abortedAt >= 900);
     assert.throws(() => process.kill(toolPid, 0), error => error.code === "ESRCH");
   });
@@ -110,18 +111,18 @@ for (const [name, Native, wrap] of providers) {
   test(`${name} output failure cleans up before returning; native failures never become success`, async t => {
     const native = new Native({ ...await fixture(t), sessionId: "one" });
     let toolPid;
-    await assert.rejects(native.run({ text: "wait", signal: new AbortController().signal, emit: async event => {
+    await assert.rejects(run(native, { text: "wait", signal: new AbortController().signal, emit: async event => {
       if (event.type === "tool.ready") { toolPid = event.pid; throw new Error("handoff failed"); }
     } }), /handoff failed/);
     assert.throws(() => process.kill(toolPid, 0), error => error.code === "ESRCH");
-    for (const prompt of ["fail", "missing", "malformed"]) await assert.rejects(native.run(turn(prompt, [])));
+    for (const prompt of ["fail", "missing", "malformed"]) await assert.rejects(run(native, turn(prompt, [])));
   });
 }
 
 test("large native frames are fragmented below the output limit and round-trip Unicode", async () => {
-  const { wrapNativeHarness } = await load("../examples/native-harness/cli.ts");
+  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
   const nativeEvent = { type: "assistant", text: "😀".repeat(30_000) };
-  const harness = wrapNativeHarness({ run: async turn => turn.emit(nativeEvent) });
+  const harness = new class extends NativeHarness { async execute(turn) { await turn.emit(nativeEvent); } }();
   const events = [];
   await harness.run({ type: "prompt", prompt: "test" }, { signal: new AbortController().signal, output: { send: async event => events.push(event) } });
   assert.equal(events.length > 1, true);
@@ -130,14 +131,13 @@ test("large native frames are fragmented below the output limit and round-trip U
 });
 
 test("incarnation shutdown interrupts a blocked output handoff and still waits for native cleanup", async () => {
-  const { wrapNativeHarness } = await load("../examples/native-harness/cli.ts");
+  const { NativeHarness } = await load("../examples/native-harness/cli.ts");
   const lifetime = new AbortController();
   let publishing = false, exited = false;
-  const native = { async run(turn) {
+  const harness = new class extends NativeHarness { async execute(turn) {
     try { await turn.emit({ type: "assistant" }); }
     finally { await new Promise(resolve => setTimeout(resolve, 10)); exited = true; }
-  } };
-  const harness = wrapNativeHarness(native, lifetime.signal);
+  } }(lifetime.signal);
   const outcome = assert.rejects(harness.run({ type: "prompt", prompt: "hold" }, {
     signal: new AbortController().signal,
     output: { send: () => { publishing = true; return new Promise(() => {}); } },

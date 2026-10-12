@@ -2,7 +2,7 @@
 
 Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through a named App definition and keeps credentials out of browser code.
 
-[Codex](codex/README.md), [Claude Code](anthropic/README.md), and [OpenCode](opencode/README.md) wrap published stock CLIs directly, following the [claude-code-api pattern](https://github.com/stepandel/claude-code-api). Each starts a subprocess per turn, uses native Workspace-owned authentication, forwards JSON events and resumes its persisted native conversation. Their `wrapCodex(native)`, `wrapClaude(native)`, and `wrapOpenCode(native)` adapters accept existing runners with `run({ text, signal, emit })`.
+[Codex](codex/README.md), [Claude Code](anthropic/README.md), and [OpenCode](opencode/README.md) wrap published stock CLIs directly, following the [claude-code-api pattern](https://github.com/stepandel/claude-code-api). Each starts a subprocess per turn, uses native Workspace-owned authentication, forwards JSON events and resumes its persisted native conversation. Each native runner implements `SessionHarness.run(message, work)` and is returned directly from `runtime.create`, without a wrapper function.
 
 All three select `steering: "interrupt"`: prioritize the new prompt, interrupt the active operation, wait for process-group cleanup, then resume the native conversation. Provider tools, prompts, permissions and agent loops remain native.
 
