@@ -60,7 +60,7 @@ All operations use `POST {app_url}/commands`, including streaming. The URL is un
 | Command | Fields | Edge behavior |
 | --- | --- | --- |
 | `dispatch` | `message`, optional `keepAliveSeconds` | Resolve/provision Workspace; admit normal-priority actor message; activate if needed |
-| `steer` | `message`, optional `keepAliveSeconds` | Same admission with priority enforced at actor scheduling boundaries |
+| `steer` | `message`, optional `keepAliveSeconds` | Same admission with steering intent available to the runtime activity scheduler |
 | `request` | `message`, `timeoutMs`, optional `keepAliveSeconds` | Normal message admission plus existing bounded reply wait |
 | `cancel` | `messageId` | Cancel the specific submission; no Workspace provisioning or Sandbox activation |
 | `status` | `messageId` | Read the original message receipt without activation |
@@ -80,12 +80,19 @@ stores/forwards that JSON without inspecting its type. It preserves FIFO deliver
 and acknowledges a Sandbox reservation separately from handling completion.
 Requests additionally use the existing reply wait and `timeout_ms`.
 
-The SDK serializes ordinary work, holding its queue while an owned activity runs.
-An optional `runtime.steer(context)` hook forwards input to a live harness in the
-same process. Without that hook, steer receives priority in the SDK work queue.
-`context.command.type` preserves intent in either handler. Queueing remains SDK
-behavior, not delivery behavior. Legacy raw actor payloads retain ordinary intake
-behavior for direct adapter integrations.
+The SDK serializes message intake, which stays responsive while work runs in
+`context.activity`. Runtime code uses `activity.start(work, options)` for immediate
+work or `activity.queue(work, options)` to schedule a task in the single activity
+slot. `queue` returns immediately; its closure retains the submission's ownership.
+Steering submissions default to priority when they queue work, preserving FIFO
+within each priority. An explicit queue `priority` option overrides the default.
+
+`activity.steer(message)` invokes the current activity's registered `onSteer`
+adapter. No separate runtime handler is required. An absent adapter or inactive
+activity rejects explicitly; runtimes can instead queue work as their fallback.
+`activity.cancel()` signals the current activity while other queued submissions
+remain. Both raw actor messages and wrapped SDK commands use the same responsive
+intake; `context.command.type` preserves dispatch/steer intent.
 
 Keep-alive is optional on the reference and on dispatch/steer. Cancellation uses
 the reference/default value when delivering its SDK control command. Edge resolves
@@ -94,7 +101,7 @@ Read operations do not activate the Sandbox; stop retains platform ownership.
 
 Acceptance means durable delivery admission, not work completion. Successful
 `receive` acknowledges intake; its owned activity can outlive that acknowledgment.
-A caller timeout/disconnect only stops waiting. Stable IDs deduplicate the opaque
+Queued activity can remain pending after its intake status becomes handled; message status describes intake, while activity owns work completion. A caller timeout/disconnect only stops waiting. Stable IDs deduplicate the opaque
 command payload; conflicting reuse fails. SDK cancellation uses its own reply
 command ID, separate from its target ID.
 
@@ -102,7 +109,7 @@ command ID, separate from its target ID.
 
 `session.cancel(messageId, { id?, signal? })` returns `{ messageId, state, status? }`. `requested` means cooperative cancellation was admitted; `cancelled` means queued work was withdrawn; `settled` reports an existing terminal message outcome in the required `status` field. Unknown targets are errors. A cancellation operation's retry ID is separate from its target ID.
 
-Cancellation interpretation lives in the Sandbox SDK. It removes queued intake,
+Cancellation interpretation lives in the Sandbox SDK. It removes queued intake or activity work,
 aborts the running message signal, or aborts the activity owned by that target ID.
 It does not stop another message's activity. SDK queues and activity ownership
 belong to the actor incarnation; durable delivery/status and generic recovery

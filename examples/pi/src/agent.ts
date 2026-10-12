@@ -30,7 +30,7 @@ function sessionAgent({ session, env }: Context): Agent {
   return agent;
 }
 
-export function receive(context: Context): void {
+export async function receive(context: Context): Promise<void> {
   const command = context.message.payload;
 
   if (command.type === "cancel") {
@@ -39,26 +39,17 @@ export function receive(context: Context): void {
     return;
   }
 
-  startPrompt(context, command.prompt);
-}
-
-export function steer(context: Context): void {
-  const command = context.message.payload;
-  if (command.type === "cancel" || agent === undefined || !context.activity.active) {
-    receive(context);
+  if (context.command.type === "steer" && context.activity.active) {
+    await context.activity.steer(command);
     return;
   }
-  agent.steer({
-    role: "user",
-    content: command.prompt,
-    timestamp: Date.now(),
-  });
+  queuePrompt(context, command.prompt);
 }
 
-function startPrompt(context: Context, prompt: string): void {
+function queuePrompt(context: Context, prompt: string): void {
   const currentAgent = sessionAgent(context);
 
-  context.activity.start(async ({ signal, output }) => {
+  context.activity.queue(async ({ signal, output }) => {
     let answer = "";
     let pendingOutput = Promise.resolve();
     const unsubscribe = currentAgent.subscribe((event) => {
@@ -84,5 +75,10 @@ function startPrompt(context: Context, prompt: string): void {
       signal.removeEventListener("abort", abort);
       unsubscribe();
     }
+  }, {
+    onSteer(message) {
+      if (message.type === "cancel") throw new Error("Use activity.cancel() to cancel work");
+      currentAgent.steer({ role: "user", content: message.prompt, timestamp: Date.now() });
+    },
   });
 }

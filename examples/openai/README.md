@@ -26,6 +26,6 @@ Run `pnpm check:examples` from the SDK root to type-check the backend client and
 
 ## Runtime behavior
 
-The SDK serializes OpenAI runs. Without a native steering hook, steer takes priority in the SDK queue. Cancellation removes only the targeted queued message or signals its active run. The actor owns an Agent and MemorySession for its warm runtime incarnation. `OPENAI_API_KEY` is runtime-only, and `OPENAI_MODEL` defaults to `gpt-5-mini`.
+The SDK serializes OpenAI runs. Its receive handler calls `context.activity.queue`, so steering takes priority in that activity queue. Cancellation removes only the targeted queued message or signals its active run. The actor owns an Agent and MemorySession for its warm runtime incarnation. `OPENAI_API_KEY` is runtime-only, and `OPENAI_MODEL` defaults to `gpt-5-mini`.
 
 `cantelop.json` selects `src/cantelop.ts` for deployment. `src/contracts.ts` defines the message and event types shared by application calls and agent behavior.

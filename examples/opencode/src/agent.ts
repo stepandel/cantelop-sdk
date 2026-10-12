@@ -15,7 +15,7 @@ export function receive(context: Context): void {
   if (!context.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY is not configured");
   }
-  context.activity.start(async ({ signal, output }) => {
+  context.activity.queue(async ({ signal, output }) => {
     // A server belongs to this activity; its local database survives between
     // turns in the same Sandbox. Do not put the live database on Workspace NFS.
     let server: Awaited<ReturnType<typeof createOpencodeServer>> | undefined;

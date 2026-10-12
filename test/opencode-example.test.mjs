@@ -152,7 +152,7 @@ async function fixture(mode = "success") {
     get active() {
       return active;
     },
-    start(fn) {
+    queue(fn) {
       active = true;
       work = fn({
         signal: abort.signal,

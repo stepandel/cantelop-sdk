@@ -10,10 +10,10 @@ let conversation: MemorySession | undefined;
 export function receive(context: Context): void {
   const command = context.message.payload;
 
-  startPrompt(context, command.prompt);
+  queuePrompt(context, command.prompt);
 }
 
-function startPrompt(context: Context, prompt: string): void {
+function queuePrompt(context: Context, prompt: string): void {
   if (!context.env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
@@ -27,7 +27,7 @@ function startPrompt(context: Context, prompt: string): void {
   const currentAgent = agent;
   const currentConversation = conversation;
 
-  context.activity.start(async ({ signal, output }) => {
+  context.activity.queue(async ({ signal, output }) => {
     const result = await run(currentAgent, prompt, {
       session: currentConversation,
       signal,

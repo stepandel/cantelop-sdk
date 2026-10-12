@@ -18,7 +18,7 @@ for await (const event of session.stream()) {
 
 The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; the existing CLI cannot deploy it yet. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
 
-Use `session.dispatch(message)` for ordinary work, `session.steer(message)` for SDK priority input, and `session.cancel(messageId)` for targeted cancellation. This runtime has no native `steer` hook, so the SDK prioritizes steering in its work queue. The provider live input stream remains part of its runtime behavior.
+Use `session.dispatch(message)` for ordinary work, `session.steer(message)` for SDK priority input, and `session.cancel(messageId)` for targeted cancellation. This runtime forwards input to its live provider stream; `context.command.type` preserves SDK steering intent. The receive handler remains responsive while its activity owns the stream; its `onSteer` adapter sends priority input through `context.activity.steer`.
 
 Run `pnpm check:examples` from the SDK root to type-check the backend client and runtime and qualify the runtime-only build artifact.
 

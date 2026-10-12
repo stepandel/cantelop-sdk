@@ -10,7 +10,7 @@ type Context = SessionContext<SessionMessage, SessionEvent>;
 let conversationId: string | undefined;
 let input: ClaudeInput | undefined;
 
-export function receive(context: Context): void {
+export async function receive(context: Context): Promise<void> {
   const command = context.message.payload;
 
   if (command.type === "cancel") {
@@ -19,7 +19,11 @@ export function receive(context: Context): void {
   }
 
   if (context.activity.active) {
-    input?.send(command.prompt, command.type === "steer" ? "now" : "later");
+    if (context.command.type === "steer" || command.type === "steer") {
+      await context.activity.steer(command);
+    } else {
+      input?.send(command.prompt, "later");
+    }
     return;
   }
 
@@ -77,6 +81,11 @@ function startPrompt(context: Context, prompt: string): void {
       messages.close();
       if (input === currentInput) input = undefined;
     }
+  }, {
+    onSteer(message) {
+      if (message.type === "cancel") throw new Error("Use activity.cancel() to cancel work");
+      input?.send(message.prompt, "now");
+    },
   });
 }
 

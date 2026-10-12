@@ -59,7 +59,7 @@ await session.dispatch({ type: "prompt", prompt: "Continue" });
 
 `stop()` releases the current Sandbox and closes streams, potentially interrupting work. It retains current errors for an unmaterialized Session. The integration route includes the Workspace selector for platform ownership/binding checks without provisioning.
 
-Dispatch and steer accept the same message type and return an ID/status reference. Dispatch queues normal work; steer prioritizes its message at the next safe scheduling boundary. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
+Dispatch and steer accept the same message type and return an ID/status reference. Dispatch submits ordinary input; steer preserves priority intent for the runtime’s activity scheduler or live harness adapter. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
 
 `cancel(messageId)` targets one queued/running message. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Steering and targeted cancellation are coordinated by the SDK runtime; the platform delivers their envelopes as ordinary messages. Durable views require the coordinated platform implementation.
 
@@ -81,8 +81,7 @@ Breaking iteration or aborting the subscription only closes its stream. It does 
 // src/agent.ts — the runtime module referenced by the client.
 import type { SessionContext } from "@cantelop/sdk/session";
 import type { Message, Event, Reply } from "./contracts.js";
-import { receive } from "./agent.js";
-import { runAgent } from "./agent.js";
+import { runAgent } from "./harness.js";
 
 export async function receive({ message, session, env, output, reply, signal }: SessionContext<Message, Event, Reply>) {
   const answer = await runAgent(message.payload.prompt, {
@@ -137,23 +136,41 @@ Dispatch, steer and cancel share ordinary delivery. The platform treats their
 SDK command payloads as opaque and acknowledges delivery independently of work
 completion. It does not prioritize or execute steering/cancellation.
 
-The SDK serializes dispatch work, including activity started by that dispatch.
-Define an optional native steering hook in the same App runtime:
+Message intake remains serialized and responsive when long-running work is moved
+into `context.activity`. `start(work, options)` runs immediately and rejects a
+busy slot. `queue(work, options)` schedules work in the same slot and returns
+without waiting for completion. Queued work retains the submitting message's ID,
+output ownership, cancellation, and activity lifetime. Queueing from a steering
+submission defaults to priority; `{ priority: false }` overrides that choice.
+
+Register the harness adapter on the activity, then route steering from `receive`:
 
 ```ts
 const app = cantelop.app({
   name: "assistant",
   runtime: {
-    receive(context) { /* start the harness through context.activity */ },
-    steer(context) { return harness.steer(context.message.payload); },
+    async receive(context) {
+      const message = context.message.payload;
+      if (context.command.type === "steer" && context.activity.active) {
+        await context.activity.steer(message);
+        return;
+      }
+      context.activity.queue(
+        ({ signal, output }) => runHarness(message, { signal, output }),
+        { onSteer: input => harness.steer(input) },
+      );
+    },
   },
 });
 ```
 
-The hook runs in the same process while work is active. Without it, `steer`
-prioritizes work in the SDK queue, preserving FIFO within each priority.
-`context.command.type` retains dispatch/steer intent. An SDK activity slot admits
-one harness run; steering never creates a second Session runtime.
+`activity.steer(message)` calls the active activity's `onSteer` adapter and fails
+explicitly if no adapter is registered or no activity is available. Runtimes
+without native harness steering can simply queue all input; steering submissions
+then overtake waiting ordinary work, preserving FIFO within each priority.
+`activity.cancel()` signals the current activity without clearing other queued
+submissions. Cancellation is cooperative: the slot is held until work exits.
+All work runs in the existing Session process, with one SDK activity slot.
 
 Use the ID returned by dispatch/steer with `session.cancel(id)`. The SDK removes
 queued work or signals running intake and the activity owned by that message.

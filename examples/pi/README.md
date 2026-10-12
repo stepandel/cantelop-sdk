@@ -26,6 +26,6 @@ Run `pnpm check:examples` from the SDK root to type-check the backend client and
 
 ## Runtime behavior
 
-The SDK queues prompts while a harness run is active. The App's `runtime.steer` hook forwards input to Pi's native steering queue. SDK cancellation aborts the activity owned by the target message. `PI_PROVIDER` and `PI_MODEL` select the model; the manifest defaults to Anthropic and `claude-sonnet-5`. Selecting another provider also requires changing the credential declaration.
+The SDK queues prompts while a harness run is active. Its single receive handler calls `context.activity.steer(message)`, which uses the activity's `onSteer` adapter to reach Pi's native steering queue. SDK cancellation aborts the activity owned by the target message. `PI_PROVIDER` and `PI_MODEL` select the model; the manifest defaults to Anthropic and `claude-sonnet-5`. Selecting another provider also requires changing the credential declaration.
 
 `cantelop.json` selects `src/cantelop.ts` for deployment. `src/contracts.ts` defines the message and event types shared by application calls and agent behavior.
