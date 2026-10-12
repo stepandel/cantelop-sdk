@@ -87,7 +87,15 @@ The socket closes when the CLI exits. After that, ask `status()` whether sign-in
 - **Pre-connect output.** Output printed before the browser connects is kept in memory, up to 64 KiB, and delivered once it connects.
 - **Credentials.** They stay with the native CLI in the persistent Workspace, so agent Sessions in the same Workspace share them.
 
-The Claude example runs the stock `claude auth login` and keeps every sign-in method the CLI offers. It wraps the CLI in a small PTY helper with resize support. `status` and `logout` run `claude auth status` and `claude auth logout`.
+Three examples include providers. Each runs the stock CLI under a small PTY helper with resize support (`runtime/login-pty.py`, via `examples/native-harness/login.ts`):
+
+| Example | Login | Status / logout |
+|---|---|---|
+| Claude Code (`claudeAuth`) | `claude auth login`, with every sign-in method the CLI offers | `claude auth status` / `claude auth logout` |
+| Codex (`codexAuth`) | `codex login --device-auth`: the user enters a one-time code on OpenAI's page and the CLI finishes by itself | `codex login status` / `codex logout` |
+| OpenCode (`opencodeAuth`) | `opencode auth login --provider <id>`, pinned to an allowlisted provider (never Anthropic) | credential entry present / `opencode auth logout <id>` |
+
+Each provider has its own terms for hosted sign-in. Confirm them before offering a provider to users.
 
 ## Protocol
 

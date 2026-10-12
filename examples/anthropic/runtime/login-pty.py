@@ -1,4 +1,4 @@
-"""PTY for the stock Claude login. Relays bytes only; never records input or output.
+"""PTY for a stock CLI login. Relays bytes only; never records input or output.
 
 fd 0/1 carry terminal bytes. Optional fd 3 carries "COLUMNS ROWS" lines for resizes.
 """
