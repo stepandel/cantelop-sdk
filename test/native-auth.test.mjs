@@ -12,6 +12,7 @@ const sandboxId = "sbx-" + "c".repeat(32);
 const protocol = "cantelop-terminal.v1";
 
 async function loadAuth(example) {
+  if (example === "anthropic") return import("@cantelop/sdk/harnesses/claude");
   const output = await build({ entryPoints: [new URL(`../examples/${example}/src/auth.ts`, import.meta.url).pathname],
     bundle: true, platform: "node", format: "esm", write: false });
   return import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString("base64")}`);

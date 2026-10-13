@@ -19,7 +19,7 @@ async function load(path) {
 }
 const providers = [
   ["codex", (await load("../examples/codex/src/native.ts")).NativeCodex],
-  ["claude", (await load("../examples/anthropic/src/native.ts")).NativeClaude],
+  ["claude", NativeClaude],
   ["opencode", (await load("../examples/opencode/src/native.ts")).NativeOpenCode],
 ];
 
