@@ -248,7 +248,11 @@ async function authenticate(request: Request, bindings: Readonly<Record<string, 
 function previousIntegrationToken(bindings: Readonly<Record<string, unknown>>): string | undefined {
   const token = bindings.CANTELOP_INTEGRATION_TOKEN_PREVIOUS, expiresAt = bindings.CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT;
   if (typeof token !== "string" || !token || typeof expiresAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(expiresAt)) return undefined;
-  return Date.parse(expiresAt) > Date.now() ? token : undefined;
+  const expiry = Date.parse(expiresAt);
+  if (!Number.isFinite(expiry)) return undefined;
+  // Date.parse normalizes impossible calendar dates; require an exact UTC round trip.
+  const canonical = expiresAt.length === 20 ? expiresAt.replace(/Z$/, ".000Z") : expiresAt;
+  return new Date(expiry).toISOString() === canonical && expiry > Date.now() ? token : undefined;
 }
 async function bearerMatches(header: string, token: string): Promise<boolean> {
   const digest = (value: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));

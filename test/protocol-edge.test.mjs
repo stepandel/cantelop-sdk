@@ -213,3 +213,19 @@ test('a rotated-out integration token authenticates only until its expiry', asyn
   assert.equal(calls, 2);
 });
 
+test('previous-token expiry rejects impossible calendar dates', async t => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-13T00:00:00.000Z'));
+  let calls = 0;
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', fetch: async req => { calls++; return accepted((await req.json()).message.id); } });
+  const body = { ...envelope({ type: 'dispatch', message: 'hi' }), workspace: { id: workspaceId } };
+  const rotated = { ...bindings, CANTELOP_INTEGRATION_TOKEN: 'new-token', CANTELOP_INTEGRATION_TOKEN_PREVIOUS: 'test-app-token' };
+  for (const expiresAt of ['2027-02-29T00:00:00.000Z', '2028-02-30T00:00:00.000Z', '2027-04-31T00:00:00Z']) {
+    assert.equal((await worker.fetch(request(body), { ...rotated, CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT: expiresAt })).status, 401, expiresAt);
+  }
+  assert.equal(calls, 0);
+  for (const expiresAt of ['2028-02-29T00:00:00.000Z', '2028-02-29T00:00:00Z']) {
+    assert.equal((await worker.fetch(request(body), { ...rotated, CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT: expiresAt })).status, 202, expiresAt);
+  }
+  assert.equal(calls, 2);
+});
+
