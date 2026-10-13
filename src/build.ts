@@ -113,6 +113,8 @@ export interface EdgeApiArtifact {
     integration_protocol_version: 2;
     session_runtime_id: string;
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
+    /** The Worker also accepts a rotated-out token until the paired expiry passes. */
+    optional_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN_PREVIOUS", "CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT"];
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS";
     webhooks: readonly { readonly path: string; readonly method: "GET" | "POST" }[];
     homepage: boolean;
@@ -161,6 +163,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
     ...(runtime.definition.environment === undefined ? {} : { environment: runtime.definition.environment }),
     ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
+    optional_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN_PREVIOUS", "CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT"] as const),
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS",
     webhooks: Object.freeze(runtime.webhookRoutes.map(route => Object.freeze({ ...route }))),
     homepage: runtime.hasHomepage,

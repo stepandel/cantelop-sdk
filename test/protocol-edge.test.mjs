@@ -173,6 +173,7 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
     const artifact = await buildEdgeApi({ definition, outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
     assert.equal(artifact.manifest.kind, 'cantelop-protocol-edge');
     assert.equal(artifact.manifest.integration_protocol_version, 2);
+    assert.deepEqual(artifact.manifest.optional_bindings, ['CANTELOP_INTEGRATION_TOKEN_PREVIOUS', 'CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT']);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, 'utf8')), artifact.manifest);
     const worker = (await import(pathToFileURL(artifact.mainModule).href)).default;
     assert.equal((await worker.fetch(new Request('https://agent.example'), bindings)).status, 401);
@@ -193,3 +194,22 @@ test('normal backend transport addresses only the App Edge command endpoint and 
     for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, edgeUrl, accessToken: 'token' }), /App Edge URL/);
   } finally { globalThis.fetch = original; }
 });
+
+test('a rotated-out integration token authenticates only until its expiry', async () => {
+  let calls = 0;
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', fetch: async req => { calls++; return accepted((await req.json()).message.id); } });
+  const body = { ...envelope({ type: 'dispatch', message: 'hi' }), workspace: { id: workspaceId } };
+  const as = token => request(body, { Authorization: `Bearer ${token}` });
+  const future = new Date(Date.now() + 60_000).toISOString(), past = new Date(Date.now() - 1).toISOString();
+  const rotated = { ...bindings, CANTELOP_INTEGRATION_TOKEN: 'new-token', CANTELOP_INTEGRATION_TOKEN_PREVIOUS: 'test-app-token', CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT: future };
+  assert.equal((await worker.fetch(as('new-token'), rotated)).status, 202);
+  assert.equal((await worker.fetch(as('test-app-token'), rotated)).status, 202);
+  assert.equal(calls, 2);
+  for (const expiresAt of [past, undefined, 'tomorrow', future.replace('Z', '+00:00')])
+    assert.equal((await worker.fetch(as('test-app-token'), { ...rotated, CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT: expiresAt })).status, 401);
+  assert.equal((await worker.fetch(as('test-app-token'), { ...rotated, CANTELOP_INTEGRATION_TOKEN_PREVIOUS: '' })).status, 401);
+  assert.equal((await worker.fetch(as('wrong'), rotated)).status, 401);
+  assert.equal((await worker.fetch(as('test-app-token'), { CANTELOP_INTEGRATION_TOKEN_PREVIOUS: 'test-app-token', CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT: future })).status, 503);
+  assert.equal(calls, 2);
+});
+
