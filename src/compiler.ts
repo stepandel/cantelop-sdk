@@ -150,6 +150,11 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
   };
   const staticValue = (node: ts.Expression): unknown => {
     if (ts.isStringLiteral(node)) return node.text;
+    // Imported const strings retain their literal type in package declarations.
+    if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) {
+      const type = checker.getTypeAtLocation(node);
+      if (type.isStringLiteral()) return type.value;
+    }
     if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
     if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
     if (ts.isObjectLiteralExpression(node)) {
@@ -263,7 +268,9 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     const id = "rt_" + createHash("sha256").update(name).update((await transform(runtimeModule, { minify: true, legalComments: "none", target: "esnext" })).code).update(contract).update(JSON.stringify(configuration)).digest("hex");
     const replacement = `{receive() { throw new Error("App runtime executes in the Sandbox"); }, [Symbol.for("dev.cantelop.sdk.compiled-runtime.v1")]: ${JSON.stringify(id)}}`;
     const statementText = statement.getText(file);
-    const edits = [{ node: runtime, text: replacement }, ...(webhookExpression ? [{ node: webhookExpression, text: "{}" }] : []), ...(homepageProperty ? [{ node: homepageProperty, text: "homepage: undefined" }] : []),
+    const dockerfileProperty = property("dockerfile");
+    const edits = [{ node: runtime, text: replacement },
+      ...(dockerfileProperty && ts.isPropertyAssignment(dockerfileProperty) ? [{ node: dockerfileProperty.initializer, text: JSON.stringify(configuration.dockerfile) }] : []), ...(webhookExpression ? [{ node: webhookExpression, text: "{}" }] : []), ...(homepageProperty ? [{ node: homepageProperty, text: "homepage: undefined" }] : []),
       ...(authProperty ? [{ node: authProperty, text: `auth: {[Symbol.for("dev.cantelop.sdk.compiled-auth.v1")]: true}` }] : [])];
     let backendStatement = statementText;
     for (const edit of edits.sort((a, b) => b.node.getStart(file) - a.node.getStart(file))) {

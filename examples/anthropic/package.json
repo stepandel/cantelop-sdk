@@ -15,9 +15,5 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.6.3"
-  },
-  "nativeCli": {
-    "package": "@anthropic-ai/claude-code",
-    "version": "2.1.259"
   }
 }

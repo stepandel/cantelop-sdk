@@ -1,11 +1,1 @@
-import type { SessionHarnessContext } from "@cantelop/sdk/session";
-import { NativeClaude } from "./native.ts";
-
-export function create(context: SessionHarnessContext) {
-  context.signal.throwIfAborted();
-  return new NativeClaude({
-    workspace: process.cwd(), sessionId: context.session.id,
-    binary: context.env.CLAUDE_PATH ?? "/usr/local/bin/claude",
-    ...(context.env.CLAUDE_MODEL ? { model: context.env.CLAUDE_MODEL } : {}),
-  }, context.signal);
-}
+export { createClaudeHarness as create } from "@cantelop/sdk/harnesses/claude";

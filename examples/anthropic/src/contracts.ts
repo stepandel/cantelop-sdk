@@ -1,4 +1,4 @@
-import type { NativeEvent } from "../../native-harness/cli.ts";
+import type { ClaudeMessage, ClaudeEvent } from "@cantelop/sdk/harnesses/claude";
 
-export type SessionMessage = { type: "prompt"; prompt: string };
-export type SessionEvent = NativeEvent;
+export type SessionMessage = ClaudeMessage;
+export type SessionEvent = ClaudeEvent;

@@ -2,7 +2,7 @@
 
 Cantelop runs agents in isolated Sandboxes with durable Workspaces. The 1.0 SDK exposes App → Workspace → Session directly to application backends. Developers define their Session runtime; the SDK generates the protocol-managed Edge API and the platform deploys it with opinionated middleware.
 
-This repository currently targets **1.0.0-alpha.0**. The SDK authoring/build boundary has changed: Edge API definitions and router exports are removed. The prerelease requires CLI build protocol **6**, runtime-only project schema **3**, and coordinated platform integration support. The existing CLI and platform cannot deploy the new path yet. The SDK is unpublished; see [integration contracts and follow-ups](docs/integration-foundation.md).
+This repository targets **1.0.0-alpha.2**. Apps use backend resource APIs and runtime-only project schema **3** with CLI build protocol **6**. Custom HTTP ingress is optional and reserved for webhooks. Native auth terminal providers additionally require compatible platform terminal transport; see [integration contracts](docs/integration-foundation.md) and [native auth](docs/native-auth.md).
 
 ## Integrate from an application backend
 
@@ -177,6 +177,6 @@ returns `session_view_not_found`. Views survive stop and host restart; stream
 resume remains subject to the platform's bounded replay retention. Projection
 commits advance the stream cursor without appearing as application events.
 
-Stock harness integrations are available for [Codex](examples/codex/README.md), [Claude Code](examples/anthropic/README.md), and [OpenCode](examples/opencode/README.md). They wrap stock CLI runners directly, preserve native Workspace authentication and conversation IDs, and use interrupt-and-queue steering with process-group cleanup.
+Stock harness integrations are available for [Codex](examples/codex/README.md), [Claude Code](examples/anthropic/README.md), and [OpenCode](examples/opencode/README.md). Claude Code is packaged at `@cantelop/sdk/harnesses/claude`, exporting `createClaudeHarness`, `NativeClaude`, `claudeAuth`, `claudeDockerfile`, and message/event/options types. Set `runtime: { create: createClaudeHarness }`, `auth: claudeAuth`, and `dockerfile: claudeDockerfile` to use the SDK-maintained runner and image; see the Claude example for a complete App definition. They wrap stock CLI runners directly, preserve native Workspace authentication and conversation IDs, and use interrupt-and-queue steering with process-group cleanup.
 
 Apps can declare `auth` to let each Workspace sign in to a stock CLI with the user's own subscription. The user completes sign-in in the CLI's own terminal in their browser, and the App never sees the code or credentials. The Claude Code example uses this; see [native auth](docs/native-auth.md).
