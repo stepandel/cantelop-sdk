@@ -56,7 +56,7 @@ await build({
 });
 ```
 
-The build module remains tooling and stays out of application runtime bundles. `buildBackendClient({ definition, outdir })` alternatively produces a shared backend module and a manifest listing its Apps/identities. Package dependencies remain external, so keep its output in the application's dependency environment.
+The build module remains tooling and stays out of application runtime bundles. `buildBackendClient({ definition, outdir })` alternatively produces a shared backend module, `client.d.mts` declarations, and a manifest listing its Apps/identities. Import Apps directly from `./client.mjs` to retain their command, event and reply types without importing the runtime definition. Local type dependencies are emitted under `types/`; copy the whole backend directory when deploying. The build result exposes the declaration entry point as `declarationFile`. Package dependencies remain external, so keep its output in the application's dependency environment.
 
 Definitions must export Apps created by top-level `cantelop.app({...})` calls on an SDK client. Names must be string literals. App options and runtime must be static object literals without spreads; deployment declarations use literal values. Aliases of one App count once; duplicate names on distinct App definitions fail. Local helper declarations and closures are supported, with one top-level variable declaration per statement. Runtime handlers cannot capture App/client instances. Keep definitions declarative: top-level effects, bare side-effect imports, ambiguous unused value declarations, and unrelated value exports are rejected. Put initialization in a referenced runtime module or lifecycle hook.
 

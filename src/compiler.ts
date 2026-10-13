@@ -296,7 +296,7 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
   }
   const backendSource = file.statements.filter(s => backendStatements.has(s) || appStatements.has(s) || ts.isExportAssignment(s) || ts.isExportDeclaration(s))
     .map(s => replacements.get(s) ?? print(s)).join("\n");
-  return { apps, backendSource, watchFiles: [...new Set(watchFiles)] };
+  return { apps, backendSource, emitBackendDeclarations: () => emitBackendDeclarations(filename, options), watchFiles: [...new Set(watchFiles)] };
 }
 
 /** Select an App for an Edge/Sandbox artifact; multiple Apps require an explicit name. */
@@ -321,4 +321,69 @@ export function createCantelopCompilerPlugin(options: { readonly definition: str
       }
     });
   } };
+}
+
+/** Emit a portable declaration graph without evaluating the definition or its dependencies. */
+function emitBackendDeclarations(filename: string, options: ts.CompilerOptions): ReadonlyMap<string, string> {
+  const declarationOptions: ts.CompilerOptions = { ...options, noEmit: false, declaration: true,
+    emitDeclarationOnly: true, declarationMap: false, sourceMap: false, incremental: false, composite: false };
+  delete declarationOptions.outFile;
+  delete declarationOptions.tsBuildInfoFile;
+  const declarations = new Map<string, { text: string; extension: string }>();
+  const host = ts.createCompilerHost(declarationOptions);
+  host.writeFile = (output, text, _bom, _error, sources) => {
+    const source = sources?.[0];
+    if (source) declarations.set(canonicalPath(source.fileName), { text, extension: output.endsWith(".d.mts") ? ".d.mts" : output.endsWith(".d.cts") ? ".d.cts" : ".d.ts" });
+  };
+  const declarationProgram = ts.createProgram([filename], declarationOptions, host);
+  const sourceFiles = new Map(declarationProgram.getSourceFiles().map(source => [canonicalPath(source.fileName), source]));
+  const files = new Map<string, string>();
+  const targets = new Map<string, string>([[canonicalPath(filename), "client.d.mts"]]);
+  const visit = (source: string): string => {
+    source = canonicalPath(source);
+    const existing = targets.get(source);
+    const sourceFile = sourceFiles.get(source);
+    if (sourceFile && !sourceFile.isDeclarationFile && !declarations.has(source)) {
+      // Emit only reachable contracts; unrelated native declarations cannot break the backend build.
+      const result = declarationProgram.emit(sourceFile, host.writeFile, undefined, true);
+      if (result.emitSkipped || result.diagnostics.length) {
+        throw new RuntimeContractError("Cannot emit backend client declarations:\n" + ts.formatDiagnostics(result.diagnostics, {
+          getCurrentDirectory: () => path.dirname(filename), getCanonicalFileName: f => f, getNewLine: () => "\n",
+        }), [filename, source]);
+      }
+    }
+    const declaration = declarations.get(source);
+    // Local handwritten declarations also need to travel with the artifact.
+    const text = declaration?.text ?? (sourceFile?.isDeclarationFile ? sourceFile.text : undefined);
+    if (text === undefined) throw new RuntimeContractError(`Missing declaration for ${source}`, [filename, source]);
+    const target = existing ?? `types/module-${targets.size}${declaration?.extension ?? (source.endsWith(".d.mts") ? ".d.mts" : source.endsWith(".d.cts") ? ".d.cts" : ".d.ts")}`;
+    targets.set(source, target);
+    // Reserve before walking imports to handle circular protocol types.
+    if (files.has(target)) return target;
+    files.set(target, "");
+    const parsed = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true);
+    const edits: { start: number; end: number; text: string }[] = [];
+    const walk = (node: ts.Node) => {
+      const specifier = ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier
+        : ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) ? node.argument.literal
+        : ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) ? node.moduleReference.expression : undefined;
+      if (specifier && ts.isStringLiteral(specifier)) {
+        const resolved = ts.resolveModuleName(specifier.text, source, options, ts.sys).resolvedModule;
+        if (resolved && !resolved.isExternalLibraryImport && sourceFiles.has(canonicalPath(resolved.resolvedFileName))) {
+          const dependency = visit(resolved.resolvedFileName);
+          let relative = path.posix.relative(path.posix.dirname(target), dependency).replace(/\.d\.(mts|cts|ts)$/, (_, extension: string) => extension === "mts" ? ".mjs" : extension === "cts" ? ".cjs" : ".js");
+          if (!relative.startsWith(".")) relative = "./" + relative;
+          edits.push({ start: specifier.getStart(parsed), end: specifier.end, text: JSON.stringify(relative) });
+        }
+      }
+      ts.forEachChild(node, walk);
+    };
+    walk(parsed);
+    let rewritten = text;
+    for (const edit of edits.sort((a, b) => b.start - a.start)) rewritten = rewritten.slice(0, edit.start) + edit.text + rewritten.slice(edit.end);
+    files.set(target, rewritten);
+    return target;
+  };
+  visit(filename);
+  return files;
 }

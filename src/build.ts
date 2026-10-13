@@ -456,10 +456,16 @@ async function writeBackendClient(compiled: Awaited<ReturnType<typeof compileApp
   await mkdir(directory, { recursive: true });
   const mainModule = path.join(directory, "client.mjs");
   await build({ stdin: { contents: compiled.backendSource, resolveDir: path.dirname(path.resolve(options.definition)), loader: "ts" }, bundle: true, packages: "external", platform: "node", format: "esm", target: "es2022", outfile: mainModule, logLevel: "silent" });
+  const declarationFile = path.join(directory, "client.d.mts");
+  for (const [relative, source] of compiled.emitBackendDeclarations()) {
+    const target = path.join(directory, relative);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, source);
+  }
   const manifest = { schema_version: 1, kind: "cantelop-backend-client", apps: compiled.apps.map(app => ({ name: app.definition.name, session_runtime_id: app.definition.id })), main_module: "client.mjs" } as const;
   const manifestFile = path.join(directory, "cantelop-client.json");
   await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
-  return { directory, mainModule, manifestFile, manifest };
+  return { directory, mainModule, declarationFile, manifestFile, manifest };
 }
 
 /** Build each named App into its own deployment directory plus the shared backend module. */
