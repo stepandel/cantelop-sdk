@@ -1,6 +1,6 @@
 {
   "name": "@cantelop/sdk",
-  "version": "1.0.0-alpha.2",
+  "version": "1.0.0-alpha.3",
   "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
@@ -48,7 +48,11 @@
       "types": "./dist/harnesses/claude.d.ts",
       "import": "./dist/harnesses/claude.js"
     },
-    "./harnesses/claude/Dockerfile": "./dist/harnesses/claude/Dockerfile"
+    "./harnesses/claude/Dockerfile": "./dist/harnesses/claude/Dockerfile",
+    "./harnesses/claude/protocol": {
+      "types": "./dist/harnesses/claude-protocol.d.ts",
+      "import": "./dist/harnesses/claude-protocol.js"
+    }
   },
   "files": [
     "dist"

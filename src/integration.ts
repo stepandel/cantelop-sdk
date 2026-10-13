@@ -59,7 +59,22 @@ export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = 
   session(options?: IntegrationSessionOptions): SessionRef<Message, Event, Reply, View>;
 }
 
+/** Structured login methods allocate SDK command identities and keep native credentials private. */
+export interface WorkspaceAuthLoginOptions {
+  readonly signal?: AbortSignal;
+  /** Confirm native logout before starting a fresh login, even if currently authenticated. */
+  readonly force?: boolean;
+}
+export type WorkspaceAuthLogin =
+  | { readonly authenticated: true }
+  | { readonly authenticated: false; readonly attemptId: string; readonly url: string; readonly expiresAt: Date };
+
 export interface WorkspaceAuthRef {
+  /** Reuse a signed-in Workspace or open native login; force requires confirmed logout. */
+  login(options?: WorkspaceAuthLoginOptions): Promise<WorkspaceAuthLogin>;
+  /** Submit only the provider code; raw CLI input/output is not exposed. */
+  submitCode(options: { readonly attemptId: string; readonly code: string; readonly signal?: AbortSignal }): Promise<boolean>;
+  cancelLogin(options: { readonly attemptId: string; readonly signal?: AbortSignal }): Promise<void>;
   status(options?: SessionCommandOptions): Promise<boolean>;
   /**
    * Starts the native CLI login and returns a single-use terminal for the user's browser:

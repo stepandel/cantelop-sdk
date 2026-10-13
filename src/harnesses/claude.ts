@@ -67,7 +67,7 @@ export class NativeClaude extends CliHarness {
 }
 
 export type ClaudeMessage = { type: "prompt"; prompt: string };
-export type { NativeEvent as ClaudeEvent } from "./cli.js";
+export type { NativeEvent as ClaudeEvent, NativeFragmentEvent } from "./cli.js";
 export interface ClaudeHarnessOptions extends NativeOptions {
   readonly permissionMode?: "default" | "dontAsk" | "acceptEdits";
   readonly settingSources?: readonly string[];
@@ -80,13 +80,33 @@ export interface ClaudeHarnessOptions extends NativeOptions {
   readonly conversation?: {readonly id:string;readonly resumable:boolean};
 }
 
-/** Construct the stock CLI harness once per Session runtime incarnation. */
-export function createClaudeHarness(context: SessionHarnessContext): NativeClaude {
+/**
+ * Optional native configuration for a Session's Claude harness. Session identity
+ * always comes from the SDK context; omitted values retain the stock defaults.
+ * Explicit binary/model options take precedence over CLAUDE_PATH/CLAUDE_MODEL.
+ */
+export type ClaudeHarnessFactoryOptions = Partial<Omit<ClaudeHarnessOptions, "sessionId">>;
+
+/**
+ * Construct a stock CLI harness with immutable configuration for this incarnation.
+ * Usable directly as runtime.create, or with application-owned Session settings.
+ * The returned harness owns queue/steer/cancel, output fragmentation and cleanup.
+ */
+export function createClaudeHarness(
+  context: SessionHarnessContext,
+  options: ClaudeHarnessFactoryOptions = {},
+): NativeClaude {
   context.signal.throwIfAborted();
+  // Callers may reuse or edit their source configuration. A live Session must
+  // keep the exact MCP credentials, permissions and migration seed it accepted.
+  const { workspace, binary, model, ...settings } = structuredClone(options);
+  const selectedModel = model ?? context.env.CLAUDE_MODEL;
   return new NativeClaude({
-    workspace: process.cwd(), sessionId: context.session.id,
-    binary: context.env.CLAUDE_PATH ?? "/usr/local/bin/claude",
-    ...(context.env.CLAUDE_MODEL ? { model: context.env.CLAUDE_MODEL } : {}),
+    ...settings,
+    workspace: workspace ?? process.cwd(),
+    sessionId: context.session.id,
+    binary: binary ?? context.env.CLAUDE_PATH ?? "/usr/local/bin/claude",
+    ...(selectedModel !== undefined ? { model: selectedModel } : {}),
   }, context.signal);
 }
 
@@ -97,7 +117,22 @@ export const claudeDockerfile = "node_modules/@cantelop/sdk/dist/harnesses/claud
  * Stock `claude auth` commands. The user signs in inside the CLI's own terminal;
  * this provider never sees the sign-in code or the credentials the CLI stores.
  */
+// Inspect native output as plain text; never render or publish it.
+const plainLogin = (text: string) => text.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 export const claudeAuth = {
+  codeLogin: {
+    link(output: string) {
+      for (const candidate of plainLogin(output).match(/https:\/\/[^\s<>"']+(?=\s)/g) ?? []) {
+        try {
+          const url = new URL(candidate);
+          if (url.protocol === "https:" && !url.username && !url.password && ["claude.ai","claude.com","anthropic.com"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) return url.href;
+        } catch { /* Incomplete or invalid native link. */ }
+      }
+      return undefined;
+    },
+    promptCount(output: string) { return plainLogin(output).match(/paste\s+code/gi)?.length ?? 0; },
+    input(code: string) { return `${code}\r`; },
+  },
   async status(context) {
     const { binary, ...options } = nativeAuth(context, "CLAUDE_PATH", "/usr/local/bin/claude");
     // Signed-out status exits non-zero but still reports JSON.
@@ -118,3 +153,6 @@ export const claudeAuth = {
     return loginTerminal(context, binary, ["auth", "login"], options);
   },
 } satisfies AppAuth;
+
+export { createClaudeRuntime } from "./claude-runtime.js";
+export type * from "./claude-protocol.js";

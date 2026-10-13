@@ -4,15 +4,22 @@ import type { SessionIdentity } from "./resources.js";
 
 /**
  * Workspace-scoped native CLI authentication. Sign-in happens in the native CLI's
- * own terminal: the SDK relays its bytes to the user and never parses or stores them.
+ * own process. Structured link/code login keeps native output private; the optional
+ * low-level terminal relay forwards raw bytes without parsing them.
  */
 export type AuthCommand =
+  | { readonly type: "login"; readonly force?: boolean }
+  | { readonly type: "code"; readonly attemptId: string; readonly code: string }
+  | { readonly type: "cancel"; readonly attemptId: string }
   | { readonly type: "status" }
   | { readonly type: "logout" }
   | { readonly type: "terminal" }
   | { readonly type: "close"; readonly terminalId: string };
 
 export type AuthResult =
+  | { readonly type: "login"; readonly attemptId: string; readonly url: string; readonly expiresAt: string }
+  | { readonly type: "cancelled"; readonly attemptId: string }
+  | { readonly type: "error"; readonly code: string }
   | { readonly type: "status"; readonly authenticated: boolean }
   | { readonly type: "terminal"; readonly terminalId: string; readonly ticket: string; readonly expiresAt: string }
   | { readonly type: "closed"; readonly terminalId: string };
@@ -21,6 +28,7 @@ export type AuthResult =
 export const AUTH_SESSION_ID = "cantelop-native-auth";
 /** WebSocket subprotocol; the ticket travels as the second offered subprotocol, never in the URL. */
 export const AUTH_TERMINAL_PROTOCOL = "cantelop-terminal.v1";
+export const LOGIN_ID_PATTERN = /^lgn_[0-9a-f]{32}$/;
 export const TERMINAL_ID_PATTERN = /^trm_[0-9a-f]{32}$/;
 export const TERMINAL_TICKET_PATTERN = /^[0-9a-f]{64}$/;
 /** Marks a compiled-away provider in backend and Edge builds. */
@@ -38,12 +46,20 @@ export interface AuthTerminalProcess {
   readonly stdout: Readable | null;
   kill(signal?: NodeJS.Signals): boolean;
   once(event: "close", listener: () => void): unknown;
+  once(event: "error", listener: (error: Error) => void): unknown;
   /** Optional PTY resize, driven by the user's terminal. */
   resize?(columns: number, rows: number): void;
 }
 
 /** Declared with `auth` on `cantelop.app({...})`; runs only in the Workspace auth Sandbox. */
+export interface NativeCodeLogin {
+  link(output: string): string | undefined;
+  promptCount(output: string): number;
+  input(code: string): string;
+}
 export interface AppAuth {
+  /** Provider-specific parsing; SDK owns attempts, timeout, code submission and cleanup. */
+  readonly codeLogin?: NativeCodeLogin;
   status(context: AuthContext): boolean | Promise<boolean>;
   logout(context: AuthContext): void | Promise<void>;
   /** Spawns the native CLI's interactive login. Return the process immediately after spawning it. */
@@ -53,5 +69,9 @@ export interface AppAuth {
 export function isAppAuth(value: unknown): value is AppAuth {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const auth = value as Record<PropertyKey, unknown>;
-  return auth[COMPILED_AUTH] === true || ["status", "logout", "terminal"].every(key => typeof auth[key] === "function");
+  if (auth[COMPILED_AUTH] === true) return true;
+  if (!["status", "logout", "terminal"].every(key => typeof auth[key] === "function")) return false;
+  if (auth.codeLogin === undefined) return true;
+  const adapter = auth.codeLogin as Record<string, unknown> | null;
+  return !!adapter && typeof adapter === "object" && ["link","promptCount","input"].every(key => typeof adapter[key] === "function");
 }

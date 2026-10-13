@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pathToFileURL } from "node:url";
-import { mkdtemp, rm, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, stat, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
@@ -49,7 +49,8 @@ let text=''; process.stdin.on('data',chunk=>text+=chunk); process.stdin.on('end'
  if(provider==='claude') {const at=args.indexOf('--resume')>=0?args.indexOf('--resume'):args.indexOf('--session-id'); id=args[at+1];}
  if(provider==='opencode') {const at=args.indexOf('--session'); id=at<0?'ses_'+crypto.randomUUID().replaceAll('-',''):args[at+1];}
  sessions[id] ||= []; sessions[id].push(text); fs.writeFileSync(store,JSON.stringify(sessions));
- const meta={args,stdin:text,id,history:sessions[id],cwd:process.cwd(),home:process.env.HOME,config:process.env.CLAUDE_CONFIG_DIR,codex:process.env.CODEX_HOME,sqlite:process.env.CODEX_SQLITE_HOME,xdg:process.env.XDG_DATA_HOME,sharedKey:!!process.env.ANTHROPIC_API_KEY||!!process.env.OPENAI_API_KEY||!!process.env.CANTELOP_INTEGRATION_TOKEN};
+ const promptAt=args.indexOf('--system-prompt-file'), promptPath=promptAt<0?undefined:args[promptAt+1];
+ const meta={systemPrompt:promptPath?fs.readFileSync(promptPath,'utf8'):undefined,promptMode:promptPath?fs.statSync(promptPath).mode & 0o777:undefined,promptPath,args,stdin:text,id,history:sessions[id],cwd:process.cwd(),home:process.env.HOME,config:process.env.CLAUDE_CONFIG_DIR,codex:process.env.CODEX_HOME,sqlite:process.env.CODEX_SQLITE_HOME,xdg:process.env.XDG_DATA_HOME,sharedKey:!!process.env.ANTHROPIC_API_KEY||!!process.env.OPENAI_API_KEY||!!process.env.CANTELOP_INTEGRATION_TOKEN};
  const emit=e=>console.log(JSON.stringify(e));
  if(provider==='codex')emit({type:'thread.started',thread_id:id});
  if(provider==='claude')emit({type:'system',subtype:'init',session_id:id});
@@ -63,7 +64,7 @@ let text=''; process.stdin.on('data',chunk=>text+=chunk); process.stdin.on('end'
  if(text==='malformed'){process.stdout.write('{bad json');return;}
  if(text==='missing'){process.stdout.write(JSON.stringify({type:'text',text:'incomplete'}));return;}
  if(provider==='codex')process.stdout.write(JSON.stringify(text==='fail'?{type:'turn.failed',error:{message:'failed'}}:{type:'turn.completed',text:'Hello 😀'}));
- if(provider==='claude')process.stdout.write(JSON.stringify({type:'result',is_error:text==='fail',text:'Hello 😀'}));
+ if(provider==='claude')process.stdout.write(JSON.stringify({type:'result',is_error:text==='fail',text:text==='large'?'😀'.repeat(40000):'Hello 😀'}));
  if(provider==='opencode')process.stdout.write(JSON.stringify(text==='fail'?{type:'error',sessionID:id}:{type:'step_finish',sessionID:id,part:{reason:'stop'},text:'Hello 😀'}));
 });
 `, { mode: 0o755 });
@@ -266,4 +267,83 @@ test("packaged Claude preserves restricted execution settings and existing conve
   const replacement=new NativeClaude({workspace,binary,sessionId:"migrated",conversation:{id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",resumable:true}});
   const later=[];await run(replacement,turn("later",later));
   assert.equal(later.find(event=>event.type==="metadata").id,id,"persisted SDK state wins over the migration seed");
+});
+
+
+test("configured Claude factory snapshots Session settings and persists migration through public queue", async t => {
+  const { workspace, binary } = await fixture(t);
+  const id = "12345678-1234-4234-8234-123456789abc";
+  const lifetime = new AbortController();
+  const context = { signal: lifetime.signal, session: { id: "configured-factory" }, env: { CLAUDE_PATH: "/missing/claude", CLAUDE_MODEL: "fallback-model" } };
+  const options = { workspace, binary, model: "sonnet", permissionMode: "dontAsk", settingSources: [],
+    tools: [], allowedTools: ["mcp__project__edit"], mcps: { project: { type: "http", url: "https://tools.example/mcp", headers: { Authorization: "run-token" } } },
+    maxTurns: 24, systemPrompt: "Project rules 😀", conversation: { id, resumable: true } };
+  const native = createClaudeHarness(context, options);
+  options.tools.push("Bash"); options.allowedTools.push("Bash"); options.mcps.project.headers.Authorization = "changed";
+  options.conversation.id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  options.systemPrompt = "Changed prompt";
+  const events = []; await run(native, turn("first", events));
+  const metadata = events.find(event => event.type === "metadata");
+  const value = flag => metadata.args[metadata.args.indexOf(flag) + 1];
+  assert.equal(value("--model"), "sonnet");
+  assert.equal(value("--permission-mode"), "dontAsk");
+  assert.equal(value("--setting-sources"), "");
+  assert.equal(value("--tools"), "");
+  assert.equal(value("--allowedTools"), "mcp__project__edit");
+  assert.equal(value("--max-turns"), "24");
+  assert.equal(value("--resume"), id);
+  assert.equal(metadata.systemPrompt, "Project rules 😀");
+  assert.equal(metadata.promptMode, 0o600);
+  assert.equal(metadata.args.includes(metadata.systemPrompt), false);
+  assert.deepEqual(JSON.parse(value("--mcp-config")), { mcpServers: { project: { type: "http", url: "https://tools.example/mcp", headers: { Authorization: "run-token" } } } });
+  await assert.rejects(access(metadata.promptPath));
+  const later = [];
+  await run(createClaudeHarness(context, { workspace, binary, conversation: options.conversation }), turn("second", later));
+  assert.equal(later.find(event => event.type === "metadata").id, id);
+  assert.deepEqual(later.find(event => event.type === "metadata").history, ["first", "second"]);
+});
+
+test("default Claude factory honors environment defaults and canonical Session identity", async t => {
+  const { workspace, binary } = await fixture(t);
+  const context = { signal: new AbortController().signal, session: { id: "canonical" }, env: { CLAUDE_PATH: binary, CLAUDE_MODEL: "environment-model" } };
+  const events = [];
+  const native = createClaudeHarness(context, { workspace, sessionId: "must-not-override" });
+  await run(native, turn("first", events));
+  const metadata = events.find(event => event.type === "metadata");
+  assert.equal(metadata.args[metadata.args.indexOf("--model") + 1], "environment-model");
+  for (const flag of ["--tools", "--permission-mode", "--mcp-config", "--system-prompt-file", "--max-turns"]) assert.equal(metadata.args.includes(flag), false);
+  const later = [];
+  await run(createClaudeHarness(context, { workspace }), turn("second", later));
+  assert.equal(later.find(event => event.type === "metadata").id, metadata.id, "Session identity cannot be redirected by options");
+});
+
+test("configured factory preserves cleanup before public cancellation and queued input settle", async t => {
+  const { workspace, binary } = await fixture(t);
+  const native = createClaudeHarness({ signal: new AbortController().signal, session: { id: "factory-cancel" }, env: {} }, { workspace, binary });
+  const events = []; let ready;
+  const started = new Promise(resolve => { ready = resolve; });
+  const first = assert.rejects(run(native, { text: "wait", signal: new AbortController().signal, emit: async event => {
+    events.push(event); if (event.type === "tool.ready") ready();
+  } }), /abort/i);
+  await started;
+  const next = [];
+  const queued = run(native, turn("after", next));
+  assert.equal(native.cancel(), true);
+  await Promise.all([first, queued]);
+  assert.equal(native.cancel(), false);
+  await assertToolExited(events.find(event => event.type === "tool.ready").pid);
+  assert.ok(next.some(event => event.type === "result"));
+});
+
+
+test("configured factory owns fragmentation without a caller's stream parser", async t => {
+  const { workspace, binary } = await fixture(t);
+  const native = createClaudeHarness({ signal: new AbortController().signal, session: { id: "factory-fragments" }, env: {} }, { workspace, binary });
+  const events = []; await run(native, turn("large", events));
+  const fragments = events.filter(event => event.type === "native.fragment");
+  assert.ok(fragments.length > 1);
+  assert.ok(fragments.every(event => Buffer.byteLength(JSON.stringify(event)) < 48000));
+  const result = JSON.parse(fragments.map(event => event.json).join(""));
+  assert.equal(result.type, "result");
+  assert.equal(result.text, "😀".repeat(40000));
 });

@@ -129,3 +129,20 @@ For `terminal`, the reply carries `terminalId`, `ticket` and `expiresAt`. The Ed
 `bridgeAuthTerminal(request, socket, head, terminalId, { fetch })` in `@cantelop/sdk/build` is a reference implementation for Node, for example for the CLI's local platform.
 
 **Manifests.** Build manifests mark Apps that declare auth: the Edge manifest gets `auth: true`, and the runtime manifest gets `capabilities.authTerminal: true`.
+
+## Structured link/code login
+
+The packaged Claude provider declares a `codeLogin` adapter, allowing an existing
+link-and-code form to use SDK methods instead of exposing the CLI terminal.
+`workspace.auth().login({force,signal})` returns native authentication state or a
+link, `lgn_` attempt ID and expiry. Submit a code with `submitCode({attemptId,code,signal})`;
+handle the stable `code_rejected` error by keeping the form open for retry.
+`cancelLogin({attemptId,signal})` cancels only that attempt. Forced login confirms
+logout first, so stale credentials cannot satisfy reconnect confirmation.
+
+The SDK owns launch, prompt readiness, bounded output parsing, ten-minute expiry,
+code retries and process cleanup. CLI output stays private and credentials stay in
+the Workspace. The application backend authorizes the Workspace and relays the
+short-lived code without logging or persisting it. Providers without a `codeLogin`
+adapter retain their low-level terminal flow; structured login rejects with
+`code_login_not_supported`.

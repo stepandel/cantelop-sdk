@@ -71,3 +71,86 @@ The Cantelop Session-to-native-conversation mapping is saved atomically in a pri
 `session.stream()` carries native JSON objects. Frames over 48 KiB are emitted as `native.fragment` objects with `eventId`, `index`, `total` and `json`; concatenate fragments in order and parse the reconstructed JSON. Subscribe before dispatching for live output or use retained replay.
 
 Run `pnpm check:examples` from the SDK root to type-check and qualify backend/Edge/native artifacts. Tests use executable CLI fixtures, including stubborn tool subprocesses; they require no real credentials or model calls.
+
+## Per-Session configuration
+
+The same SDK factory accepts optional configuration when an application chooses
+permissions, MCP servers, prompts or models for each Session:
+
+```ts
+import { createClaudeHarness, type ClaudeHarnessFactoryOptions } from "@cantelop/sdk/harnesses/claude";
+import type { SessionHarnessContext } from "@cantelop/sdk/session";
+
+export function create(context: SessionHarnessContext) {
+  const settings: ClaudeHarnessFactoryOptions = {
+    permissionMode: "dontAsk",
+    settingSources: [],
+    tools: [],
+    allowedTools: ["mcp__project__*"],
+    mcps: { project: { type: "http", url: "https://tools.example/mcp" } },
+    systemPrompt: "Work through the supplied project tools.",
+    maxTurns: 24,
+    model: "sonnet",
+  };
+  return createClaudeHarness(context, settings);
+}
+```
+
+Load application-owned durable configuration before creating the harness. It is
+snapshotted when the factory runs; editing the original objects does not change a
+live Session. Omit the second argument to retain the default factory behavior.
+`binary`/`model` override `CLAUDE_PATH`/`CLAUDE_MODEL`; `workspace` defaults to the
+mounted working directory. The canonical Session ID always comes from `context`.
+The optional `conversation` seed imports an existing native conversation only
+when SDK state is absent; existing SDK state takes precedence.
+
+Applications with durable job queues can also use this factory inside a managed
+activity and call the returned harness's public `queue`, `steer` and `cancel`
+methods. Forward its output unchanged or add application message attribution.
+Large output arrives as `native.fragment`; the SDK owns fragmentation, subprocess
+parsing and cleanup. Keep the factory context signal tied to the runtime
+incarnation, and the work signal tied to the individual activity/submission.
+
+### Durable Session lifecycle
+
+Applications that need configure-once settings, persistent queueing, targeted cancellation, snapshots and recovery can declare the packaged runtime instead of implementing a behaviour:
+
+```ts
+import { CantelopClient } from "@cantelop/sdk";
+import { createClaudeRuntime, claudeAuth, claudeDockerfile } from "@cantelop/sdk/harnesses/claude";
+import type { ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply } from "@cantelop/sdk/harnesses/claude/protocol";
+
+export const agent = new CantelopClient().app<ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply>({
+  name: "durable-claude",
+  runtime: createClaudeRuntime({ workspace: "/workspace", permissionMode: "dontAsk", settingSources: [] }),
+  auth: claudeAuth,
+  dockerfile: claudeDockerfile,
+});
+```
+
+Request `{type:"configure",config:{tools:[],allowedTools:[],mcps:{}}}` once before dispatching `{type:"queue",id,text}`. Configuration may include model, system prompt and turn limit. Native defaults come from the factory options and environment; the SDK does not impose application tool permissions. The runtime uses `createClaudeHarness` internally once per incarnation. Its settings, MCP credentials and permission defaults are snapshotted.
+
+The SDK persists Session configuration, history and pending IDs atomically under `<workspace>/.cantelop/<hashed-session-id>.json`. This format supports migration from existing durable Claude integrations. Running work becomes `interrupted` on replacement and is never replayed; queued work resumes on recovery. `steer` interrupts the active turn and prioritizes its new input after native cleanup. `cancel` targets a queued or active ID. History is bounded to 1,000 messages; snapshots contain the latest 50 previews. Events use the exported Session protocol, including attributed Claude fragments and `auth.required`. Authorize configure/queue/cancel requests on the application backend.
+
+### Link-and-code sign-in
+
+`claudeAuth` includes the SDK's structured native login adapter. On your backend:
+
+```ts
+const auth = agent.workspace({ slug: "customer" }).auth();
+const login = await auth.login({ force: false });
+if (!login.authenticated) {
+  // Return this link and attempt ID to your sign-in form.
+  console.log(login.url, login.attemptId);
+  // Submit the returned code with auth.submitCode({ attemptId: login.attemptId, code }).
+  // Cancel an abandoned attempt with auth.cancelLogin({ attemptId: login.attemptId }).
+}
+```
+
+No terminal component or WebSocket transport is needed for this flow. The SDK
+starts the unmodified CLI privately and waits for its link and code prompt.
+A rejected code leaves the same attempt available for retry. A completed code
+requires fresh native status before authentication succeeds. Output stays in
+bounded Session memory and is never returned to the application. Codes are
+validated and written only to that attempt's stdin; credentials remain in the
+Workspace. The terminal API described above remains an explicit low-level option.

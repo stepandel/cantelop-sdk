@@ -261,3 +261,28 @@ test("closing the browser, an explicit close, or a newer terminal ends an unfini
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 });
+
+
+test("packaged Claude link/code login uses the private PTY and never needs a browser terminal", async t => {
+  const { binary } = await workspaceWith(t, "fake-claude-code-login", `#!/usr/bin/env node
+const fs=require('node:fs'),path=require('node:path');const file=path.join(process.env.CLAUDE_CONFIG_DIR,'signed-in');fs.mkdirSync(path.dirname(file),{recursive:true});const op=process.argv.slice(2).join(' ');
+if(op==='auth status'){console.log(JSON.stringify({loggedIn:fs.existsSync(file)}));process.exit(0);}
+if(op==='auth logout'){fs.rmSync(file,{force:true});process.exit(0);}
+if(op!=='auth login')process.exit(2);
+console.log('https://claude.ai/oauth/authorize?structured=1');console.log('Paste code here:');
+process.stdin.setEncoding('utf8');process.stdin.on('data',code=>{if(code.trim()==='good-code'){fs.writeFileSync(file,'ok');process.exit(0);}console.log('Invalid code. Paste code here:');});
+`);
+  const { claudeAuth } = await import("../dist/harnesses/claude.js");
+  const runtime = await authRuntime(t,claudeAuth,{CLAUDE_PATH:binary,LOGIN_PTY_HELPER:helper});
+  const started = await runtime.command({type:"login"});
+  assert.equal(started.type,"login");assert.equal(started.url,"https://claude.ai/oauth/authorize?structured=1");
+  assert.equal("ticket" in started,false);assert.equal("output" in started,false);
+  assert.equal(await runtime.quiescent(),false);
+  assert.deepEqual(await runtime.command({type:"code",attemptId:started.attemptId,code:"wrong"}),{type:"error",code:"code_rejected"});
+  assert.deepEqual(await runtime.command({type:"code",attemptId:started.attemptId,code:"good-code"}),{type:"status",authenticated:true});
+  await settle(runtime);
+  const again = await runtime.command({type:"login",force:true});
+  assert.equal(again.type,"login");assert.notEqual(again.attemptId,started.attemptId);
+  assert.deepEqual(await runtime.command({type:"cancel",attemptId:again.attemptId}),{type:"cancelled",attemptId:again.attemptId});
+  await settle(runtime);
+});

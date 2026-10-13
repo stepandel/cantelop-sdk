@@ -201,8 +201,13 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     const runtimeProperty = property("runtime");
     if (!runtimeProperty || !ts.isPropertyAssignment(runtimeProperty)) return fail("Define runtime directly in the App options");
     const runtime = runtimeProperty.initializer;
-    if (!ts.isObjectLiteralExpression(runtime) || runtime.properties.some(p => ts.isSpreadAssignment(p))) return fail("App runtime must be an inline handler object without spreads");
-    const runtimeKeys = runtime.properties.map(p => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : "");
+    // Factory calls remain Sandbox-only dependencies; the compiler never evaluates them.
+    // Inspect their checked return type just as we inspect an inline handler object.
+    const runtimeFactory = ts.isCallExpression(runtime);
+    if (!runtimeFactory && (!ts.isObjectLiteralExpression(runtime) || runtime.properties.some(p => ts.isSpreadAssignment(p)))) return fail("App runtime must be an inline handler object without spreads or a typed runtime factory call");
+    const runtimeKeys = runtimeFactory
+      ? checker.getPropertiesOfType(checker.getTypeAtLocation(runtime)).map(p => p.name)
+      : (runtime as ts.ObjectLiteralExpression).properties.map(p => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : "");
     const harnessRuntime = runtimeKeys.includes("create");
     const allowedRuntimeKeys = harnessRuntime ? ["create", "onRecover", "redelivery"] : ["receive", "onActivate", "onRecover", "redelivery"];
     if (!runtimeKeys.includes(harnessRuntime ? "create" : "receive") || runtimeKeys.some(key => !allowedRuntimeKeys.includes(key))) return fail("Invalid Session runtime: define exactly one create or receive implementation");

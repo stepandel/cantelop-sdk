@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { AuthCodeLogin } from "./auth-code-login.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { TERMINAL_TICKET_PATTERN, type AppAuth, type AuthCommand, type AuthContext, type AuthResult, type AuthTerminalProcess } from "./native-auth.js";
@@ -38,6 +39,7 @@ export class AuthTerminals {
   readonly #auth: AppAuth;
   readonly #env: AuthContext["env"];
   readonly #lifetime: AbortSignal;
+  #codeLogin: AuthCodeLogin | undefined;
   readonly #changed: () => void;
 
   constructor(auth: AppAuth, env: AuthContext["env"], lifetime: AbortSignal, changed: () => void) {
@@ -45,7 +47,7 @@ export class AuthTerminals {
     lifetime.addEventListener("abort", () => { void this.#stop(); }, { once: true });
   }
 
-  get active(): boolean { return this.#current !== undefined; }
+  get active(): boolean { return this.#current !== undefined || !!this.#codeLogin?.active; }
 
   async handle(command: AuthCommand, session: SessionIdentity): Promise<AuthResult> {
     const context: AuthContext = Object.freeze({ signal: this.#lifetime, session, env: this.#env });
@@ -54,9 +56,16 @@ export class AuthTerminals {
       if (typeof authenticated !== "boolean") throw new TypeError("App auth status must return a boolean");
       return { type: "status", authenticated };
     };
+    if (this.#auth.codeLogin && !this.#codeLogin) this.#codeLogin = new AuthCodeLogin(this.#auth,this.#auth.codeLogin,context,this.#changed);
     switch (command.type) {
+      case "login":
+        await this.#stop();
+        return this.#codeLogin ? this.#codeLogin.login(command.force) : {type:"error",code:"code_login_not_supported"};
+      case "code": return this.#codeLogin ? this.#codeLogin.code(command.attemptId,command.code) : {type:"error",code:"code_login_not_supported"};
+      case "cancel": return this.#codeLogin ? this.#codeLogin.cancel(command.attemptId) : {type:"cancelled",attemptId:command.attemptId};
       case "status": return status();
       case "logout":
+        await this.#codeLogin?.stop();
         await this.#stop();
         await this.#auth.logout(context);
         return status();
@@ -64,6 +73,7 @@ export class AuthTerminals {
         if (this.#current?.id === command.terminalId) await this.#stop();
         return { type: "closed", terminalId: command.terminalId };
       case "terminal": {
+        await this.#codeLogin?.stop();
         await this.#stop();
         this.#lifetime.throwIfAborted();
         const ticket = randomBytes(32).toString("hex");

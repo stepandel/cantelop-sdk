@@ -2,9 +2,9 @@ import { assertSessionRuntime, RUNTIME_ID } from "./session-runtime-contract.js"
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import { AppConfigurationError, type ConfigurationContext } from "./app-config.js";
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
-import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, SessionCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector } from "./integration.js";
+import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, SessionCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector, WorkspaceAuthLoginOptions, WorkspaceAuthLogin, WorkspaceAuthTerminal } from "./integration.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
-import { AUTH_SESSION_ID, AUTH_TERMINAL_PROTOCOL, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
+import { AUTH_SESSION_ID, AUTH_TERMINAL_PROTOCOL, LOGIN_ID_PATTERN, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
@@ -79,20 +79,45 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
           catch (error) { throw submissionError(error, id, options.signal); }
           if (!record(value) || value.protocolVersion !== 2 || value.id !== id || !record(value.reply) || typeof value.reply.type !== "string")
             throw new RemoteAppError("invalid_auth_response", 0, id);
+          if (value.reply.type === "error") {
+            const codes = ["auth_logout_unconfirmed","code_login_not_supported","login_failed","login_not_active","login_timeout","code_rejected"];
+            if (typeof value.reply.code !== "string" || !codes.includes(value.reply.code)) throw new RemoteAppError("invalid_auth_response",0,id);
+            throw new RemoteAppError(value.reply.code,400,id);
+          }
           return value.reply as AuthResult;
         };
         const status = (value: AuthResult) => {
           if (value.type !== "status" || typeof value.authenticated !== "boolean") throw new RemoteAppError("invalid_auth_response", 0);
           return value.authenticated;
         };
-        return Object.freeze({
-          async status(options?: SessionCommandOptions) { return status(await requestAuth({ type: "status" }, options)); },
-          async terminal(options?: SessionCommandOptions) {
+        const terminal = async (options?: SessionCommandOptions): Promise<WorkspaceAuthTerminal> => {
             const value = await requestAuth({ type: "terminal" }, options) as AuthResult & { url?: unknown };
             if (value.type !== "terminal" || typeof value.terminalId !== "string" || !TERMINAL_ID_PATTERN.test(value.terminalId) ||
                 typeof value.ticket !== "string" || !TERMINAL_TICKET_PATTERN.test(value.ticket) ||
                 typeof value.url !== "string" || !/^wss?:\/\//.test(value.url) || !Number.isFinite(Date.parse(value.expiresAt))) throw new RemoteAppError("invalid_auth_response", 0);
             return Object.freeze({ terminalId: value.terminalId, url: value.url, protocols: Object.freeze([AUTH_TERMINAL_PROTOCOL, value.ticket] as const), expiresAt: new Date(value.expiresAt) });
+        };
+        return Object.freeze({
+          async status(options?: SessionCommandOptions) { return status(await requestAuth({ type: "status" }, options)); },
+          terminal,
+          async login(options: WorkspaceAuthLoginOptions = {}): Promise<WorkspaceAuthLogin> {
+            if (options.force !== undefined && typeof options.force !== "boolean") throw new TypeError("Invalid login force option");
+            const value = await requestAuth({type:"login",...(options.force !== undefined ? {force:options.force} : {})}, options.signal ? {signal:options.signal} : {});
+            if (value.type === "status") {
+              if (!status(value)) throw new RemoteAppError("invalid_auth_response",0);
+              return Object.freeze({authenticated:true});
+            }
+            if (value.type !== "login" || !LOGIN_ID_PATTERN.test(value.attemptId) || typeof value.url !== "string" || !Number.isFinite(Date.parse(value.expiresAt))) throw new RemoteAppError("invalid_auth_response",0);
+            const url = new URL(value.url);
+            if (url.protocol !== "https:" || url.username || url.password) throw new RemoteAppError("invalid_auth_response",0);
+            return Object.freeze({authenticated:false,attemptId:value.attemptId,url:url.href,expiresAt:new Date(value.expiresAt)});
+          },
+          async submitCode(options: {readonly attemptId:string;readonly code:string;readonly signal?:AbortSignal}) {
+            return status(await requestAuth({type:"code",attemptId:options.attemptId,code:options.code}, options.signal ? {signal:options.signal} : {}));
+          },
+          async cancelLogin(options: {readonly attemptId:string;readonly signal?:AbortSignal}) {
+            const value = await requestAuth({type:"cancel",attemptId:options.attemptId},options.signal ? {signal:options.signal} : {});
+            if (value.type !== "cancelled" || value.attemptId !== options.attemptId) throw new RemoteAppError("invalid_auth_response",0);
           },
           async close(options: { readonly terminalId: string } & SessionCommandOptions) {
             if (typeof options?.terminalId !== "string" || !TERMINAL_ID_PATTERN.test(options.terminalId)) throw new TypeError("Invalid auth terminal ID");

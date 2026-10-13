@@ -7,6 +7,14 @@ import { TurnQueue } from "./queue.js";
 import type { SessionHarness, SessionHarnessWorkContext } from "../session.js";
 
 export type NativeEvent = Readonly<Record<string, unknown>>;
+/** SDK output transport for a native event exceeding the output frame limit. */
+export interface NativeFragmentEvent extends NativeEvent {
+  readonly type: "native.fragment";
+  readonly eventId: string;
+  readonly index: number;
+  readonly total: number;
+  readonly json: string;
+}
 export interface NativeTurn {
   text: string;
   signal: AbortSignal;

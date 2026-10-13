@@ -7,12 +7,12 @@ export { RemoteAppError } from "./remote-app.js";
 export { CantelopClient } from "./client.js";
 export type {
   AppConnection, AppSelector, AppOptions, CantelopClientOptions, IntegrationSessionOptions,
-  SessionRef, WorkspaceRef, WorkspaceAuthRef, WorkspaceAuthTerminal, WorkspaceSelector,
+  SessionRef, WorkspaceRef, WorkspaceAuthRef, WorkspaceAuthTerminal, WorkspaceAuthLogin, WorkspaceAuthLoginOptions, WorkspaceSelector,
   SessionEvent, SessionEventCursor, SessionStreamOptions,
   SessionCommandOptions, SessionSubmissionOptions, SessionCancellation, SessionView,
   SessionCommand, AppCommandEnvelope,
 } from "./integration.js";
-export type { AppAuth, AuthCommand, AuthContext, AuthResult, AuthTerminalProcess } from "./native-auth.js";
+export type { AppAuth, NativeCodeLogin, AuthCommand, AuthContext, AuthResult, AuthTerminalProcess } from "./native-auth.js";
 export { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";
 export { AppConfigurationError } from "./app-config.js";
 
