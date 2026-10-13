@@ -447,8 +447,8 @@ export async function buildDatabaseSchema(entrypoint = path.resolve("db/schema.t
 }
 
 /** Generate a backend client module with the Sandbox dependency graph removed. */
-export async function buildBackendClient(options: { readonly definition: string; readonly outdir: string }) {
-  return writeBackendClient(await compileAppDefinitions(path.resolve(options.definition), { webhooks: false }), options);
+export async function buildBackendClient(options: { readonly definition: string; readonly outdir: string; readonly appName?: string }) {
+  return writeBackendClient(await compileAppDefinitions(path.resolve(options.definition), { webhooks: false, ...(options.appName === undefined ? {} : { appName: options.appName }) }), options);
 }
 
 async function writeBackendClient(compiled: Awaited<ReturnType<typeof compileAppDefinitions>>, options: { readonly definition: string; readonly outdir: string }) {
@@ -473,12 +473,14 @@ export async function buildAppArtifacts(options: {
   readonly definition: string;
   readonly outdir: string;
   readonly projectRoot?: string;
+  /** Override the literal deployment name of a single App without rewriting its source. */
+  readonly appName?: string;
   /** Local CLI only: a numeric loopback Session bridge origin. */
   readonly runtimeOrigin?: string;
 }) {
   // Compile once so every artifact shares one consistent App identity.
   const definitionPath = path.resolve(options.definition);
-  const compiled = await compileAppDefinitions(definitionPath);
+  const compiled = await compileAppDefinitions(definitionPath, options.appName === undefined ? {} : { appName: options.appName });
   const apps = [];
   for (const app of compiled.apps) {
     const outdir = path.join(path.resolve(options.outdir), app.definition.name);

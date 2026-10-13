@@ -40,7 +40,7 @@ function contractFingerprint(checker: ts.TypeChecker, types: readonly ts.Type[],
 }
 
 /** Static definitions are split without importing or evaluating application code. */
-export async function compileAppDefinitions(filename: string, compileOptions: { readonly webhooks?: boolean } = {}) {
+export async function compileAppDefinitions(filename: string, compileOptions: { readonly webhooks?: boolean; readonly appName?: string } = {}) {
   filename = path.resolve(filename);
   const configPath = ts.findConfigFile(path.dirname(filename), ts.sys.fileExists);
   let configured: ts.CompilerOptions = {};
@@ -124,6 +124,8 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     if (declaration) candidates.set(declaration, { declaration, expression });
   }
   if (!candidates.size) return fail("Export at least one App defined with cantelop.app({...})");
+  if (compileOptions.appName !== undefined && (!SLUG_PATTERN.test(compileOptions.appName) || candidates.size !== 1))
+    return fail("appName must be a valid App slug and requires exactly one App definition");
   const appStatements = new Set([...candidates.keys()].map(topStatement).filter((s): s is ts.Statement => !!s));
   const printer = ts.createPrinter();
   const print = (node: ts.Node) => printer.printNode(ts.EmitHint.Unspecified, node, file);
@@ -186,7 +188,7 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     const property = (name: string) => argument.properties.find(p => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === name);
     const nameProperty = property("name");
     if (!nameProperty || !ts.isPropertyAssignment(nameProperty) || !ts.isStringLiteral(nameProperty.initializer)) return fail("App name must be a string literal");
-    const name = nameProperty.initializer.text;
+    const name = compileOptions.appName ?? nameProperty.initializer.text;
     if (!SLUG_PATTERN.test(name)) return fail("Invalid App name");
     if (names.has(name)) return fail(`Duplicate App name: ${name}`);
     names.add(name);
@@ -275,6 +277,7 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     const statementText = statement.getText(file);
     const dockerfileProperty = property("dockerfile");
     const edits = [{ node: runtime, text: replacement },
+      ...(compileOptions.appName === undefined ? [] : [{ node: nameProperty.initializer, text: JSON.stringify(name) }]),
       ...(dockerfileProperty && ts.isPropertyAssignment(dockerfileProperty) ? [{ node: dockerfileProperty.initializer, text: JSON.stringify(configuration.dockerfile) }] : []), ...(webhookExpression ? [{ node: webhookExpression, text: "{}" }] : []), ...(homepageProperty ? [{ node: homepageProperty, text: "homepage: undefined" }] : []),
       ...(authProperty ? [{ node: authProperty, text: `auth: {[Symbol.for("dev.cantelop.sdk.compiled-auth.v1")]: true}` }] : [])];
     let backendStatement = statementText;

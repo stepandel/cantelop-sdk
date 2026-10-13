@@ -98,3 +98,29 @@ test("buildAppArtifacts also emits declarations for inferred App contracts", asy
   ].join("\n"));
   check(consumer);
 });
+
+
+test("a single-App build name override stamps all artifacts without changing source or exports", async t => {
+  const directory = await project(t);
+  const definition = path.join(directory, "cantelop.mts");
+  const source = 'import { CantelopClient } from "@cantelop/sdk"; export const agent = new CantelopClient().app({name: "original-agent", runtime: {receive() {}}});';
+  await writeFile(definition, source);
+  const original = await buildBackendClient({ definition, outdir: path.join(directory, "original") });
+  const backend = await buildBackendClient({ definition, outdir: path.join(directory, "backend"), appName: "deployed-agent" });
+  const artifacts = await buildAppArtifacts({ definition, outdir: path.join(directory, "artifacts"), appName: "deployed-agent" });
+  const identity = backend.manifest.apps[0].session_runtime_id;
+  assert.equal(backend.manifest.apps[0].name, "deployed-agent");
+  assert.notEqual(identity, original.manifest.apps[0].session_runtime_id);
+  assert.equal(artifacts.apps[0].name, "deployed-agent");
+  assert.equal(artifacts.apps[0].edge.manifest.app_name, "deployed-agent");
+  assert.equal(artifacts.apps[0].runtime.manifest.app_name, "deployed-agent");
+  assert.equal(artifacts.apps[0].runtime.manifest.session_runtime_id, identity);
+  assert.equal(artifacts.apps[0].edge.manifest.session_runtime_id, identity);
+  assert.equal(artifacts.backend.manifest.apps[0].session_runtime_id, identity);
+  const { agent } = await import(new URL(backend.mainModule, "file:///").href);
+  assert.equal(agent.name, "deployed-agent");
+  assert.equal(await readFile(definition, "utf8"), source);
+  await assert.rejects(buildBackendClient({ definition, outdir: path.join(directory, "invalid"), appName: "bad/name" }), /appName/);
+  await writeFile(definition, source + 'export const other = new CantelopClient().app({name: "other-agent", runtime: {receive() {}}});');
+  await assert.rejects(buildBackendClient({ definition, outdir: path.join(directory, "ambiguous"), appName: "deployed-agent" }), /exactly one App/);
+});
