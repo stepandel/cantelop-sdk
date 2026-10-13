@@ -39,6 +39,10 @@ try {
   assert.equal(paths.some((file) => /^(src|test|examples|scripts)\//.test(file)), false);
 
   for (const [name, target] of Object.entries(manifest.exports)) {
+    if (typeof target === "string") {
+      assert.ok(paths.includes(target.replace(/^\.\//, "")), `${name} asset is not packed`);
+      continue;
+    }
     assert.equal(typeof target.import, "string", `${name} requires an import target`);
     assert.equal(typeof target.types, "string", `${name} requires a types target`);
     assert.ok(paths.includes(target.import.replace(/^\.\//, "")), `${name} import target is not packed`);
@@ -55,8 +59,8 @@ try {
   );
   await writeFile(path.join(consumer, "definition.mjs"), [
     'import { CantelopClient } from "@cantelop/sdk";',
-    'import { receive } from "./session.mjs";',
-    'export const cantelop = new CantelopClient().app({ name: "first-agent",runtime:{receive}});',
+    'import { createClaudeHarness, claudeAuth, claudeDockerfile } from "@cantelop/sdk/harnesses/claude";',
+    'export const cantelop = new CantelopClient().app({ name: "first-agent",runtime:{create:createClaudeHarness},auth:claudeAuth,dockerfile:claudeDockerfile});',
   ].join("\n"));
   await writeFile(path.join(consumer, "session.mjs"), [
     'import * as sessionSDK from "@cantelop/sdk/session";',
@@ -89,11 +93,18 @@ try {
     'const compiledClient = (await import(new URL(backend.mainModule, `file://${process.cwd()}/`))).cantelop;',
     'assert.equal(compiledClient.name, "first-agent");',
     'assert.throws(() => compiledClient.runtime.receive(), /Sandbox/);',
+    'assert.equal(native.manifest.dockerfile, "node_modules/@cantelop/sdk/dist/harnesses/claude/Dockerfile");',
+    'const { readFile } = await import("node:fs/promises");',
+    'assert.match(await readFile(new URL(import.meta.resolve("@cantelop/sdk/harnesses/claude/Dockerfile")), "utf8"), /claude-code@/);',
   ].join("\n"));
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
   await writeFile(path.join(consumer, "integration.ts"), [
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type AppCommandEnvelope, type SessionEventCursor } from "@cantelop/sdk";',
     'const runtime = { receive() {} };',
+    'import { createClaudeHarness, claudeAuth, claudeDockerfile, NativeClaude, type ClaudeMessage, type ClaudeEvent, type ClaudeHarnessOptions } from "@cantelop/sdk/harnesses/claude";',
+    'const claudeApp = new CantelopClient().app<ClaudeMessage, ClaudeEvent>({name:"claude-agent",runtime:{create:createClaudeHarness},auth:claudeAuth,dockerfile:claudeDockerfile});',
+    'const claudeOptions: ClaudeHarnessOptions = {workspace:"/workspace",sessionId:"session",binary:"/usr/local/bin/claude"};',
+    'const claudeNative = new NativeClaude(claudeOptions);',
     'import type { SessionHarnessWorkContext, SessionActivityContext } from "@cantelop/sdk/session";',
     'function activityContext(work: SessionHarnessWorkContext<string,never,{entries:string[]}>): SessionActivityContext<string,never,{entries:string[]}> { return work; }',
     'const harnessApp = new CantelopClient().app<{prompt:string},{text:string},{answer:string},{entries:string[]}>({name:"harness-agent",runtime:{create(context){return {async queue(message,work){await work.output.send({text:message.prompt});await work.view.commit({entries:[context.session.id]});return {answer:message.prompt};},steer(message,work){message.prompt;work.signal;},cancel(){return false;}};}}});',

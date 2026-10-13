@@ -6,6 +6,7 @@ import { mkdtemp, rm, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
+import { createClaudeHarness, NativeClaude } from "@cantelop/sdk/harnesses/claude";
 
 const moduleDirectory = await mkdtemp(join(tmpdir(), "native-harness-modules-"));
 after(() => rm(moduleDirectory, { recursive: true, force: true }));
@@ -234,4 +235,35 @@ test("queued input expiry removes only that harness submission", async () => {
   assert.equal(active.aborted, false);
   release(); await Promise.all([first, kept]);
   assert.deepEqual(started, ["hold", "kept"]);
+});
+
+
+test("packaged Claude factory rejects a stopped incarnation before constructing the runner", () => {
+  const lifetime = new AbortController();
+  lifetime.abort();
+  assert.throws(() => createClaudeHarness({ signal: lifetime.signal }), /abort/i);
+  const native = createClaudeHarness({
+    signal: new AbortController().signal, session: { id: "factory-session" },
+    env: { CLAUDE_PATH: "/missing/claude", CLAUDE_MODEL: "test-model" },
+  });
+  assert.ok(native instanceof NativeClaude);
+  assert.equal(native.cancel(), false);
+});
+
+test("packaged Claude preserves restricted execution settings and existing conversation on migration", async t => {
+  const {workspace,binary}=await fixture(t);
+  const id="12345678-1234-4234-8234-123456789abc";
+  const native=new NativeClaude({workspace,binary,sessionId:"migrated",model:"claude-sonnet-5",
+    conversation:{id,resumable:true},permissionMode:"dontAsk",settingSources:[],tools:["Read"],allowedTools:["Read"],maxTurns:8,mcps:{}});
+  const events=[];await run(native,turn("existing",events));
+  const metadata=events.find(event=>event.type==="metadata");
+  assert.equal(metadata.id,id);
+  assert.equal(metadata.args[metadata.args.indexOf("--resume")+1],id);
+  assert.equal(metadata.args[metadata.args.indexOf("--permission-mode")+1],"dontAsk");
+  assert.equal(metadata.args[metadata.args.indexOf("--tools")+1],"Read");
+  assert.equal(metadata.args[metadata.args.indexOf("--max-turns")+1],"8");
+  assert.deepEqual(JSON.parse(metadata.args[metadata.args.indexOf("--mcp-config")+1]),{mcpServers:{}});
+  const replacement=new NativeClaude({workspace,binary,sessionId:"migrated",conversation:{id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",resumable:true}});
+  const later=[];await run(replacement,turn("later",later));
+  assert.equal(later.find(event=>event.type==="metadata").id,id,"persisted SDK state wins over the migration seed");
 });

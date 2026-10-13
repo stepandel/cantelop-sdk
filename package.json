@@ -1,6 +1,6 @@
 {
   "name": "@cantelop/sdk",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
@@ -43,14 +43,19 @@
     "./schema": {
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
-    }
+    },
+    "./harnesses/claude": {
+      "types": "./dist/harnesses/claude.d.ts",
+      "import": "./dist/harnesses/claude.js"
+    },
+    "./harnesses/claude/Dockerfile": "./dist/harnesses/claude/Dockerfile"
   },
   "files": [
     "dist"
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/build-harness-assets.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs",
     "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
