@@ -192,7 +192,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           return failure(homepage ? "homepage_failed" : "webhook_failed", 500);
         }
       }
-      try { await authenticate(request, bindings.CANTELOP_INTEGRATION_TOKEN); }
+      try { await authenticate(request, bindings); }
       catch (error) { return error instanceof EdgeFailure ? failure(error.code, error.status) : failure("unauthorized", 401); }
       return commands(request, bindings);
     },
@@ -236,14 +236,31 @@ function sessionPath(id: string, workspace: WorkspaceSelector, suffix: string): 
   const query = new URLSearchParams(workspace.id === undefined ? { workspace_slug: workspace.slug } : { workspace_id: workspace.id });
   return `/__cantelop/integration/v2/sessions/${encodeURIComponent(id)}${suffix}?${query}`;
 }
-async function authenticate(request: Request, token: unknown): Promise<void> {
+async function authenticate(request: Request, bindings: Readonly<Record<string, unknown>>): Promise<void> {
+  const token = bindings.CANTELOP_INTEGRATION_TOKEN;
   if (typeof token !== "string" || !token) throw new EdgeFailure("integration_not_configured", 503);
+  const header = request.headers.get("Authorization") ?? "";
+  const previous = previousIntegrationToken(bindings);
+  const [current, prior] = await Promise.all([bearerMatches(header, token), previous === undefined ? false : bearerMatches(header, previous)]);
+  if (!current && !prior) throw new EdgeFailure("unauthorized", 401);
+}
+/** A rotated-out token stays valid until its platform-set expiry so callers can move to the new one. */
+function previousIntegrationToken(bindings: Readonly<Record<string, unknown>>): string | undefined {
+  const token = bindings.CANTELOP_INTEGRATION_TOKEN_PREVIOUS, expiresAt = bindings.CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT;
+  if (typeof token !== "string" || !token || typeof expiresAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(expiresAt)) return undefined;
+  const expiry = Date.parse(expiresAt);
+  if (!Number.isFinite(expiry)) return undefined;
+  // Date.parse normalizes impossible calendar dates; require an exact UTC round trip.
+  const canonical = expiresAt.length === 20 ? expiresAt.replace(/Z$/, ".000Z") : expiresAt;
+  return new Date(expiry).toISOString() === canonical && expiry > Date.now() ? token : undefined;
+}
+async function bearerMatches(header: string, token: string): Promise<boolean> {
   const digest = (value: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  const [expected, actual] = await Promise.all([digest(`Bearer ${token}`), digest(request.headers.get("Authorization") ?? "")]);
+  const [expected, actual] = await Promise.all([digest(`Bearer ${token}`), digest(header)]);
   const left = new Uint8Array(expected), right = new Uint8Array(actual);
   let difference = 0;
   for (let i = 0; i < left.length; i++) difference |= left[i]! ^ right[i]!;
-  if (difference !== 0) throw new EdgeFailure("unauthorized", 401);
+  return difference === 0;
 }
 async function readJSON(source: Request | Response): Promise<unknown> {
   if (!source.body) throw new EdgeFailure("invalid_json", 400);

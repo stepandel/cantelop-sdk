@@ -48,6 +48,8 @@ Reserved `CANTELOP_APP_CONFIG` or the runtime injection point can supply the sam
 
 For a single named App, environment configuration can supply `CANTELOP_APP_SLUG` and `CANTELOP_INTEGRATION_TOKEN`, with optional `CANTELOP_EDGE_URL`. A slug is necessary to match the code's App name; an App ID alone cannot match it. Other Apps require their own matching profile/injected record and cannot reuse this credential.
 
+On a hosted backend, `cantelop app credentials --app <slug>` prints these values in dotenv form for the host's secret store. `cantelop app credentials rotate` issues a new token; the generated Edge keeps accepting the previous token until the expiry the platform sets (24 hours by default), so the backend can be updated without downtime.
+
 Normally the backend compiler embeds generated runtime identity. For uncompiled local development, CLI-managed App records may carry `runtimeId`, or matching environment configuration may inject `CANTELOP_SESSION_RUNTIME_ID`. These are generated system metadata, not constructor options. Compiled identity takes precedence over configuration. See [runtime compilation](runtime-definitions.md).
 
 ## App-specific overrides
