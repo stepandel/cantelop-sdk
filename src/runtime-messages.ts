@@ -33,6 +33,8 @@ interface Reservation {
 /** Reservations and outcomes live until this sandbox retires. Never evict IDs. */
 export class RuntimeMessages {
   private pendingBytes = 0;
+  private completionGeneration = 0;
+  private readonly completionWaiters = new Set<() => void>();
   private readonly records = new Map<string, Reservation>();
   constructor(
     readonly sandboxId: string,
@@ -118,6 +120,8 @@ export class RuntimeMessages {
         receipt.settled_at = new Date().toISOString();
         clearTimeout(timer);
         this.pendingBytes -= bytes;
+        this.completionGeneration++;
+        for (const wake of [...this.completionWaiters]) wake();
       });
     this.records.set(id, {
       fingerprint,
@@ -127,6 +131,25 @@ export class RuntimeMessages {
       ...(delivery.reply === undefined ? {} : { reply: delivery.reply }),
     });
     return { receipt: { ...receipt }, settled };
+  }
+  /** A completion hint; receipts and replies remain the source of truth. */
+  async completions(after: number, signal: AbortSignal): Promise<{ generation: number }> {
+    signal.throwIfAborted();
+    if (!Number.isSafeInteger(after) || after < 0 || after > this.completionGeneration)
+      throw new RuntimeProtocolError(409, "invalid_completion_generation");
+    if (after === this.completionGeneration) {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          this.completionWaiters.delete(wake);
+          signal.removeEventListener("abort", abort);
+        };
+        const wake = () => { cleanup(); resolve(); };
+        const abort = () => { cleanup(); reject(signal.reason); };
+        this.completionWaiters.add(wake);
+        signal.addEventListener("abort", abort, { once: true });
+      });
+    }
+    return { generation: this.completionGeneration };
   }
   work() {
     const active = [...this.records.values()]

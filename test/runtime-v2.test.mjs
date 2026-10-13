@@ -152,3 +152,59 @@ test('internal messages remain deadline supervised after the external handler se
  await until(async()=>!!(await (await request('runtime')).json()).message_work?.cancellation_requested_at);
  const snapshot=await (await request('runtime')).json();assert.equal(snapshot.quiescent,false);assert(snapshot.message_work.deadline);
 });
+
+test('completion waits wake on settlement while runtime activity remains active', async t => {
+ let release;
+ const gate = new Promise(resolve => { release = resolve; });
+ const request = await fixture(t, async context => {
+  context.activity.queue(async () => new Promise(() => {}), { timeoutMs: 30_000 });
+  await gate;
+  context.reply({ok:true});
+ });
+ t.after(() => release());
+ assert.equal((await (await request('runtime')).json()).capabilities.completionNotifications,true);
+ await request('messages','POST',{...envelope(),reply:true});
+ let returned=false;
+ const pending=request('runtime/completions?after=0').then(async r=>{assert.equal(r.status,200);returned=true;return r.json();});
+ await new Promise(resolve=>setTimeout(resolve,20));
+ assert.equal(returned,false);
+ release();
+ assert.deepEqual(await pending,{generation:1});
+ assert.equal((await (await request(`messages/${id}`)).json()).state,'succeeded');
+ assert.deepEqual(await (await request(`messages/${id}/reply`)).json(),{reply:{ok:true}});
+ assert.equal((await (await request('runtime')).json()).quiescent,false);
+ assert.deepEqual(await (await request('runtime/completions?after=0')).json(),{generation:1});
+ assert.equal((await request('runtime/completions?after=2')).status,409);
+ assert.equal((await request('runtime/completions?after=0&after=0')).status,400);
+ assert.equal((await request('runtime/completions?after=0', 'GET',undefined,'sbx-'+'4'.repeat(32))).status,409);
+});
+
+test('aborting a completion subscription leaves execution and subsequent subscriptions intact',async()=>{
+ const registry=new RuntimeMessages(sandbox);
+ const abort=new AbortController();
+ const waiting=registry.completions(0,abort.signal);
+ abort.abort(new Error('disconnected'));
+ await assert.rejects(waiting,/disconnected/);
+ let release;
+ const done=new Promise(resolve=>{release=resolve;});
+ const admitted=registry.admit(id,{},()=>({generation:1,settled:done}));
+ const next=registry.completions(0,new AbortController().signal);
+ assert.equal(registry.get(id).state,'queued');
+ release();await admitted.settled;
+ assert.deepEqual(await next,{generation:1});
+});
+
+test('failed and timed-out handlers notify only after they settle',async()=>{
+ for (const timedOut of [false,true]) {
+  const registry=new RuntimeMessages(sandbox);
+  let reject;
+  const failure=new Promise((_,r)=>{reject=r;});
+  const admitted=registry.admit(id,{},()=>({generation:1,settled:failure}));
+  let notified=false;
+  const next=registry.completions(0,new AbortController().signal).then(r=>{notified=true;return r;});
+  if(timedOut){registry.cancel(id);await new Promise(r=>setImmediate(r));assert.equal(notified,false);}
+  reject(new Error('handler failed'));await admitted.settled;
+  assert.deepEqual(await next,{generation:1});
+  assert.equal(registry.get(id).state,timedOut?'timed_out':'failed');
+ }
+});

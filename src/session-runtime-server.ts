@@ -45,6 +45,7 @@ import { SessionOutputBuffer } from "./output.js";
 import { RuntimeMessages, RuntimeProtocolError } from "./runtime-messages.js";
 
 const MESSAGE_PATH = "/__cantelop/v2/messages";
+const COMPLETIONS_PATH = "/__cantelop/v2/runtime/completions";
 const QUIESCENCE_PATH = "/__cantelop/v2/runtime/quiescence";
 const OUTPUT_PATH = "/__cantelop/v2/runtime/events";
 const OBSERVATIONS_PATH = "/__cantelop/v2/runtime/observations";
@@ -583,7 +584,7 @@ async function handleRequest<Input>(
   if (url.pathname === "/__cantelop/v2/runtime" && request.method === "GET") {
     writeJSON(response, 200, {
       sandbox_id: messages.sandboxId, protocol: 2, message_work: messages.work(), generation: quiescence.generation,
-      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, replies: true, redelivery: redeliverySupported, steering: true, messageCancellation: true, durableView: true },
+      quiescent: quiescence.quiescent, activity: activity.snapshot(), capabilities: { recovery: recoverySupported, completionNotifications: true, replies: true, redelivery: redeliverySupported, steering: true, messageCancellation: true, durableView: true },
       observations: observationBuffer.metadata(), events: outputBuffer.metadata()
     });
     return;
@@ -625,6 +626,28 @@ async function handleRequest<Input>(
   if (url.pathname === OUTPUT_PATH) { await handleOutputRequest(request, response, url, outputBuffer); return; }
   if (url.pathname === OBSERVATIONS_PATH) { await handleObservationRequest(request, response, url, observationBuffer); return; }
   if (url.pathname === QUIESCENCE_PATH) { await handleQuiescenceRequest(request, response, url, quiescence, boundSession()); return; }
+  if (url.pathname === COMPLETIONS_PATH) {
+    if (request.method !== "GET") { writeError(response, 405, "method_not_allowed"); return; }
+    const values = url.searchParams.getAll("after");
+    if ([...url.searchParams.keys()].some(key => key !== "after") || values.length !== 1 || !/^\d+$/.test(values[0] ?? "")) {
+      writeError(response, 400, "invalid_completion_request"); return;
+    }
+    const controller = new AbortController();
+    const abort = () => { if (!response.writableEnded) controller.abort(new DOMException("Completion wait closed", "AbortError")); };
+    request.once("aborted", abort);
+    response.once("close", abort);
+    try {
+      const result = await messages.completions(Number(values[0]), AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]));
+      if (!response.destroyed) writeJSON(response, 200, result);
+    } catch (error) {
+      if (error instanceof RuntimeProtocolError) throw error;
+      if (!controller.signal.aborted && !response.destroyed) writeError(response, 408, "completion_wait_timeout");
+    } finally {
+      request.removeListener("aborted", abort);
+      response.removeListener("close", abort);
+    }
+    return;
+  }
   const status = /^\/__cantelop\/v2\/messages\/(msg_[0-9a-f]{32})(\/(cancel|reply))?$/.exec(url.pathname);
   if (status && request.method === "GET" && status[3] === "reply") {
     writeJSON(response, 200, { reply: messages.reply(status[1]!) }); return;
