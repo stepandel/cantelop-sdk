@@ -15,6 +15,7 @@ import {
   type NativeFragmentEvent,
 } from './claude.js'
 import { randomUUID } from 'node:crypto'
+import { validateClaudeSessionConfig } from './claude-config.js'
 import { StateStore, type State } from './claude-state.js'
 import type { ClaudeSessionCommand as Command, ClaudeSessionEvent as Event, ClaudeSessionMessage as Message, ClaudeSessionStatus as Status, ClaudeSessionReply as Reply } from './claude-protocol.js'
 type Context = SessionContext<Command, Event, Reply>
@@ -149,7 +150,7 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
           context.reply({ type: 'error', code: 'already_configured' })
           return
         }
-        state!.config = command.config
+        state!.config = validateClaudeSessionConfig(command.config)
         await save()
         await context.output.send({ type: 'session.ready', sessionId: context.session.id })
         context.reply(snapshot())

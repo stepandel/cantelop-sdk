@@ -104,7 +104,7 @@ try {
     'const runtime = { receive() {} };',
     'import { createClaudeHarness, createClaudeRuntime, claudeAuth, claudeDockerfile, NativeClaude, type ClaudeMessage, type ClaudeEvent, type ClaudeHarnessOptions, type ClaudeHarnessFactoryOptions } from "@cantelop/sdk/harnesses/claude";',
     'const claudeApp = new CantelopClient().app<ClaudeMessage, ClaudeEvent>({name:"claude-agent",runtime:{create:createClaudeHarness},auth:claudeAuth,dockerfile:claudeDockerfile});',
-    'import type { ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply } from "@cantelop/sdk/harnesses/claude/protocol";',
+    'import { ClaudeSessionOutput, validateClaudeSessionConfig, type ClaudeSessionCommand, type ClaudeSessionEvent, type ClaudeSessionReply } from "@cantelop/sdk/harnesses/claude/protocol";',
     'const durableClaudeApp = new CantelopClient().app<ClaudeSessionCommand,ClaudeSessionEvent,ClaudeSessionReply>({name:"durable-claude",runtime:createClaudeRuntime({workspace:"/workspace"}),auth:claudeAuth,dockerfile:claudeDockerfile});',
     'const claudeOptions: ClaudeHarnessOptions = {workspace:"/workspace",sessionId:"session",binary:"/usr/local/bin/claude"};',
     'const claudeNative = new NativeClaude(claudeOptions);',

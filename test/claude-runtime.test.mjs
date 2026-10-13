@@ -290,3 +290,12 @@ test('uses one configured SDK factory per incarnation with a separate lifetime a
     runtime.runs[1].resolve();
     await h.idle();
 });
+
+test('invalid configuration is rejected before persistence or native harness creation', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cantelop-invalid-config-'));
+  t.after(() => rm(root, {recursive:true,force:true}));
+  const runtime = new FakeClaude(), h = harness(runtime, root);
+  await assert.rejects(h.send({type:'configure',config:{tools:['--unsafe'],allowedTools:[],mcps:{}}}), /Invalid tool arrays/);
+  assert.equal((await new StateStore(root,'session-a').load()).config, undefined);
+  assert.equal(runtime.factories.length, 0);
+});

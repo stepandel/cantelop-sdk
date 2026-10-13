@@ -29,3 +29,7 @@ export type ClaudeSessionEvent =
   | { type: 'claude'; id: string; event: unknown }
   | { type: 'claude.fragment'; id: string; eventId: string; index: number; total: number; json: string }
   | { type: 'error'; code: string }
+
+// These helpers are backend/browser-safe; no native process modules are imported.
+export { validateClaudeSessionConfig } from './claude-config.js'
+export { ClaudeSessionOutput } from './claude-output.js'
