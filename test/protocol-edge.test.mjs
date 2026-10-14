@@ -38,6 +38,7 @@ test('auth commands route through a Workspace-bound request with a reserved Sess
   const delivered = await calls.at(-1).json();
   assert.equal(new URL(calls.at(-1).url).pathname, '/__cantelop/integration/v2/requests');
   assert.deepEqual(delivered.message.payload, { __cantelop_command: 2, type: 'auth', auth: { type: 'status' } });
+  assert.equal(delivered.session.id, `cantelop-native-auth-${workspaceId}`);
   assert.equal(delivered.session.workspace_id, workspaceId);
   assert.equal(delivered.session.keep_alive_seconds, 900);
   const terminal = await worker.fetch(request({ ...body, command: { ...body.command, auth: { type: 'terminal' } } }), bindings);
@@ -56,7 +57,7 @@ test('the browser terminal route forwards only the WebSocket handshake to the au
   const worker = createProtocolWorker({ runtimeId: 'test.v1', auth: true, fetch: async req => { calls.push(req); return new Response(null, { status: 200 }); } });
   assert.equal((await worker.fetch(upgrade(), {})).status, 200);
   const forwarded = calls[0];
-  assert.equal(forwarded.url, `https://runtime.cantelop.internal/__cantelop/integration/v2/sessions/cantelop-native-auth/auth/terminals/${terminalId}?workspace_id=${workspaceId}`);
+  assert.equal(forwarded.url, `https://runtime.cantelop.internal/__cantelop/integration/v2/sessions/cantelop-native-auth-${workspaceId}/auth/terminals/${terminalId}?workspace_id=${workspaceId}`);
   assert.deepEqual([...forwarded.headers.keys()].sort(), ['connection', 'sec-websocket-key', 'sec-websocket-protocol', 'sec-websocket-version', 'upgrade']);
   assert.equal((await worker.fetch(upgrade({ Upgrade: 'h2c' }), {})).status, 426);
   assert.equal((await worker.fetch(new Request(`https://agent.example/__cantelop/auth/workspaces/${workspaceId}/terminals/trm_bad`), bindings)).status, 401);
@@ -229,3 +230,20 @@ test('previous-token expiry rejects impossible calendar dates', async t => {
   assert.equal(calls, 2);
 });
 
+
+
+test('auth actors reuse the canonical Workspace across selectors and remain distinct across Workspaces', async () => {
+  const otherId = 'wsp_' + '9'.repeat(32), sessions = [];
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', auth: true, fetch: async req => {
+    const body = await req.json();
+    if (req.url.endsWith('/workspaces/open')) return Response.json({ id: body.slug === 'customer' ? workspaceId : otherId, slug: body.slug });
+    sessions.push(body.session);
+    return Response.json({ id: body.message.id, reply: { type: 'status', authenticated: true } });
+  } });
+  const body = { ...envelope({ type: 'auth', auth: { type: 'status' }, timeoutMs: 45_000, keepAliveSeconds: 900 }), session: { id: 'cantelop-native-auth' } };
+  for (const workspace of [{ slug: 'customer' }, { id: workspaceId }, { slug: 'other' }, { id: otherId }, { slug: 'customer' }]) {
+    assert.equal((await worker.fetch(request({ ...body, workspace }), bindings)).status, 200);
+  }
+  assert.deepEqual(sessions.map(session => session.id), [workspaceId, workspaceId, otherId, otherId, workspaceId].map(id => `cantelop-native-auth-${id}`));
+  assert.deepEqual(sessions.map(session => session.workspace_id), [workspaceId, workspaceId, otherId, otherId, workspaceId]);
+});

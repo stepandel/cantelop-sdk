@@ -6,7 +6,7 @@ import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from 
 import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
-import { AUTH_SESSION_ID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
+import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
 
 const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/auth\/workspaces\/(wsp_[0-9a-f]{32})\/terminals\/(trm_[0-9a-f]{32})$/;
 /** Only the WebSocket handshake crosses to the Sandbox; cookies and caller credentials never do. */
@@ -94,7 +94,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           if (submission.type === "auth" && !options.auth) throw new EdgeFailure("auth_not_configured", 404);
           const workspaceId = await resolveWorkspace();
           const response = await invoke(`/__cantelop/integration/v2/${submission.type === "request" || submission.type === "auth" ? "requests" : "messages"}`, "POST", {
-            session: { id: session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds },
+            session: { id: submission.type === "auth" ? workspaceAuthSessionID(workspaceId) : session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds },
             message: { id: envelope.id, payload: encodeRuntimeCommand(submission.type === "auth" ? { type: "auth", auth: submission.auth } : { type: submission.type === "steer" ? "steer" : "dispatch", message: submission.message }) },
             ...(submission.type === "request" || submission.type === "auth" ? { timeout_ms: submission.timeoutMs } : {}),
           });
@@ -162,7 +162,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         // The single-use ticket in Sec-WebSocket-Protocol is verified by the auth Sandbox.
         const headers = new Headers();
         for (const name of TERMINAL_HEADERS) { const value = request.headers.get(name); if (value !== null) headers.set(name, value); }
-        return runtimeFetch(new Request(new URL(`/__cantelop/integration/v2/sessions/${AUTH_SESSION_ID}/auth/terminals/${terminal[2]}?workspace_id=${terminal[1]}`, origin),
+        return runtimeFetch(new Request(new URL(`/__cantelop/integration/v2/sessions/${workspaceAuthSessionID(terminal[1]!)}/auth/terminals/${terminal[2]}?workspace_id=${terminal[1]}`, origin),
           { method: "GET", headers, redirect: "manual", signal: request.signal }));
       }
       const homepage = path === "/" ? options.homepage : undefined;

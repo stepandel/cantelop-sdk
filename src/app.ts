@@ -4,7 +4,7 @@ import { AppConfigurationError, type ConfigurationContext } from "./app-config.j
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
 import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, SessionCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector, WorkspaceAuthLoginOptions, WorkspaceAuthLogin, WorkspaceAuthTerminal } from "./integration.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
-import { AUTH_SESSION_ID, AUTH_TERMINAL_PROTOCOL, LOGIN_ID_PATTERN, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
+import { AUTH_SESSION_ID, isAuthSessionID, AUTH_TERMINAL_PROTOCOL, LOGIN_ID_PATTERN, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
 import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
@@ -130,7 +130,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
       session(config: IntegrationSessionOptions = {}) {
         const id = config.id ?? `ses_${crypto.randomUUID().replaceAll("-", "")}`;
         assertSessionID(id); assertKeepAlive(config.keepAliveSeconds);
-        if (id === AUTH_SESSION_ID) throw new TypeError("Reserved auth Session ID");
+        if (isAuthSessionID(id)) throw new TypeError("Reserved auth Session ID");
         const keepAliveSeconds = config.keepAliveSeconds;
         const envelope = (command: SessionCommand, commandId = messageID()): AppCommandEnvelope => ({ protocolVersion: 2, id: commandId, workspace: selector, session: { id }, command });
         const keepAlive = (options: { readonly keepAliveSeconds?: number }) => {

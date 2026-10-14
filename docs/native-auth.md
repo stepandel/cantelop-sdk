@@ -105,11 +105,13 @@ Each provider has its own terms for hosted sign-in. Confirm them before offering
 - `terminal`
 - `close` (with `terminalId`)
 
+The Edge resolves the canonical Workspace ID and forwards auth to `cantelop-native-auth-{workspaceId}`. This stable internal actor is shared by auth calls in that Workspace; different Workspaces receive different actors. Ordinary Sessions keep their own IDs and reuse the same Workspace filesystem, including saved CLI credentials. The runtime still accepts the legacy auth actor for older clients.
+
 For `terminal`, the reply carries `terminalId`, `ticket` and `expiresAt`. The Edge adds `url` before returning it.
 
 **Browser → Edge.** The browser opens `GET /__cantelop/auth/workspaces/{workspaceId}/terminals/{terminalId}` as a WebSocket upgrade. This route has no integration token; the ticket authenticates it.
 - The Edge forwards only `Upgrade`, `Connection`, `Sec-WebSocket-Key`, `Sec-WebSocket-Version` and `Sec-WebSocket-Protocol`.
-- It sends them to `/__cantelop/integration/v2/sessions/cantelop-native-auth/auth/terminals/{terminalId}?workspace_id=…`.
+- It sends them to `/__cantelop/integration/v2/sessions/cantelop-native-auth-{workspaceId}/auth/terminals/{terminalId}?workspace_id=…`.
 - Cookies and authorization headers are dropped.
 
 **Platform → Sandbox.** The platform terminates the browser's WebSocket and speaks HTTP to the Workspace's running auth Sandbox. Every call carries the ticket in `X-Cantelop-Terminal-Ticket`, alongside the usual `X-Cantelop-Sandbox-ID`. All routes are `POST /__cantelop/v2/runtime/auth/terminals/{terminalId}/…`:

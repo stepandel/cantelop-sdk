@@ -209,3 +209,22 @@ test("operation admission limits never invoke rejected harness input or cancel o
   assert.equal(queues, 256); assert.equal(steers, 0); assert.equal(cancels, 0);
   exit.resolve();
 });
+
+
+test("scoped auth actors must belong to their Workspace and cannot dispatch agent tasks", async t => {
+  let statuses = 0, creates = 0;
+  const runtime = { create() { creates++; throw new Error("auth must not create a harness"); } };
+  const auth = { status() { statuses++; return true; }, logout() {}, terminal() { throw new Error("unused"); } };
+  const scoped = await fixture(t, runtime, "cantelop-native-auth-wsp_" + "b".repeat(32), { auth });
+  await scoped.send(901, { type: "auth", auth: { type: "status" } }, true);
+  await scoped.settled(901);
+  assert.deepEqual((await scoped.reply(901)).reply, { type: "status", authenticated: true });
+  await scoped.send(902, { type: "dispatch", message: "not auth" });
+  await scoped.settled(902);
+  assert.equal((await scoped.status(902)).state, "failed");
+  const foreign = await fixture(t, runtime, "cantelop-native-auth-wsp_" + "c".repeat(32), { auth });
+  await foreign.send(903, { type: "auth", auth: { type: "status" } }, true);
+  await foreign.settled(903);
+  assert.equal((await foreign.status(903)).state, "failed");
+  assert.deepEqual({ statuses, creates }, { statuses: 1, creates: 0 });
+});
