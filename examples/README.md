@@ -36,7 +36,7 @@ Use `session.dispatch(message)` to queue ordinary work, `session.steer(message)`
 
 Codex, Claude and OpenCode forward native JSON events, fragmenting oversized frames. They require no shared provider API keys. Native authentication and conversation metadata live in the user's Workspace; live SQLite state stays local (OpenCode restores through native export/import). Custom images install pinned stock CLIs. These examples’ queues remain incarnation-local; durable pending jobs and recovery are application-owned.
 
-This 1.0 prerelease requires the coordinated CLI/platform implementation with CLI build protocol 6 and project manifest schema 3. Generated Edge/native deployment and App credential provisioning are handled by that implementation.
+Run and deploy an example with Cantelop CLI 0.15.2 or newer: `cantelop dev` runs it locally, and `cantelop deploy` uploads its generated Edge and Sandbox artifacts and provisions App credentials.
 
 Each deployment example has one `tsconfig.json` covering its application and runtime code. Relative imports use `.ts` to reference the source files directly; TypeScript checks them without emitting files, and the Cantelop compiler bundles deployment artifacts.
 

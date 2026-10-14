@@ -11,4 +11,4 @@ const result = await research.workspace({ slug: "customer-123" }).session().requ
 
 The same Workspace slug addresses separate App namespaces. App names are explicit deployment identities; export names can change independently. The [compiler](../../docs/runtime-definitions.md) builds an isolated runtime/Edge pair per App and removes both implementations from the shared backend module. `cantelop.json` selects the definition module without repeating App names.
 
-Use `buildAppArtifacts` for all Apps, or select `app: "support-agent"`/`"research-agent"` when building an individual artifact. Configure matching App-scoped credentials for both names in the client profile. Live deployment requires coordinated CLI/platform adoption of this unpublished SDK contract.
+Use `buildAppArtifacts` for all Apps, or select `app: "support-agent"`/`"research-agent"` when building an individual artifact. Configure matching App-scoped credentials for both names in the client profile. Deploy each App with `cantelop deploy --app support-agent` and `cantelop deploy --app research-agent`.

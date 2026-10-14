@@ -56,11 +56,11 @@ consumer.
 Existing tags do not automatically gain GitHub Releases when the workflow is
 updated. If a version was already published to npm, create its missing GitHub
 Release directly instead of rerunning npm publication. For example, after
-confirming `@cantelop/sdk@0.14.0` is published:
+confirming `@cantelop/sdk@1.0.0` is published:
 
 ```sh
-gh release create sdk-v0.14.0 --repo stepandel/cantelop-sdk \
-  --verify-tag --generate-notes --title "SDK 0.14.0"
+gh release create sdk-v1.0.0 --repo stepandel/cantelop-sdk \
+  --verify-tag --generate-notes --title "SDK 1.0.0"
 ```
 
 For a prerelease, also pass `--prerelease --latest=false`. The same command can
