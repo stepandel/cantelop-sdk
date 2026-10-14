@@ -28,7 +28,7 @@ test('web chat sends an App command, streams its reply and excludes another mess
   const calls = []; let cancelled = false;
   await withServer(async request => {
     const envelope = await request.json(); calls.push(envelope);
-    assert.equal(new URL(request.url).pathname, '/commands');
+    assert.equal(new URL(request.url).pathname, `/commands/${envelope.command.type}`);
     if (envelope.command.type === 'dispatch') return Response.json({ protocolVersion: 2, id: envelope.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
     return new Response(new ReadableStream({
       start(controller) { controller.enqueue(new TextEncoder().encode(

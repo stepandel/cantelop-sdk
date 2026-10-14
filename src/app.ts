@@ -7,7 +7,7 @@ import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.j
 import { AUTH_KEEP_ALIVE_SECONDS, AUTH_SESSION_ID, isAuthSessionID, AUTH_TERMINAL_PROTOCOL, LOGIN_ID_PATTERN, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
-import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
+import { MAX_COMMAND_BYTES, appCommandPath, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** A named App with a typed runtime and its own Workspace namespace. */
 export class App<Message = unknown, Event = never, Reply = never, View = unknown> {
@@ -42,7 +42,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
     function send(envelope: AppCommandEnvelope, signal?: AbortSignal) {
       signal?.throwIfAborted();
       validateCommand(envelope);
-      return requestJSON(edgeFetch, APP_COMMAND_PATH, { method: "POST", body: envelope, ...(signal === undefined ? {} : { signal }) });
+      return requestJSON(edgeFetch, appCommandPath(envelope.command.type), { method: "POST", body: envelope, ...(signal === undefined ? {} : { signal }) });
     }
     function prepare(envelope: AppCommandEnvelope): AppCommandEnvelope {
       const serialized = JSON.stringify(envelope);
@@ -171,7 +171,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
             const url = new URL(request.url);
             const after = url.searchParams.has("after") ? { streamId: url.searchParams.get("stream_id")!, sequence: Number(url.searchParams.get("after")) } : undefined;
             const command = envelope({ type: "stream", ...(after === undefined ? {} : { after }) });
-            return edgeFetch(new Request(`https://edge.cantelop.internal${APP_COMMAND_PATH}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(command), signal: request.signal }));
+            return edgeFetch(new Request(`https://edge.cantelop.internal${appCommandPath("stream")}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(command), signal: request.signal }));
           }, id, options),
           async cancel(options: SessionCommandOptions = {}): Promise<SessionCancellation> {
             if (!options || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some(key => !["id", "signal"].includes(key))) throw new TypeError("Invalid cancellation options");

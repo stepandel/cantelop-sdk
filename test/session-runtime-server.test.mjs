@@ -145,6 +145,8 @@ test("the runtime emits the automatic receive span", async (t) => {
     "span.started", "span.completed",
   ]);
   assert.equal(observations[0].name, "session.receive");
+  // The span names the SDK command so a trace reads as the call that started it.
+  assert.deepEqual(observations[0].attributes, { "cantelop.command": "dispatch" });
   assert.deepEqual(observedMessage, {
     id: messageId, sequence: 1, payload: { prompt: "hello" },
   });

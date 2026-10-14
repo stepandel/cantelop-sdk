@@ -99,7 +99,7 @@ Each provider has its own terms for hosted sign-in. Confirm them before offering
 
 ## Protocol
 
-**Backend → Edge.** Auth uses the ordinary `/commands` route. It sends `{ type: "auth", auth }` to the reserved Session `cantelop-native-auth`, where `auth` is one of:
+**Backend → Edge.** Auth uses the ordinary command protocol at `POST /commands/auth`. It sends `{ type: "auth", auth }` to the reserved Session `cantelop-native-auth`, where `auth` is one of:
 - `status`
 - `logout`
 - `terminal`

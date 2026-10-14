@@ -361,7 +361,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
             }).finally(closeWork);
             // Request failures surface through the receipt; dispatch receipts settled at handoff.
             void workCompletion.catch(error => { if (!replyRequested) console.error("Session harness operation failed", error); });
-          });
+          }, { "cantelop.command": replyRequested ? "request" : command.type });
         });
         if ("receive" in behaviour && replyRequested && !replied) throw new Error("Session request completed without a reply");
       } finally {

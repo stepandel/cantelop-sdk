@@ -55,13 +55,13 @@ The compiler includes homepage dependencies only in Edge and removes the handler
 
 The compiler extracts webhook functions and their dependencies into the generated Edge Worker. It extracts `runtime` handlers into the Sandbox artifact. The backend transform removes both implementations and preserves the named App handles and their exports. Imports and closures shared between implementations follow their respective dependency graphs.
 
-The webhook context supplies the current App with its normal `workspace(...).session(...).method(...)` contract, including Workspace ID/slug selection, typed messages/events/replies/views, keep-alive options and submission IDs. Its internal connection invokes the same Edge command implementation locally, without a self-directed HTTP call, integration token or configuration lookup. It does not expose private platform paths. External `/commands` calls still require integration authentication and matching runtime identity.
+The webhook context supplies the current App with its normal `workspace(...).session(...).method(...)` contract, including Workspace ID/slug selection, typed messages/events/replies/views, keep-alive options and submission IDs. Its internal connection invokes the same Edge command implementation locally, without a self-directed HTTP call, integration token or configuration lookup. It does not expose private platform paths. External `/commands/*` calls still require integration authentication and matching runtime identity.
 
 Handlers must use the context's App rather than capture/import the enclosing App instance. App definitions remain declarative: route paths/options are inline literals; handlers may be imported functions, closures or inline implementations. No module evaluation occurs during extraction. Each App receives only its own routes. Webhook implementation edits do not change Session compatibility identity; runtime/type/configuration edits still can. Redeploy the Edge artifact when webhook code changes.
 
 ## HTTP and provider behavior
 
-- Routes are exact paths beneath `/webhooks/`, with one `GET` or `POST` method per path. They do not support wildcards, path parameters, middleware registration or a general API router. `/commands` is reserved.
+- Routes are exact paths beneath `/webhooks/`, with one `GET` or `POST` method per path. They do not support wildcards, path parameters, middleware registration or a general API router. `/commands/*` is reserved.
 - Routes receive the original headers, URL/query and exact body bytes. Bodies are limited to 1 MiB before the handler runs; larger bodies receive 413. Wrong methods receive 405 with `Allow`.
 - Each handler verifies its provider's authentication before using the App. Cantelop does not authenticate provider requests automatically. URL challenges and ignored events can return directly without activating a Session.
 - `env` is a frozen snapshot of the App’s declared environment values, including both ordinary variables and secrets. Explicit bindings override declared defaults. Optional unset values are `undefined`; undeclared values and reserved Cantelop bindings are excluded. Missing/empty required values return `app_environment_missing` (503), and non-string values return `app_environment_invalid` (503), before invoking the handler. `secret: true` describes deployment storage; it does not change how a value is accessed.
@@ -72,6 +72,6 @@ Handlers must use the context's App rather than capture/import the enclosing App
 
 ## Deployment
 
-The Edge manifest lists webhook paths/methods; deployment still uses a generated Worker rather than a customer API entrypoint. The CLI/platform must deploy this artifact and synchronize the declared secrets into Edge bindings as well as the runtime environment. The platform ingress must permit webhook paths to reach the Worker without requiring the integration bearer token used by `/commands`. Provider verification runs inside the webhook handler.
+The Edge manifest lists webhook paths/methods; deployment still uses a generated Worker rather than a customer API entrypoint. The CLI/platform must deploy this artifact and synchronize the declared secrets into Edge bindings as well as the runtime environment. The platform ingress must permit webhook paths to reach the Worker without requiring the integration bearer token used by `/commands/*`. Provider verification runs inside the webhook handler.
 
 The current prerelease's CLI/platform adoption remains a follow-up. No provider webhook registration, managed subscriptions or provider adapters are included. The unpublished protocol/schema versions stay unchanged.

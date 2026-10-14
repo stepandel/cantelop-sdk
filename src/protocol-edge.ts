@@ -5,7 +5,7 @@ import { RUNTIME_ID } from "./session-runtime-contract.js";
 import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
-import { APP_COMMAND_PATH, MAX_COMMAND_BYTES, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
+import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
 import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
 
 const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/auth\/workspaces\/(wsp_[0-9a-f]{32})\/terminals\/(trm_[0-9a-f]{32})$/;
@@ -41,11 +41,14 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
   async function commands(request: Request, bindings: Readonly<Record<string, unknown>>, publicOrigin = new URL(request.url).origin): Promise<Response> {
     try {
       const url = new URL(request.url);
-      if (request.method !== "POST" || url.pathname !== APP_COMMAND_PATH || url.search) throw new EdgeFailure("not_found", 404);
+      const type = appCommandType(url.pathname);
+      if (request.method !== "POST" || type === undefined || url.search) throw new EdgeFailure("not_found", 404);
       if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") throw new EdgeFailure("invalid_command", 400);
       let envelope: AppCommandEnvelope;
       try { envelope = validateCommand(await readJSON(request)); }
       catch (error) { if (error instanceof EdgeFailure) throw error; throw new EdgeFailure("invalid_command", 400); }
+      // The path names the operation for every layer in front of Edge; the body must agree.
+      if (envelope.command.type !== type) throw new EdgeFailure("command_path_mismatch", 400);
       const { workspace, session, command } = envelope;
       async function invoke(path: string, method: "GET" | "POST" | "DELETE", body?: unknown, stream = false): Promise<Response> {
         // Caller auth/context headers never cross this boundary. Outbound routing binds the App.

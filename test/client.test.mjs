@@ -43,9 +43,10 @@ test('references remain lazy, immutable and capture selectors/options; submissio
   const calls = [];
   const connection = { async fetch(request) {
     assert.equal(this, connection);
-    assert.equal(request.url, 'https://edge.cantelop.internal/commands');
     assert.equal(request.method, 'POST');
-    const body = await request.json(); calls.push(body); return accepted(body);
+    const body = await request.json(); calls.push(body);
+    assert.equal(request.url, `https://edge.cantelop.internal/commands/${body.command.type}`);
+    return accepted(body);
   } };
   const selector = { slug: 'customer' }, options = { id: 'chat', keepAliveSeconds: 300 };
   const ref = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection }).workspace(selector);

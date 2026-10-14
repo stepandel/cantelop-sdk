@@ -9,6 +9,7 @@ test('shared fixture defines dispatch and steer admission with the same message 
   assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 2);
   for (const type of ['dispatch', 'steer']) {
     const ref = session(async request => {
+      assert.equal(new URL(request.url).pathname, `/commands/${type}`);
       assert.deepEqual(await request.json(), fixture[type]);
       return Response.json(fixture.accepted);
     });
