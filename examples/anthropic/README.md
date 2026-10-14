@@ -132,7 +132,21 @@ export const agent = new CantelopClient().app<ClaudeSessionCommand, ClaudeSessio
 });
 ```
 
-Declare tools, allowed tools, MCPs, model, system prompt and turn limit in `createClaudeRuntime(...)` at App initialization. Dispatch `{type:"queue",id,text}` immediately; no configuration request is needed. Omitted settings retain native defaults and environment fallbacks. Explicit `tools: []` disables tools and `mcps: {}` disables external MCPs. The runtime uses `createClaudeHarness` internally once per incarnation. Its settings, MCP credentials and permission defaults are snapshotted.
+Declare tools, allowed tools, MCPs, model, system prompt and turn limit in `createClaudeRuntime(...)` at App initialization. Dispatch `{type:"queue",id,text}` immediately; no configuration request is needed. Omitted settings retain native defaults and environment fallbacks. Explicit `tools: []` disables tools and `mcps: {}` disables external MCPs. Each queue or steer message may also carry optional `settings` with these same fields. Omitted fields inherit App defaults; tool lists and MCP maps replace their defaults. Settings are validated and snapshotted when the task is admitted. The runtime reuses a harness for unchanged App settings and constructs a task-specific harness for overrides, preserving the native conversation. For example:
+
+```ts
+await session.dispatch({
+  type: "queue", id: task.id, text: task.prompt,
+  settings: {
+    allowedTools: ["mcp__canvas__*"],
+    mcps: { canvas: { type: "http", url: task.mcpUrl, headers: { Authorization: `Bearer ${task.token}` } } },
+    model: "sonnet", systemPrompt: task.instructions, maxTurns: 24,
+  },
+});
+```
+
+Task settings are private durable queue data and are excluded from snapshots and status events. They are removed when the task completes, fails, is interrupted, or is cancelled. Queued work keeps the settings it accepted across recovery and App configuration changes. The backend owns task-token expiry and revocation; if queued credentials expire, cancel that task and dispatch a new ID with fresh credentials. Retrying an existing ID with different settings returns `message_id_conflict`.
+
 
 The SDK persists Session configuration, history and pending IDs atomically under `<workspace>/.cantelop/<hashed-session-id>.json`. On each activation, App settings replace any legacy Session configuration while retaining conversation history and pending work. This format supports migration from existing durable Claude integrations. Running work becomes `interrupted` on replacement and is never replayed; queued work resumes on recovery. `steer` interrupts the active turn and prioritizes its new input after native cleanup. `cancel` targets a queued or active ID. History is bounded to 1,000 messages; snapshots contain the latest 50 previews. Events use the exported Session protocol, including attributed Claude fragments and `auth.required`. Authorize queue/steer/cancel requests on the application backend.
 

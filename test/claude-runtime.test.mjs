@@ -149,14 +149,17 @@ test('managed activity keeps mailbox responsive; steering precedes FIFO queue an
     await h.send({ type: 'queue', id: 'a', text: 'a' });
     await until(() => runtime.runs.length === 1);
     await h.send({ type: 'queue', id: 'b', text: 'b' });
-    await h.send({ type: 'steer', id: 'c', text: 'c' });
+    await h.send({ type: 'steer', id: 'c', text: 'c', settings: {model:'opus',maxTurns:2} });
     await until(() => runtime.runs.length === 2);
     assert.deepEqual(runtime.runs.map((r) => r.turn.text), ['a', 'c']);
     assert.equal(runtime.runs[1].turn.resume, true);
+    assert.equal(runtime.runs[1].turn.config.model, 'opus');
+    assert.equal(runtime.runs[1].turn.config.maxTurns, 2);
     assert.equal(runtime.runs[1].turn.conversationId, runtime.runs[0].turn.conversationId);
     runtime.runs[1].resolve();
     await until(() => runtime.runs.length === 3);
     assert.equal(runtime.runs[2].turn.text, 'b');
+    assert.equal(runtime.runs[2].turn.config.model, 'sonnet');
     runtime.runs[2].resolve();
     await h.idle();
     assert.ok(h.events.some((e) => e.type === 'message.status' && e.id === 'a' && e.status === 'steered'));
@@ -322,4 +325,69 @@ test('omitted App settings preserve native defaults and allow immediate tasks', 
     assert.equal(runtime.factories[0].options[key], undefined);
   runtime.runs[0].resolve();
   await h.idle();
+});
+
+
+test('queued tasks snapshot overrides, replace MCPs and tool lists, and return to App defaults', async t => {
+  const {root} = await fixture(t);
+  const runtime = new FakeClaude(), h = harness(runtime,root,{tools:['Read'],allowedTools:['Read'],mcps:{shared:{type:'http',url:'https://shared.example/mcp'}},model:'sonnet'});
+  await h.send({type:'queue',id:'a',text:'App settings'});
+  await until(() => runtime.runs.length === 1);
+  const settings = {tools:[],allowedTools:['mcp__canvas__*'],mcps:{canvas:{type:'http',url:'https://canvas.example/mcp',headers:{Authorization:'Bearer task-token'}}},model:'opus',systemPrompt:'Task rules',maxTurns:5};
+  const expected = structuredClone(settings);
+  await h.send({type:'queue',id:'b',text:'Task settings',settings});
+  settings.mcps.canvas.headers.Authorization = 'changed';
+  settings.allowedTools.push('Write');
+  await h.send({type:'queue',id:'c',text:'App settings again'});
+  await h.send({type:'snapshot'});
+  assert.ok(!JSON.stringify(h.replies).includes('task-token'));
+  assert.ok(h.replies.at(-1).messages.every(m => !('settings' in m) && !('settingsHash' in m)));
+  runtime.runs[0].resolve();
+  await until(() => runtime.runs.length === 2);
+  assert.deepEqual(runtime.runs[1].turn.config,expected);
+  runtime.runs[1].resolve();
+  await until(() => runtime.runs.length === 3);
+  assert.deepEqual(runtime.runs[2].turn.config,runtime.runs[0].turn.config);
+  assert.ok(!(await new StateStore(root,'session-a').load()).messages.find(m=>m.id==='b').settings);
+  runtime.runs[2].resolve();
+  await h.idle();
+  assert.equal(runtime.factories.length,3);
+});
+
+test('settings validation precedes steering; retries include canonical settings identity after completion', async t => {
+  const {runtime,h} = await fixture(t);
+  const settings = {model:'opus',mcps:{canvas:{type:'http',url:'https://canvas.example/mcp',headers:{Authorization:'Bearer secret',Accept:'application/json'}}}};
+  await h.send({type:'queue',id:'a',text:'Task',settings});
+  await until(() => runtime.runs.length === 1);
+  // Use receive directly: a rejected submission must not poison the fixture mailbox.
+  await assert.rejects(h.behaviour.receive({session:{id:'session-a'},message:{payload:{type:'steer',id:'invalid',text:'Invalid',settings:{tools:['--unsafe']}}}}), /Invalid tool arrays/);
+  assert.equal(runtime.runs[0].turn.signal.aborted,false);
+  await h.send({type:'queue',id:'a',text:'Task',settings:{mcps:{canvas:{headers:{Accept:'application/json',Authorization:'Bearer secret'},url:'https://canvas.example/mcp',type:'http'}},model:'opus'}});
+  assert.equal(h.events.filter(e=>e.code==='message_id_conflict').length,0);
+  runtime.runs[0].resolve();
+  await h.idle();
+  await h.send({type:'queue',id:'a',text:'Task',settings});
+  assert.equal(runtime.runs.length,1);
+  await h.send({type:'queue',id:'a',text:'Task',settings:{model:'sonnet'}});
+  assert.ok(h.events.some(e=>e.code==='message_id_conflict'));
+});
+
+test('recovery retains queued task settings; queued cancellation deletes credentials', async t => {
+  const {root} = await fixture(t);
+  const settings = {tools:['Read'],allowedTools:[],model:'sonnet',systemPrompt:'Task rules',mcps:{canvas:{type:'http',url:'https://canvas.example/mcp',headers:{Authorization:'Bearer queued-secret'}}},maxTurns:3};
+  const store = new StateStore(root,'session-a');
+  const state = await store.load();
+  state.messages.push({id:'active',text:'Active',status:'running',settings}, {id:'pending',text:'Pending',status:'queued',settings}, {id:'cancelled',text:'Cancelled',status:'queued',settings});
+  state.queue = ['pending','cancelled'];
+  await store.save(state);
+  const runtime = new FakeClaude(), replacement = harness(runtime,root,{model:'changed-app-model'});
+  await replacement.send({type:'cancel',id:'cancelled'});
+  assert.equal((await store.load()).messages.find(m=>m.id==='cancelled').settings,undefined);
+  assert.equal((await store.load()).messages.find(m=>m.id==='active').settings,undefined);
+  await replacement.send({type:'drain'});
+  await until(() => runtime.runs.length === 1);
+  assert.deepEqual(runtime.runs[0].turn.config,settings);
+  runtime.runs[0].resolve();
+  await replacement.idle();
+  assert.ok(!JSON.stringify((await store.load()).messages).includes('queued-secret'));
 });

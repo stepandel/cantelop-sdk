@@ -1,12 +1,17 @@
 /// <reference types="node" />
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import type { ClaudeSessionMessage as Message, ClaudeSessionConfig as SessionConfig } from './claude-protocol.js'
+import type { ClaudeSessionMessage as Message, ClaudeSessionConfig as SessionConfig, ClaudeSessionSettings } from './claude-protocol.js'
+/** Private durable work record. Settings may contain credentials; never expose in snapshots. */
+export interface WorkMessage extends Message {
+  settings?: ClaudeSessionSettings
+  settingsHash?: string
+}
 export interface State {
   conversationId: string
   resume: boolean
   config?: SessionConfig
-  messages: Message[]
+  messages: WorkMessage[]
   queue: string[]
 }
 export class StateStore {
