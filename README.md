@@ -2,7 +2,7 @@
 
 Cantelop runs agents in isolated Sandboxes with durable Workspaces. The 1.0 SDK exposes App → Workspace → Session directly to application backends. Developers define their Session runtime; the SDK generates the protocol-managed Edge API and the platform deploys it with opinionated middleware.
 
-This repository prepares **1.0.0-alpha.10**. Apps use backend resource APIs and runtime-only project schema **3** with CLI build protocol **6**. Custom HTTP ingress is optional and reserved for webhooks. Native auth terminal providers additionally require compatible platform terminal transport; see [integration contracts](docs/integration-foundation.md) and [native auth](docs/native-auth.md).
+This repository prepares **1.0.0-alpha.11**. Apps use backend resource APIs and runtime-only project schema **3** with CLI build protocol **6**. Custom HTTP ingress is optional and reserved for webhooks. Native auth terminal providers additionally require compatible platform terminal transport; see [integration contracts](docs/integration-foundation.md) and [native auth](docs/native-auth.md).
 
 ## Integrate from an application backend
 
