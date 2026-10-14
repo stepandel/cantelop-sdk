@@ -33,7 +33,7 @@ test('Workspace auth requires an App declaration, uses a reserved Session and re
   assert.equal(await auth.logout(), false);
   assert.equal(calls[0].id, id);
   assert.deepEqual(calls.map(call => call.command.auth), [{ type: 'status' }, { type: 'terminal' }, { type: 'close', terminalId }, { type: 'logout' }]);
-  assert.ok(calls.every(call => call.session.id === 'cantelop-native-auth' && call.command.type === 'auth' && call.command.keepAliveSeconds === 900));
+  assert.ok(calls.every(call => call.session.id === 'cantelop-native-auth' && call.command.type === 'auth' && call.command.keepAliveSeconds === 0));
   // A compiled backend keeps only a marker; the provider itself stays in the Sandbox bundle.
   const compiled = client.app({ name: 'compiled', runtime, connection, auth: { [Symbol.for('dev.cantelop.sdk.compiled-auth.v1')]: true } });
   assert.equal(await compiled.workspace({ slug: 'customer' }).auth().status(), false);

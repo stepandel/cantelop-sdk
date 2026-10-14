@@ -73,7 +73,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
         const requestAuth = async (auth: AuthCommand, options: SessionCommandOptions = {}): Promise<AuthResult> => {
           const id = options.id ?? messageID(); assertMessageID(id);
           const envelope = prepare({ protocolVersion: 2, id, workspace: selector,
-            session: { id: AUTH_SESSION_ID }, command: { type: "auth", auth, timeoutMs: 120_000, keepAliveSeconds: 900 } });
+            session: { id: AUTH_SESSION_ID }, command: { type: "auth", auth, timeoutMs: 120_000, keepAliveSeconds: 0 } });
           let value: unknown;
           try { value = await send(envelope, options.signal); }
           catch (error) { throw submissionError(error, id, options.signal); }
