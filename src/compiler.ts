@@ -189,6 +189,8 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     }
     const argument = expression.arguments[0];
     if (!argument || !ts.isObjectLiteralExpression(argument) || argument.properties.some(p => ts.isSpreadAssignment(p))) return fail("App options must be a static object without spreads");
+    // Computed keys would hide options from extraction while the backend client still evaluates them.
+    if (argument.properties.some(p => p.name && !(ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)))) return fail("App options must use literal property names");
     const property = (name: string) => argument.properties.find(p => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === name);
     const nameProperty = property("name");
     if (!nameProperty || !ts.isPropertyAssignment(nameProperty) || !ts.isStringLiteral(nameProperty.initializer)) return fail("App name must be a string literal");
@@ -199,7 +201,10 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     const deployment: Record<string, unknown> = {};
     for (const key of ["environment", "dockerfile", "compatibility"]) {
       const option = property(key);
-      if (option && ts.isPropertyAssignment(option)) deployment[key] = staticValue(option.initializer);
+      if (!option) continue;
+      // Deployment metadata must reach every artifact, not only the backend client that evaluates it.
+      if (!ts.isPropertyAssignment(option)) return fail(`App ${key} must be an inline literal value`);
+      deployment[key] = staticValue(option.initializer);
     }
     let configuration;
     try { configuration = validateAppDeploymentConfiguration(deployment); }

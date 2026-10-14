@@ -189,14 +189,19 @@ Add `compatibility: { version: "1" }` to an App definition to keep its wire
 contract independent of the generated runtime fingerprint. Compatible code and
 SDK updates can then deploy before or after the backend without exact-build
 matching. Keep the version stable while commands, replies, events, views and
-semantics remain compatible. Apps without a declaration retain strict matching.
+semantics remain compatible. Declare it as an inline literal property; the
+compiler rejects shorthand or computed forms it cannot extract. Versions in the
+`native-auth.` namespace are reserved. Apps without a declaration retain strict
+matching and reject clients that send a contract with
+`session_contract_not_declared`.
 
 A breaking release can declare `compatibility: { version: "2", accepts: ["1"] }`
 only when its runtime still implements version 1. The SDK does not translate
 payloads. Session identities retain their first adopted contract; use a new
 identity for a breaking upgrade. Native authentication has a separate stable
-contract. Existing Sessions stay on their original native Build, including idle
-reactivation, while new Sessions select the current Build.
+contract and is never blocked by App contract negotiation. Existing Sessions
+stay on their original native Build, including idle reactivation, while new
+Sessions select the current Build.
 
 To adopt an existing generated client, explicitly map its deployed runtime ID:
 

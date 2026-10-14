@@ -28,6 +28,8 @@ export type AuthResult =
 export const AUTH_SESSION_ID = "cantelop-native-auth";
 /** Auth commands keep no idle window: runtime quiescence alone holds the Sandbox while a login or unsubmitted code attempt exists. */
 export const AUTH_KEEP_ALIVE_SECONDS = 0;
+/** Native auth's wire contract is stable and independent of every App contract version. */
+export const NATIVE_AUTH_CONTRACT = "native-auth.v1";
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 /** Logical Session IDs are App-wide, so each Workspace needs its own stable auth actor. */
 export function workspaceAuthSessionID(workspaceId: string): string {

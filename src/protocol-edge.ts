@@ -6,7 +6,7 @@ import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from 
 import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
-import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
+import { workspaceAuthSessionID, COMPILED_AUTH, NATIVE_AUTH_CONTRACT, TERMINAL_ID_PATTERN } from "./native-auth.js";
 import { requestContract, validateCompatibility, type AppCompatibility } from "./compatibility.js";
 
 const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/auth\/workspaces\/(wsp_[0-9a-f]{32})\/terminals\/(trm_[0-9a-f]{32})$/;
@@ -85,13 +85,15 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
             return await invoke("/__cantelop/v1/workspaces/database/credentials", "POST", { workspace_id: await resolveWorkspace() });
         }
       }
-      // Only Session commands depend on Sandbox runtime compatibility.
-      let contractVersion: string | undefined;
-      try { contractVersion = requestContract(request.headers, runtimeId, compatibility); }
-      catch { throw new EdgeFailure(compatibility ? "session_contract_mismatch" : "session_runtime_mismatch", 409); }
+      const sessionCommand = command as SessionCommand;
+      // Only Session commands depend on Sandbox runtime compatibility. Native auth keeps its own
+      // stable contract, so App contract negotiation never blocks Workspace sign-in.
+      const selection = compatibility !== undefined && sessionCommand.type === "auth"
+        ? { version: NATIVE_AUTH_CONTRACT } : requestContract(request.headers, runtimeId, compatibility);
+      if ("error" in selection) throw new EdgeFailure(selection.error, 409);
+      const contractVersion = selection.version;
       const scopedPath = (suffix = "") => sessionPath(session!.id, workspace, suffix, contractVersion);
       // Each operation owns its semantics here; no client-selected private path is forwarded.
-      const sessionCommand = command as SessionCommand;
       switch (sessionCommand.type) {
         case "dispatch": case "steer": case "request": case "auth": {
           const submission = sessionCommand;
@@ -103,7 +105,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           const workspaceId = await resolveWorkspace();
           const response = await invoke(`/__cantelop/integration/v2/${submission.type === "request" || submission.type === "auth" ? "requests" : "messages"}`, "POST", {
             session: { id: submission.type === "auth" ? workspaceAuthSessionID(workspaceId) : session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds,
-              ...(contractVersion === undefined ? {} : { contract_version: submission.type === "auth" ? "native-auth.v1" : contractVersion }) },
+              ...(contractVersion === undefined ? {} : { contract_version: contractVersion }) },
             message: { id: envelope.id, payload: encodeRuntimeCommand(submission.type === "auth" ? { type: "auth", auth: submission.auth } : { type: submission.type === "steer" ? "steer" : "dispatch", message: submission.message }) },
             ...(submission.type === "request" || submission.type === "auth" ? { timeout_ms: submission.timeoutMs } : {}),
           });

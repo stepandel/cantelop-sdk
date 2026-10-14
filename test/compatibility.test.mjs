@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AUTH_SESSION_ID } from "../dist/native-auth.js";
+import { AUTH_SESSION_ID, NATIVE_AUTH_CONTRACT } from "../dist/native-auth.js";
 import { CantelopClient } from "../dist/index.js";
 import { createProtocolWorker } from "../dist/protocol-edge.js";
 import { validateCompatibility } from "../dist/compatibility.js";
@@ -46,11 +46,48 @@ test("breaking versions, unknown legacy builds, and downgrade attempts never dis
 });
 
 test("strict Apps retain fingerprint checks and do not silently opt in", async () => {
-  const worker = createProtocolWorker({ runtimeId: "new.build", fetch: async () => { throw Error("must not dispatch"); } });
-  assert.equal((await worker.fetch(request("1", "new.build"), bindings)).status, 409);
-  assert.equal((await worker.fetch(request(undefined), bindings)).status, 409);
-  for (const compatibility of [{version:""}, {version:"1", accepts:["1","1"]}, {version:"1", accepts:["bad version"]}, {version:"1", legacyRuntimes:{"old.build":"2"}}, {version:"1", extra:true}])
-    assert.throws(() => validateCompatibility(compatibility), TypeError);
+  const worker = createProtocolWorker({ runtimeId: "new.build", auth: true, fetch: async () => { throw Error("must not dispatch"); } });
+  const auth = { type: "auth", auth: { type: "status" }, timeoutMs: 1000 };
+  // A matching fingerprint is not the problem when the deployment never declared contracts.
+  for (const [version, runtime, command, code] of [
+    ["1", "new.build", undefined, "session_contract_not_declared"],
+    [undefined, "old.build", undefined, "session_runtime_mismatch"],
+    [undefined, "old.build", auth, "session_runtime_mismatch"],
+  ]) {
+    const response = await worker.fetch(request(version, runtime, command), bindings);
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.code, code);
+  }
+});
+
+test("compatibility declarations reject values that would silently drop entries or claim native auth", () => {
+  class Mapping { constructor() { this["old.build"] = "1"; } }
+  class Declaration { constructor() { this.version = "1"; } }
+  for (const compatibility of [
+    {version:""}, {version:"1", accepts:["1","1"]}, {version:"1", accepts:["bad version"]}, {version:"1", legacyRuntimes:{"old.build":"2"}}, {version:"1", extra:true},
+    {version:"1", accepts:null}, {version:"1", legacyRuntimes:null}, {version:"1", legacyRuntimes:new Map([["old.build","1"]])}, {version:"1", legacyRuntimes:new Mapping()},
+    new Declaration(), null, {version:NATIVE_AUTH_CONTRACT}, {version:"Native-Auth.v2"}, {version:"2", accepts:[NATIVE_AUTH_CONTRACT]},
+  ]) assert.throws(() => validateCompatibility(compatibility), TypeError);
+  // The compiler produces null-prototype literals; they remain valid declarations.
+  const legacyRuntimes = Object.assign(Object.create(null), { "old.build": "1" });
+  assert.deepEqual({ ...validateCompatibility({ version: "1", legacyRuntimes }).legacyRuntimes }, { "old.build": "1" });
+});
+
+test("native auth is never blocked by App contract negotiation", async () => {
+  const contracts = [];
+  const worker = createProtocolWorker({ runtimeId: "new.build", auth: true, compatibility: { version: "2", legacyRuntimes: {} }, fetch: async req => {
+    contracts.push((await req.json()).session.contract_version);
+    return Response.json({ id, reply: { type: "status", authenticated: true } });
+  } });
+  const auth = { type: "auth", auth: { type: "status" }, timeoutMs: 1000 };
+  for (const [version, runtime] of [["1", "old.build"], [undefined, "unknown.build"], ["3", "future.build"]])
+    assert.equal((await worker.fetch(request(version, runtime, auth), bindings)).status, 200);
+  assert.deepEqual(contracts, [NATIVE_AUTH_CONTRACT, NATIVE_AUTH_CONTRACT, NATIVE_AUTH_CONTRACT]);
+  // The same client is still rejected for App Session commands.
+  const response = await worker.fetch(request("1", "old.build"), bindings);
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error.code, "session_contract_mismatch");
+  assert.equal(contracts.length, 3);
 });
 
 test("versioned reads carry the client contract through every private route", async () => {
@@ -98,4 +135,19 @@ test("compiler keeps compatibility metadata across client, Edge and native artif
   assert.notEqual(first.apps[0].edge.manifest.session_runtime_id,second.apps[0].edge.manifest.session_runtime_id);
   for (const result of [first,second]) for (const manifest of [result.apps[0].edge.manifest,result.apps[0].runtime.manifest,result.backend.manifest.apps[0]])
     assert.deepEqual(manifest.compatibility,compatibility);
+});
+
+test("compiler rejects compatibility declarations it cannot extract", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(),"cantelop-contract-"));
+  t.after(() => rm(directory,{recursive:true,force:true}));
+  const client = JSON.stringify(new URL("../dist/client.js",import.meta.url).pathname);
+  for (const [index, [declaration, option, message]] of [
+    ['const compatibility = { version: "1" };', "compatibility", /App compatibility must be an inline literal value/],
+    ['const environment = { TOKEN: { secret: true } };', "environment", /App environment must be an inline literal value/],
+    ["", '["compatibility"]: { version: "1" }', /App options must use literal property names/],
+  ].entries()) {
+    const definition = path.join(directory,`app-${index}.mts`);
+    await writeFile(definition,`import {CantelopClient} from ${client};\n${declaration}\nexport const app = new CantelopClient().app({name:"app", ${option}, runtime:{receive(){}}});\n`);
+    await assert.rejects(buildAppArtifacts({definition,outdir:path.join(directory,`out-${index}`)}), message);
+  }
 });
