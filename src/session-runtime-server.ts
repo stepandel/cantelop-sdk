@@ -37,7 +37,7 @@ import {
 import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
 import { FollowupMessages, InMemoryActivity, type ActivityLifecycle } from "./activity.js";
 import { decodeRuntimeCommand, type RuntimeCommand } from "./runtime-command.js";
-import { AUTH_SESSION_ID, isAppAuth, type AppAuth } from "./native-auth.js";
+import { isAuthSessionID, isAppAuth, type AppAuth } from "./native-auth.js";
 import { AUTH_TERMINAL_ROUTE, AuthTerminals } from "./auth-terminal.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
@@ -215,7 +215,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     const sequence = nextIntakeSequence++;
     const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
     let replied = false;
-    if (session.id === AUTH_SESSION_ID && command.type !== "auth") {
+    if (isAuthSessionID(session.id) && command.type !== "auth") {
       started();
       return Object.freeze({ generation, settled: Promise.reject(new TypeError("Reserved auth Session requires an auth command")), ...(replyHolder ? { reply: replyHolder } : {}) });
     }
@@ -240,7 +240,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
       const settled = mailbox.enqueue(message.id, async () => {
         signal.throwIfAborted();
         started();
-        if (session.id !== AUTH_SESSION_ID || !replyHolder) throw new TypeError("Invalid auth request");
+        if (!isAuthSessionID(session.id, session.workspaceId) || !replyHolder) throw new TypeError("Invalid auth request");
         if (!terminals) throw new TypeError("App does not declare auth");
         const result = await terminals.handle(command.auth, session);
         const encoded = JSON.stringify(result);
@@ -483,7 +483,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
       behaviour.onRecover !== undefined,
       behaviour.redelivery === true,
       recover,
-      boundSession?.id === AUTH_SESSION_ID ? terminals : undefined,
+      boundSession && isAuthSessionID(boundSession.id, boundSession.workspaceId) ? terminals : undefined,
       () => boundSession,
       (session) => {
         if (boundSession !== undefined &&

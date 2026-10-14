@@ -45,7 +45,7 @@ async function listen(t, server) {
 }
 
 /** Sandbox runtime plus a stand-in platform that terminates the browser WebSocket with the SDK bridge. */
-async function authRuntime(t, auth, env) {
+async function authRuntime(t, auth, env, sessionId = "cantelop-native-auth") {
   const base = await listen(t, createServer(createSessionRuntimeHandler({ create: () => assert.fail("auth must not create a harness") }, { sandboxId, auth, env })));
   let next = 0x900;
   const fetch = (path, init = {}) => globalThis.fetch(`http://${base}${path}`, { ...init, headers: { "X-Cantelop-Sandbox-ID": sandboxId, ...init.headers } });
@@ -59,7 +59,7 @@ async function authRuntime(t, auth, env) {
     async command(auth) {
       const id = `msg_${(next++).toString(16).padStart(32, "0")}`;
       const response = await fetch("/__cantelop/v2/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-        session: { id: "cantelop-native-auth", workspace_id: "wsp_" + "d".repeat(32), keep_alive_seconds: 300 },
+        session: { id: sessionId, workspace_id: "wsp_" + "d".repeat(32), keep_alive_seconds: 300 },
         message: { id, payload: { __cantelop_command: 2, type: "auth", auth } }, reply: true,
       }) });
       assert.equal(response.status, 202, await response.text());
@@ -282,6 +282,10 @@ process.stdin.setEncoding('utf8');process.stdin.on('data',code=>{if(code.trim()=
   assert.deepEqual(await runtime.command({type:"code",attemptId:started.attemptId,code:"wrong"}),{type:"error",code:"code_rejected"});
   assert.deepEqual(await runtime.command({type:"code",attemptId:started.attemptId,code:"good-code"}),{type:"status",authenticated:true});
   await settle(runtime);
+  // A replacement auth Sandbox in the same Workspace reads the credentials written by the old actor.
+  const replacement = await authRuntime(t,claudeAuth,{CLAUDE_PATH:binary,LOGIN_PTY_HELPER:helper},"cantelop-native-auth-wsp_"+"d".repeat(32));
+  assert.deepEqual(await replacement.command({type:"status"}),{type:"status",authenticated:true});
+  assert.deepEqual(await replacement.command({type:"login"}),{type:"status",authenticated:true});
   const again = await runtime.command({type:"login",force:true});
   assert.equal(again.type,"login");assert.notEqual(again.attemptId,started.attemptId);
   assert.deepEqual(await runtime.command({type:"cancel",attemptId:again.attemptId}),{type:"cancelled",attemptId:again.attemptId});

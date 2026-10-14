@@ -24,8 +24,21 @@ export type AuthResult =
   | { readonly type: "terminal"; readonly terminalId: string; readonly ticket: string; readonly expiresAt: string }
   | { readonly type: "closed"; readonly terminalId: string };
 
-/** Ordinary Sessions cannot use this ID; it addresses the Workspace auth runtime. */
+/** Reserved backend protocol placeholder; the Edge scopes it to the canonical Workspace. */
 export const AUTH_SESSION_ID = "cantelop-native-auth";
+const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
+/** Logical Session IDs are App-wide, so each Workspace needs its own stable auth actor. */
+export function workspaceAuthSessionID(workspaceId: string): string {
+  if (!WORKSPACE_ID_PATTERN.test(workspaceId)) throw new TypeError("Invalid auth Workspace ID");
+  return `${AUTH_SESSION_ID}-${workspaceId}`;
+}
+/** Accept the legacy actor for existing runtimes, while checking scoped actors against their Workspace. */
+export function isAuthSessionID(id: string, workspaceId?: string): boolean {
+  if (id === AUTH_SESSION_ID) return true;
+  const suffix = id.slice(AUTH_SESSION_ID.length + 1);
+  return id.startsWith(`${AUTH_SESSION_ID}-`) && WORKSPACE_ID_PATTERN.test(suffix) &&
+    (workspaceId === undefined || suffix === workspaceId);
+}
 /** WebSocket subprotocol; the ticket travels as the second offered subprotocol, never in the URL. */
 export const AUTH_TERMINAL_PROTOCOL = "cantelop-terminal.v1";
 export const LOGIN_ID_PATTERN = /^lgn_[0-9a-f]{32}$/;

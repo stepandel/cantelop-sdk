@@ -89,7 +89,7 @@ test('Bun: auth terminal attaches, relays input and ends with the login process'
  t.after(()=>{server.closeAllConnections();server.close();});
  const base=`http://127.0.0.1:${server.address().port}`, headers={'X-Cantelop-Sandbox-ID':sandbox};
  const id='msg_'+'4'.repeat(32);
- await fetch(`${base}/__cantelop/v2/messages`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({session:{id:'cantelop-native-auth',workspace_id:'wsp_'+'3'.repeat(32),keep_alive_seconds:600},message:{id,payload:{__cantelop_command:2,type:'auth',auth:{type:'terminal'}}},reply:true})});
+ await fetch(`${base}/__cantelop/v2/messages`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({session:{id:'cantelop-native-auth-wsp_'+'3'.repeat(32),workspace_id:'wsp_'+'3'.repeat(32),keep_alive_seconds:600},message:{id,payload:{__cantelop_command:2,type:'auth',auth:{type:'terminal'}}},reply:true})});
  await until(async()=> (await(await fetch(`${base}/__cantelop/v2/messages/${id}`,{headers})).json()).state==='succeeded');
  const terminal=(await(await fetch(`${base}/__cantelop/v2/messages/${id}/reply`,{headers})).json()).reply;
  const route=op=>`${base}/__cantelop/v2/runtime/auth/terminals/${terminal.terminalId}/${op}`, ticket={...headers,'X-Cantelop-Terminal-Ticket':terminal.ticket};
