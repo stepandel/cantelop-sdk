@@ -159,6 +159,10 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     }
     if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
     if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
+    if (ts.isArrayLiteralExpression(node)) return node.elements.map(element => {
+      if (ts.isSpreadElement(element)) return fail("App deployment configuration must use literal values");
+      return staticValue(element);
+    });
     if (ts.isObjectLiteralExpression(node)) {
       const result: Record<string, unknown> = Object.create(null);
       for (const property of node.properties) {
@@ -193,7 +197,7 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
     if (names.has(name)) return fail(`Duplicate App name: ${name}`);
     names.add(name);
     const deployment: Record<string, unknown> = {};
-    for (const key of ["environment", "dockerfile"]) {
+    for (const key of ["environment", "dockerfile", "compatibility"]) {
       const option = property(key);
       if (option && ts.isPropertyAssignment(option)) deployment[key] = staticValue(option.initializer);
     }

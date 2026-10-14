@@ -7,6 +7,7 @@ import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
 import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
+import { requestContract, validateCompatibility, type AppCompatibility } from "./compatibility.js";
 
 const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/auth\/workspaces\/(wsp_[0-9a-f]{32})\/terminals\/(trm_[0-9a-f]{32})$/;
 /** Only the WebSocket handshake crosses to the Sandbox; cookies and caller credentials never do. */
@@ -14,6 +15,7 @@ const TERMINAL_HEADERS = ["Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-Web
 
 /** Internal protocol implementation with optional App webhook ingress. */
 export interface ProtocolEdgeOptions {
+  readonly compatibility?: AppCompatibility;
   readonly runtimeId: string;
   readonly appName?: string;
   readonly webhooks?: WebhookRoutes<any, any, any, any>;
@@ -32,6 +34,7 @@ class EdgeFailure extends Error {
 export function createProtocolWorker(options: ProtocolEdgeOptions) {
   assertRuntimeID(options?.runtimeId);
   const runtimeId = options.runtimeId;
+  const compatibility = validateCompatibility(options.compatibility);
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
   const origin = options.runtimeOrigin ?? "https://runtime.cantelop.internal";
   const routes = validateWebhookRoutes(options.webhooks);
@@ -83,8 +86,10 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         }
       }
       // Only Session commands depend on Sandbox runtime compatibility.
-      if (request.headers.get("X-Cantelop-Session-Runtime") !== runtimeId) throw new EdgeFailure("session_runtime_mismatch", 409);
-      const scopedPath = (suffix = "") => sessionPath(session!.id, workspace, suffix);
+      let contractVersion: string | undefined;
+      try { contractVersion = requestContract(request.headers, runtimeId, compatibility); }
+      catch { throw new EdgeFailure(compatibility ? "session_contract_mismatch" : "session_runtime_mismatch", 409); }
+      const scopedPath = (suffix = "") => sessionPath(session!.id, workspace, suffix, contractVersion);
       // Each operation owns its semantics here; no client-selected private path is forwarded.
       const sessionCommand = command as SessionCommand;
       switch (sessionCommand.type) {
@@ -97,7 +102,8 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           if (submission.type === "auth" && !options.auth) throw new EdgeFailure("auth_not_configured", 404);
           const workspaceId = await resolveWorkspace();
           const response = await invoke(`/__cantelop/integration/v2/${submission.type === "request" || submission.type === "auth" ? "requests" : "messages"}`, "POST", {
-            session: { id: submission.type === "auth" ? workspaceAuthSessionID(workspaceId) : session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds },
+            session: { id: submission.type === "auth" ? workspaceAuthSessionID(workspaceId) : session!.id, workspace_id: workspaceId, keep_alive_seconds: keepAliveSeconds,
+              ...(contractVersion === undefined ? {} : { contract_version: submission.type === "auth" ? "native-auth.v1" : contractVersion }) },
             message: { id: envelope.id, payload: encodeRuntimeCommand(submission.type === "auth" ? { type: "auth", auth: submission.auth } : { type: submission.type === "steer" ? "steer" : "dispatch", message: submission.message }) },
             ...(submission.type === "request" || submission.type === "auth" ? { timeout_ms: submission.timeoutMs } : {}),
           });
@@ -125,6 +131,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           const response = await invoke(scopedPath("/requests"), "POST", {
             message: { id: envelope.id, payload: encodeRuntimeCommand({ type: "cancel" }) },
             keep_alive_seconds: keepAliveSeconds,
+            ...(contractVersion === undefined ? {} : { contract_version: contractVersion }),
             timeout_ms: 30_000,
           });
           if (!response.ok) return response;
@@ -177,7 +184,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         try {
           const env = requestEnvironment(environment, bindings);
           const runtime = { receive() { throw new Error("App runtime executes in the Sandbox"); }, [RUNTIME_ID]: runtimeId };
-          const app = new App<any, any, any, any>({ name: options.appName!, runtime, ...(options.auth ? { auth: { [COMPILED_AUTH]: true } as never } : {}), connection: {
+          const app = new App<any, any, any, any>({ name: options.appName!, runtime, ...(compatibility ? { compatibility } : {}), ...(options.auth ? { auth: { [COMPILED_AUTH]: true } as never } : {}), connection: {
             fetch: command => commands(command, bindings, new URL(request.url).origin),
             ...(typeof bindings.CANTELOP_LOCAL_DATABASE_ORIGIN === "string" ? { localDatabaseOrigin: bindings.CANTELOP_LOCAL_DATABASE_ORIGIN } : {}),
           } }, { env: {} });
@@ -235,8 +242,9 @@ async function boundedWebhookRequest(request: Request): Promise<Request> {
     return new Request(request, { body });
   } finally { if (!done) await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
-function sessionPath(id: string, workspace: WorkspaceSelector, suffix: string): string {
+function sessionPath(id: string, workspace: WorkspaceSelector, suffix: string, contractVersion?: string): string {
   const query = new URLSearchParams(workspace.id === undefined ? { workspace_slug: workspace.slug } : { workspace_id: workspace.id });
+  if (contractVersion !== undefined) query.set("contract_version", contractVersion);
   return `/__cantelop/integration/v2/sessions/${encodeURIComponent(id)}${suffix}?${query}`;
 }
 async function authenticate(request: Request, bindings: Readonly<Record<string, unknown>>): Promise<void> {
