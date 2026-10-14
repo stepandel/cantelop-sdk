@@ -55,7 +55,7 @@ function selector(value: unknown): AppSelector {
   return invalid();
 }
 export function assertAppOptions(value: AppOptions<any, any, any, any>): void {
-  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "homepage", "auth", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
+  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "homepage", "auth", "environment", "dockerfile", "compatibility", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
   validateAppDeploymentConfiguration(value);
   validateWebhookRoutes(value.webhooks);
   if (value.homepage !== undefined && typeof value.homepage !== "function") throw new TypeError("Invalid App homepage");

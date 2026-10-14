@@ -8,6 +8,7 @@ import { AUTH_KEEP_ALIVE_SECONDS, AUTH_SESSION_ID, isAuthSessionID, AUTH_TERMINA
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
 import { MAX_COMMAND_BYTES, appCommandPath, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
+import { CONTRACT_HEADER, validateCompatibility } from "./compatibility.js";
 
 /** A named App with a typed runtime and its own Workspace namespace. */
 export class App<Message = unknown, Event = never, Reply = never, View = unknown> {
@@ -18,6 +19,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
   readonly #sessionRuntime: SessionRuntime<Message, Event, Reply, View>;
   readonly #runtimeId: string | undefined;
   readonly #auth: boolean;
+  readonly #contractVersion: string | undefined;
 
   get runtime(): SessionRuntime<Message, Event, Reply, View> { return this.#sessionRuntime; }
 
@@ -27,6 +29,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
     assertSessionRuntime(options.runtime);
     this.#sessionRuntime = Object.freeze({ ...options.runtime });
     this.#runtimeId = (options.runtime as unknown as Record<symbol, string>)[RUNTIME_ID];
+    this.#contractVersion = validateCompatibility(options.compatibility)?.version;
     this.#connection = resolveEdgeConnection(options, context, profile);
     this.#auth = options.auth !== undefined;
   }
@@ -34,9 +37,11 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
   workspace(input: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View> {
     const connection = this.#connection;
     const runtimeId = this.#runtimeId;
+    const contractVersion = this.#contractVersion;
     const edgeFetch = (request: Request) => {
       const headers = new Headers(request.headers);
       if (runtimeId !== undefined) headers.set("X-Cantelop-Session-Runtime", runtimeId);
+      if (contractVersion !== undefined) headers.set(CONTRACT_HEADER, contractVersion);
       return connection.fetch(edgeRequest(new Request(request, { headers })));
     };
     function send(envelope: AppCommandEnvelope, signal?: AbortSignal) {

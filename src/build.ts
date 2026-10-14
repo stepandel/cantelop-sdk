@@ -105,7 +105,7 @@ export interface EdgeApiArtifact {
   readonly directory: string;
   readonly mainModule: string;
   readonly manifestFile: string;
-  readonly manifest: Readonly<{
+  readonly manifest: Readonly<AppDeploymentConfiguration & {
     schema_version: 1;
     kind: "cantelop-protocol-edge";
     main_module: "worker.mjs";
@@ -146,6 +146,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
     runtimeId: runtime.definition.id,
     appName: runtime.definition.name,
     environment: runtime.definition.environment ?? {},
+    ...(runtime.definition.compatibility === undefined ? {} : { compatibility: runtime.definition.compatibility }),
     ...(runtime.definition.auth ? { auth: true } : {}),
     ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }),
   };
@@ -160,6 +161,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
     schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
     cli_build_protocol_version: 6, integration_protocol_version: 2, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
+    ...(runtime.definition.compatibility === undefined ? {} : { compatibility: runtime.definition.compatibility }),
     ...(runtime.definition.environment === undefined ? {} : { environment: runtime.definition.environment }),
     ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
@@ -220,6 +222,7 @@ async function writeSessionManifest(outdir: string, schemaPath: string, runtimeI
     runtime_protocol_version: 2,
     integration_protocol_version: 2,
     session_runtime_id: runtimeId,
+    ...(configuration.compatibility === undefined ? {} : { compatibility: configuration.compatibility }),
     app_name: appName,
     ...(configuration.environment === undefined ? {} : { environment: configuration.environment }),
     ...(configuration.dockerfile === undefined ? {} : { dockerfile: configuration.dockerfile }),
@@ -462,7 +465,8 @@ async function writeBackendClient(compiled: Awaited<ReturnType<typeof compileApp
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, source);
   }
-  const manifest = { schema_version: 1, kind: "cantelop-backend-client", apps: compiled.apps.map(app => ({ name: app.definition.name, session_runtime_id: app.definition.id })), main_module: "client.mjs" } as const;
+  const manifest = { schema_version: 1, kind: "cantelop-backend-client", apps: compiled.apps.map(app => ({ name: app.definition.name, session_runtime_id: app.definition.id,
+    ...(app.definition.compatibility === undefined ? {} : { compatibility: app.definition.compatibility }) })), main_module: "client.mjs" } as const;
   const manifestFile = path.join(directory, "cantelop-client.json");
   await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
   return { directory, mainModule, declarationFile, manifestFile, manifest };

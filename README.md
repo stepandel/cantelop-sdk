@@ -182,3 +182,43 @@ Stock harness integrations are available for [Codex](examples/codex/README.md), 
 Apps can declare `auth` to let each Workspace sign in to a stock CLI with the user's own subscription. Sign-in uses the CLI's native process. Applications can show a link/code form or intentionally expose its terminal; native credentials remain in the Workspace. The Claude Code example uses this; see [native auth](docs/native-auth.md).
 
 Workspace auth methods are available on `app.workspace(selector).auth()`. For a provider with a `codeLogin` adapter (including packaged `claudeAuth`), `login()` returns `{authenticated:true}` or `{authenticated:false,attemptId,url,expiresAt}`. `submitCode({attemptId,code})` returns native authentication status or a stable `code_rejected` error, and `cancelLogin({attemptId})` stops that attempt. `login({force:true})` confirms native logout before starting a fresh login. The SDK owns attempts, prompt parsing, bounded private output, expiration and process cleanup. Application authorization and account preferences stay on your backend. Low-level `terminal()`/`close()` remain available for integrations that intentionally expose a native terminal; a terminal UI is not required.
+
+## Independent runtime deployments
+
+Add `compatibility: { version: "1" }` to an App definition to keep its wire
+contract independent of the generated runtime fingerprint. Compatible code and
+SDK updates can then deploy before or after the backend without exact-build
+matching. Keep the version stable while commands, replies, events, views and
+semantics remain compatible. Declare it as an inline literal property; the
+compiler rejects shorthand or computed forms it cannot extract. Versions in the
+`native-auth.` namespace are reserved. Apps without a declaration retain strict
+matching and reject clients that send a contract with
+`session_contract_not_declared`.
+
+A breaking release can declare `compatibility: { version: "2", accepts: ["1"] }`
+only when its runtime still implements version 1. The SDK does not translate
+payloads. Session identities retain their first adopted contract; use a new
+identity for a breaking upgrade. Native authentication has a separate stable
+contract and is never blocked by App contract negotiation. Existing Sessions
+stay on their original native Build, including idle reactivation, while new
+Sessions select the current Build.
+
+To adopt an existing generated client, explicitly map its deployed runtime ID:
+
+```ts
+compatibility: {
+  version: "1",
+  legacyRuntimes: { "rt_previous_generated_fingerprint": "1" },
+}
+```
+
+Only map clients whose contracts you support. Keep their mappings through future
+releases while they remain supported. Unknown legacy fingerprints are rejected.
+Adopt existing Sessions with their original version before introducing breaking
+contracts; historical unversioned state cannot be inferred automatically.
+
+This opt-in requires the platform/gateway and CLI releases that support
+compatibility declarations. Roll out the platform first, then the runtime with
+legacy mappings, then the new backend client. Retained idle Sessions protect
+their Builds from pruning and count toward existing Build limits. Destructive
+database migrations still require an explicit migration strategy for old code.
