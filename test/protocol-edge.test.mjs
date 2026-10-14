@@ -5,12 +5,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createProtocolWorker } from '../dist/protocol-edge.js';
+import { APP_COMMAND_TYPES } from '../dist/integration-protocol.js';
 import { CantelopClient } from '../dist/index.js';
 import { buildEdgeApi } from '../dist/build.js';
 const bindings = { CANTELOP_INTEGRATION_TOKEN: 'test-app-token', CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS: '120' };
 const workspaceId = 'wsp_' + '1'.repeat(32), messageId = 'msg_' + '2'.repeat(32);
-const envelope = command => ({ protocolVersion: 2, id: messageId, workspace: { slug: 'customer' }, session: { id: 'chat' }, command });
-const request = (body, headers = {}) => new Request('https://agent.example/commands', {
+const envelope = command => ({ protocolVersion: 3, id: messageId, workspace: { slug: 'customer' }, session: { id: 'chat' }, command });
+// Commands are addressed by path; a malformed body still reaches validation through a valid path.
+const commandPath = body => APP_COMMAND_TYPES.includes(body?.command?.type) ? body.command.type : 'dispatch';
+const request = (body, headers = {}) => new Request(`https://agent.example/commands/${commandPath(body)}`, {
   method: 'POST', headers: { Authorization: 'Bearer test-app-token', 'Content-Type': 'application/json', 'X-Cantelop-Session-Runtime': 'test.v1', ...headers }, body: JSON.stringify(body),
 });
 const accepted = id => Response.json({ id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
@@ -82,7 +85,10 @@ test('protocol Worker fails closed on auth, old routes, invalid commands and ove
     envelope({ type: 'stream', after: { streamId: 'a'.repeat(32), sequence: -1 } }),
   ]) assert.equal((await worker.fetch(request(body), bindings)).status, 400);
   assert.equal((await worker.fetch(request(envelope({ type: 'dispatch', message: 'x'.repeat(1024 * 1024) })), bindings)).status, 413);
-  for (const route of ['/__cantelop/app/v2/commands', '/__cantelop/v1/messages', '/__cantelop/app/v1/messages', '/__cantelop/integration/v1/sessions/chat']) {
+  // The path names the operation; a body that names another one is rejected rather than rerouted.
+  const mismatched = await worker.fetch(new Request('https://agent.example/commands/view', request(envelope({ type: 'stop' }))), bindings);
+  assert.equal(mismatched.status, 400); assert.equal((await mismatched.json()).error.code, 'command_path_mismatch');
+  for (const route of ['/commands', '/commands/', '/commands/abort', '/commands/view/extra', '/__cantelop/app/v2/commands', '/__cantelop/v1/messages', '/__cantelop/app/v1/messages', '/__cantelop/integration/v1/sessions/chat']) {
     assert.equal((await worker.fetch(new Request('https://agent.example' + route, { method: 'POST', headers: { Authorization: 'Bearer test-app-token', 'Content-Type': 'application/json' }, body: JSON.stringify(envelope({ type: 'view' })) }), bindings)).status, 404);
   }
   assert.equal(calls, 0);
@@ -97,7 +103,7 @@ test('dispatch and steer use clean admission handlers: canonical Workspace, stab
   } });
   for (const type of ['dispatch', 'steer']) {
     const response = await worker.fetch(request(envelope({ type, message: { text: 'hi' } }), { 'CANTELOP_APP_ID': 'forged', 'X-Cantelop-App-Id': 'forged' }), bindings);
-    assert.equal(response.status, 202); assert.equal((await response.json()).protocolVersion, 2);
+    assert.equal(response.status, 202); assert.equal((await response.json()).protocolVersion, 3);
     const admission = calls.at(-1);
     assert.equal(new URL(admission.url).pathname, '/__cantelop/integration/v2/messages');
     assert.deepEqual(await admission.json(), { session: { id: 'chat', workspace_id: workspaceId, keep_alive_seconds: 120 }, message: { id: messageId, payload: {__cantelop_command:2,type,message:{text:"hi"}} } });
@@ -142,7 +148,7 @@ test('SDK receipts traverse Edge and private admission/status handlers with no d
   } } });
   const ref = app.workspace({ id: workspaceId }).session({ id: 'chat' });
   for (const type of ['dispatch', 'steer']) assert.equal((await (await ref[type]('hello')).status()).state, 'unknown');
-  assert.ok(publicCalls.every(url => url === 'https://edge.cantelop.internal/commands'));
+  assert.deepEqual(publicCalls.map(url => new URL(url).pathname), ['/commands/dispatch', '/commands/status', '/commands/steer', '/commands/status']);
   assert.ok(calls.every(req => req.url.startsWith('https://runtime.cantelop.internal/__cantelop/integration/v2/')));
 });
 
@@ -173,7 +179,7 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
     await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; export default new CantelopClient().app({ name: "first-agent",runtime:{ receive() {} }});`);
     const artifact = await buildEdgeApi({ definition, outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
     assert.equal(artifact.manifest.kind, 'cantelop-protocol-edge');
-    assert.equal(artifact.manifest.integration_protocol_version, 2);
+    assert.equal(artifact.manifest.integration_protocol_version, 3);
     assert.deepEqual(artifact.manifest.optional_bindings, ['CANTELOP_INTEGRATION_TOKEN_PREVIOUS', 'CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT']);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, 'utf8')), artifact.manifest);
     const worker = (await import(pathToFileURL(artifact.mainModule).href)).default;
@@ -186,11 +192,11 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
 
 test('normal backend transport addresses only the App Edge command endpoint and never follows redirects', async () => {
   const original = globalThis.fetch; const calls = [];
-  globalThis.fetch = async req => { calls.push(req); const body = await req.json(); return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }); };
+  globalThis.fetch = async req => { calls.push(req); const body = await req.json(); return Response.json({ protocolVersion: 3, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }); };
   try {
     const session = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
     await session.dispatch('hello');
-    assert.equal(calls[0].url, 'https://agent.example/commands');
+    assert.equal(calls[0].url, 'https://agent.example/commands/dispatch');
     assert.equal(calls[0].headers.get('Authorization'), 'Bearer app-token'); assert.equal(calls[0].redirect, 'manual');
     for (const edgeUrl of ['http://outside.example', 'https://user:pass@agent.example', 'https://agent.example/path']) assert.throws(() => new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, edgeUrl, accessToken: 'token' }), /App Edge URL/);
   } finally { globalThis.fetch = original; }

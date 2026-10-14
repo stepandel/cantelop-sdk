@@ -24,8 +24,8 @@ test('one pure client owns multiple Apps with isolated captured credentials and 
     await support.workspace({slug:'tenant'}).session().stop();
     await research.workspace({slug:'tenant'}).session().stop();
     assert.deepEqual(calls.map(r=>[r.url,r.headers.get('Authorization'),r.headers.get('X-Cantelop-Session-Runtime')]),[
-      ['https://first-agent.cantelop.dev/commands','Bearer first-token','rt_first'],
-      ['https://second-agent.cantelop.dev/commands','Bearer second-token','rt_second'],
+      ['https://first-agent.cantelop.dev/commands/stop','Bearer first-token','rt_first'],
+      ['https://second-agent.cantelop.dev/commands/stop','Bearer second-token','rt_second'],
     ]);
     assert.throws(()=>cantelop.app({name:first.slug,runtime}),/Duplicate App name/);
     assert.equal(typeof cantelop.workspace,'undefined');

@@ -3,7 +3,7 @@
 A browser chat UI and an application-owned Node HTTP server demonstrate how to integrate Client → App → Workspace → Session into an existing app. This project owns its [client definition](src/cantelop.ts), [OpenAI Session behaviour](src/agent.ts), shared contracts, and `cantelop.json`. The backend and Sandbox use the same definition; no customer Edge routes are authored.
 
 ```text
-Browser → POST /api/chat → CantelopClient → App Edge /commands → agent runtime
+Browser → POST /api/chat → CantelopClient → App Edge /commands/{type} → agent runtime
 Browser ← streamed chat text ← session.stream()
 ```
 
@@ -34,7 +34,7 @@ for await (const event of session.stream({ signal })) {
 
 ## Run
 
-This SDK alpha requires the coordinated CLI/platform rollout: schema 3, build protocol 6, App integration credentials, integration-v2 commands and retained event replay. Current production CLI/platform deployments cannot run this protocol yet. The web server and UI run locally now; live agent responses require a compatible App Edge deployment. The automated tests qualify the HTTP → real SDK → controlled Edge response flow, rather than a live deployment.
+This SDK alpha requires the coordinated CLI/platform rollout: schema 3, build protocol 6, App integration credentials, protocol 3 per-command paths and retained event replay. Current production CLI/platform deployments cannot run this protocol yet. The web server and UI run locally now; live agent responses require a compatible App Edge deployment. The automated tests qualify the HTTP → real SDK → controlled Edge response flow, rather than a live deployment.
 
 1. From the SDK root, run `pnpm install` and `pnpm build`.
 2. Deploy/configure this web-chat App with a compatible CLI/platform and supply `OPENAI_API_KEY` in its runtime environment.
@@ -54,4 +54,4 @@ The composer permits one turn at a time. The server closes its subscription afte
 
 The web server binds to loopback and serves a single-user example. In an existing authenticated app, choose the Workspace from the authenticated tenant and authorize the conversation against that tenant in your own route. The browser does not supply Workspace/App selectors. Integration/provider credentials remain on the backend/runtime, and user/agent output is rendered as text.
 
-`/api/chat` is this customer's HTTP endpoint. `/commands` is the protocol-managed agent App endpoint reached by `CantelopClient`. This is the same pattern an app-owned webhook handler or job would use.
+`/api/chat` is this customer's HTTP endpoint. `/commands/*` are the protocol-managed agent App endpoints reached by `CantelopClient`. This is the same pattern an app-owned webhook handler or job would use.

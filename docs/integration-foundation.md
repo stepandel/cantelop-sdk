@@ -38,13 +38,16 @@ Edge, Sandbox, and compiled backend artifacts embed the compiler-generated runti
 
 ## Common command envelope
 
-All operations use `POST {app_url}/commands`, including streaming. The URL is unversioned; the payload carries `protocolVersion`. `CANTELOP_INTEGRATION_PROTOCOL_VERSION` is 2; this replaces the earlier alpha’s incompatible route-based protocol 1.
+Each operation has its own path: `POST {app_url}/commands/{type}`, where `{type}` is the command's `type` (`/commands/dispatch`, `/commands/view`, `/commands/workspace.resolve`, …), including streaming. The path names the operation for every layer in front of the generated Edge Worker — the platform dispatcher, request observability and the console's ingress view all see which SDK call a request is without reading its body. The body still carries the full envelope, and Edge rejects a body whose `command.type` differs from the path with `command_path_mismatch` (400). Bare `/commands` and unknown types return 404. The path is unversioned; the payload carries `protocolVersion`. `CANTELOP_INTEGRATION_PROTOCOL_VERSION` is 3; it replaces protocol 2, which sent every command to a single `/commands` path, and the earlier alpha’s protocol 1. Generated Edge manifests declare `integration_protocol_version: 3`.
 
-`app_url` is the deployed Cantelop App origin, for example `https://<app-slug>.cantelop.dev`; it is distinct from the customer backend that calls the SDK. The existing platform dispatcher selects the App by hostname and forwards the path unchanged. The generated App Edge Worker handles `/commands`; no platform path router is required.
+`app_url` is the deployed Cantelop App origin, for example `https://<app-slug>.cantelop.dev`; it is distinct from the customer backend that calls the SDK. The existing platform dispatcher selects the App by hostname and forwards the path unchanged. The generated App Edge Worker handles `/commands/*`; no platform path router is required.
 
-```json
+```http
+POST /commands/steer
+Content-Type: application/json
+
 {
-  "protocolVersion": 2,
+  "protocolVersion": 3,
   "id": "msg_0123456789abcdef0123456789abcdef",
   "workspace": { "slug": "customer" },
   "session": { "id": "conversation" },
@@ -55,7 +58,7 @@ All operations use `POST {app_url}/commands`, including streaming. The URL is un
 }
 ```
 
-`workspace` contains exactly one ID or slug. `session` contains the App-scoped ID. `id` is the submission identity for dispatch/steer/request, and the operation identity for other commands. Workspace-level commands use `session: null`. Unknown commands, unsupported fields, invalid selectors/IDs/cursors and input over 1 MiB fail before private routing. The shared fixture is `test/fixtures/integration-v2.json`.
+`workspace` contains exactly one ID or slug. `session` contains the App-scoped ID. `id` is the submission identity for dispatch/steer/request, and the operation identity for other commands. Workspace-level commands use `session: null`. Unknown commands, unsupported fields, invalid selectors/IDs/cursors and input over 1 MiB fail before private routing. The shared fixture is `test/fixtures/integration-v3.json`.
 
 | Command | Fields | Edge behavior |
 | --- | --- | --- |

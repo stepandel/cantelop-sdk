@@ -150,7 +150,7 @@ export type SessionCommand<Message = unknown> =
   | { readonly type: "stream"; readonly after?: SessionEventCursor };
 
 export type AppCommandEnvelope<Message = unknown> = {
-  readonly protocolVersion: 2;
+  readonly protocolVersion: 3;
   /** Submission identity for dispatch/steer/request; command identity otherwise. */
   readonly id: string;
   readonly workspace: WorkspaceSelector;

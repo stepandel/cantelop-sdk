@@ -2,8 +2,21 @@ import type { AppCommandEnvelope, WorkspaceSelector } from "./integration.js";
 import { isAuthCommand } from "./runtime-command.js";
 import { AUTH_SESSION_ID } from "./native-auth.js";
 
-export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
-export const APP_COMMAND_PATH = "/commands";
+export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 3;
+/** Each command has its own path so every layer between backend and Edge can see the operation. */
+export const APP_COMMAND_PATH_PREFIX = "/commands/";
+export const APP_COMMAND_TYPES = Object.freeze([
+  "workspace.resolve", "workspace.database",
+  "dispatch", "steer", "request", "auth", "cancel", "status", "view", "stop", "stream",
+] as const);
+export type AppCommandType = (typeof APP_COMMAND_TYPES)[number];
+export const appCommandPath = (type: AppCommandType) => `${APP_COMMAND_PATH_PREFIX}${type}`;
+/** The command type a path addresses, or undefined for any other path. */
+export function appCommandType(pathname: string): AppCommandType | undefined {
+  if (!pathname.startsWith(APP_COMMAND_PATH_PREFIX)) return undefined;
+  const type = pathname.slice(APP_COMMAND_PATH_PREFIX.length);
+  return (APP_COMMAND_TYPES as readonly string[]).includes(type) ? type as AppCommandType : undefined;
+}
 export const MAX_COMMAND_BYTES = 1024 * 1024;
 /** Shared by App names and App-scoped Workspace slugs. */
 export const SLUG_PATTERN = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -37,7 +50,7 @@ export function record(value: unknown): value is Record<string, unknown> {
 }
 /** Validate untrusted Edge input before any private routing or provisioning. */
 export function validateCommand(value: unknown): AppCommandEnvelope {
-  if (!record(value) || value.protocolVersion !== 2 || Object.keys(value).some(key => !["protocolVersion", "id", "workspace", "session", "command"].includes(key))) throw new TypeError("Invalid command envelope");
+  if (!record(value) || value.protocolVersion !== CANTELOP_INTEGRATION_PROTOCOL_VERSION || Object.keys(value).some(key => !["protocolVersion", "id", "workspace", "session", "command"].includes(key))) throw new TypeError("Invalid command envelope");
   assertMessageID(value.id);
   const workspace = workspaceSelector(value.workspace);
   if (Object.keys(value.workspace as object).length !== 1) throw new TypeError("Invalid Workspace selector");

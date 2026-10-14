@@ -9,8 +9,8 @@ import { buildEdgeApi, buildSessionRuntime, buildBackendClient, buildAppArtifact
 import { compileClientDefinition, compileAppDefinitions } from "../dist/compiler.js";
 const clientModule = new URL("../dist/client.js", import.meta.url).pathname;
 const messageId = "msg_" + "1".repeat(32);
-function command(type = "view") { return { protocolVersion: 2, id: messageId, workspace: { slug: "customer" }, session: { id: "chat" }, command: { type } }; }
-function request(body, runtimeId) { return new Request("https://agent.example/commands", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer scoped", ...(runtimeId === undefined ? {} : { "X-Cantelop-Session-Runtime": runtimeId }) }, body: JSON.stringify(body) }); }
+function command(type = "view") { return { protocolVersion: 3, id: messageId, workspace: { slug: "customer" }, session: { id: "chat" }, command: { type } }; }
+function request(body, runtimeId) { return new Request(`https://agent.example/commands/${body.command.type}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer scoped", ...(runtimeId === undefined ? {} : { "X-Cantelop-Session-Runtime": runtimeId }) }, body: JSON.stringify(body) }); }
 function clientSource(body = 'receive() {}', imports = '') { return `import { CantelopClient } from ${JSON.stringify(clientModule)}; ${imports}
 export const cantelop = new CantelopClient().app({ name: "first-agent", runtime: { ${body} } });`; }
 async function project(t) { const directory = await mkdtemp(path.join(tmpdir(), "cantelop-inline-")); t.after(() => rm(directory, { recursive: true, force: true })); return { directory, definition: path.join(directory, "cantelop.mts"), outdir: path.join(directory, "out") }; }

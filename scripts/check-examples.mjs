@@ -39,7 +39,7 @@ try {
       assert.doesNotMatch(await readFile(edge.mainModule, "utf8"), /Suggest a concise, helpful next step/);
     }
     assert.equal(edge.manifest.kind, "cantelop-protocol-edge");
-    assert.equal(edge.manifest.integration_protocol_version, 2);
+    assert.equal(edge.manifest.integration_protocol_version, 3);
     assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);
     if (["codex", "anthropic", "opencode"].includes(name)) {
       if (name === "anthropic") {

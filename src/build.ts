@@ -59,7 +59,7 @@ export interface SessionRuntimeManifest extends AppDeploymentConfiguration {
   readonly main_module: "session-runtime.mjs";
   readonly cli_build_protocol_version: 6;
   readonly runtime_protocol_version: 2;
-  readonly integration_protocol_version: 2;
+  readonly integration_protocol_version: 3;
   readonly session_runtime_id: string;
   readonly app_name: string;
   /** Advertised only after coordinated actor scheduling, attribution and projection support. */
@@ -110,7 +110,7 @@ export interface EdgeApiArtifact {
     kind: "cantelop-protocol-edge";
     main_module: "worker.mjs";
     cli_build_protocol_version: 6;
-    integration_protocol_version: 2;
+    integration_protocol_version: 3;
     session_runtime_id: string;
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
     /** The Worker also accepts a rotated-out token until the paired expiry passes. */
@@ -159,7 +159,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
   });
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
     schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
-    cli_build_protocol_version: 6, integration_protocol_version: 2, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
+    cli_build_protocol_version: 6, integration_protocol_version: 3, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
     ...(runtime.definition.environment === undefined ? {} : { environment: runtime.definition.environment }),
     ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
@@ -218,7 +218,7 @@ async function writeSessionManifest(outdir: string, schemaPath: string, runtimeI
     main_module: SESSION_RUNTIME_MAIN_MODULE,
     cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
     runtime_protocol_version: 2,
-    integration_protocol_version: 2,
+    integration_protocol_version: 3,
     session_runtime_id: runtimeId,
     app_name: appName,
     ...(configuration.environment === undefined ? {} : { environment: configuration.environment }),
