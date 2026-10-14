@@ -34,7 +34,7 @@ for await (const event of session.stream({ signal })) {
 
 ## Run
 
-This SDK alpha requires the coordinated CLI/platform rollout: schema 3, build protocol 6, App integration credentials, protocol 3 per-command paths and retained event replay. Current production CLI/platform deployments cannot run this protocol yet. The web server and UI run locally now; live agent responses require a compatible App Edge deployment. The automated tests qualify the HTTP → real SDK → controlled Edge response flow, rather than a live deployment.
+This SDK alpha requires the coordinated CLI/platform rollout: schema 3, build protocol 6, App integration credentials, integration-v2 per-command paths and retained event replay. Current production CLI/platform deployments cannot run this protocol yet. The web server and UI run locally now; live agent responses require a compatible App Edge deployment. The automated tests qualify the HTTP → real SDK → controlled Edge response flow, rather than a live deployment.
 
 1. From the SDK root, run `pnpm install` and `pnpm build`.
 2. Deploy/configure this web-chat App with a compatible CLI/platform and supply `OPENAI_API_KEY` in its runtime environment.

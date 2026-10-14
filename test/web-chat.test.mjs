@@ -29,7 +29,7 @@ test('web chat sends an App command, streams its reply and excludes another mess
   await withServer(async request => {
     const envelope = await request.json(); calls.push(envelope);
     assert.equal(new URL(request.url).pathname, `/commands/${envelope.command.type}`);
-    if (envelope.command.type === 'dispatch') return Response.json({ protocolVersion: 3, id: envelope.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
+    if (envelope.command.type === 'dispatch') return Response.json({ protocolVersion: 2, id: envelope.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
     return new Response(new ReadableStream({
       start(controller) { controller.enqueue(new TextEncoder().encode(
         frame(1, { type: 'text_delta', delta: 'old' }, 'msg_' + '4'.repeat(32)) +
@@ -75,7 +75,7 @@ test('configuration and broken stream errors reach the browser without secrets o
   await withServer(async request => {
     calls++;
     const body = await request.json();
-    if (body.command.type === 'dispatch') return Response.json({ protocolVersion: 3, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
+    if (body.command.type === 'dispatch') return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
     return new Response('', { headers: { 'Content-Type': 'text/event-stream' } });
   }, async url => {
     const lines = (await (await chat(url)).text()).trim().split('\n').map(JSON.parse);
@@ -90,7 +90,7 @@ test('browser disconnect releases the SDK subscription without sending cancellat
   const released = new Promise(resolve => { release = resolve; });
   await withServer(async request => {
     const body = await request.json(); commands.push(body.command.type);
-    if (body.command.type === 'dispatch') return Response.json({ protocolVersion: 3, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
+    if (body.command.type === 'dispatch') return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' });
     return new Response(new ReadableStream({
       start(controller) { controller.enqueue(new TextEncoder().encode(frame(1, { type: 'text_delta', delta: 'Working' }))); },
       cancel() { release(); },

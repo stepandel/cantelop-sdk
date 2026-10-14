@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, RemoteAppError } from '../dist/index.js';
-const fixture = JSON.parse(await readFile(new URL('./fixtures/integration-v3.json', import.meta.url), 'utf8'));
+const fixture = JSON.parse(await readFile(new URL('./fixtures/integration-v2.json', import.meta.url), 'utf8'));
 const session = fetch => new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection: { fetch } }).workspace(fixture.workspace).session({ id: fixture.session.id });
 
 test('shared fixture defines dispatch and steer admission with the same message shape and identity', async () => {
-  assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 3);
+  assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 2);
   for (const type of ['dispatch', 'steer']) {
     const ref = session(async request => {
       assert.equal(new URL(request.url).pathname, `/commands/${type}`);
@@ -33,7 +33,7 @@ test('cancellation interrupts the active run and distinguishes requested from id
     const ref = session(async request => {
       const body = await request.json(); calls.push(body);
       assert.deepEqual(body.command, { type: 'cancel' });
-      return Response.json({ protocolVersion: 3, id: body.id, state });
+      return Response.json({ protocolVersion: 2, id: body.id, state });
     });
     const result = await ref.cancel();
     assert.equal(result.state, state); assert.deepEqual(Object.keys(result), ["state"]);
@@ -48,7 +48,7 @@ test('cancellation retries retain command identity and remote errors; malformed 
   await assert.rejects(failed.cancel({ id: commandId }), error => error.code === 'command_outcome_unknown' && error.messageId === commandId);
   assert.equal(calls, 1);
   await assert.rejects(session(async () => Response.json({ error: { code: 'workspace_conflict' } }, { status: 409 })).cancel(), error => error.code === 'workspace_conflict' && error.status === 409);
-  for (const value of [{ protocolVersion: 3, id: 'other', state: 'requested' }, { protocolVersion: 3, id: fixture.id, state: 'done' }]) await assert.rejects(session(async () => Response.json(value)).cancel(), /invalid_cancellation_response/);
+  for (const value of [{ protocolVersion: 2, id: 'other', state: 'requested' }, { protocolVersion: 2, id: fixture.id, state: 'done' }]) await assert.rejects(session(async () => Response.json(value)).cancel(), /invalid_cancellation_response/);
 });
 
 test('durable view is a typed projection and carries the atomic subscription boundary without provisioning', async () => {

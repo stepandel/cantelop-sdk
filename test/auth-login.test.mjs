@@ -7,7 +7,7 @@ function fixture(reply) {
     connection:{async fetch(request){
       const envelope=await request.json(); commands.push(envelope);
       assert.deepEqual(envelope.workspace,{slug:"customer"});assert.equal(envelope.session.id,"cantelop-native-auth");
-      return Response.json({protocolVersion:3,id:envelope.id,reply:reply(envelope.command.auth)});
+      return Response.json({protocolVersion:2,id:envelope.id,reply:reply(envelope.command.auth)});
     }},
   });
   return {auth:app.workspace({slug:"customer"}).auth(),commands};

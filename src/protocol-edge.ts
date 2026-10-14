@@ -5,7 +5,7 @@ import { RUNTIME_ID } from "./session-runtime-contract.js";
 import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
-import { CANTELOP_INTEGRATION_PROTOCOL_VERSION as PROTOCOL_VERSION, MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
+import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
 import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
 
 const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/auth\/workspaces\/(wsp_[0-9a-f]{32})\/terminals\/(trm_[0-9a-f]{32})$/;
@@ -58,11 +58,11 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         }));
         if (stream) return response;
-        if (response.status === 204) return Response.json({ protocolVersion: PROTOCOL_VERSION, id: envelope.id });
+        if (response.status === 204) return Response.json({ protocolVersion: 2, id: envelope.id });
         const value = await readPlatformJSON(response);
         if (!response.ok) return Response.json(value, { status: response.status });
         if (!record(value)) throw new EdgeFailure("invalid_platform_response", 502);
-        return Response.json({ ...value, protocolVersion: PROTOCOL_VERSION }, { status: response.status });
+        return Response.json({ ...value, protocolVersion: 2 }, { status: response.status });
       }
       async function resolveWorkspace(): Promise<string> {
         if (workspace.id !== undefined) return workspace.id;
@@ -130,7 +130,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           if (!response.ok) return response;
           const result = await readPlatformJSON(response);
           if (!record(result) || !record(result.reply)) throw new EdgeFailure("invalid_platform_response", 502);
-          return Response.json({ ...result.reply, protocolVersion: PROTOCOL_VERSION });
+          return Response.json({ ...result.reply, protocolVersion: 2 });
         }
         case "status": {
           const status = sessionCommand;

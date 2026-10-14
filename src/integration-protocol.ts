@@ -2,7 +2,7 @@ import type { AppCommandEnvelope, WorkspaceSelector } from "./integration.js";
 import { isAuthCommand } from "./runtime-command.js";
 import { AUTH_SESSION_ID } from "./native-auth.js";
 
-export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 3;
+export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
 /** Each command has its own path so every layer between backend and Edge can see the operation. */
 export const APP_COMMAND_PATH_PREFIX = "/commands/";
 export const APP_COMMAND_TYPES = Object.freeze([
@@ -50,7 +50,7 @@ export function record(value: unknown): value is Record<string, unknown> {
 }
 /** Validate untrusted Edge input before any private routing or provisioning. */
 export function validateCommand(value: unknown): AppCommandEnvelope {
-  if (!record(value) || value.protocolVersion !== CANTELOP_INTEGRATION_PROTOCOL_VERSION || Object.keys(value).some(key => !["protocolVersion", "id", "workspace", "session", "command"].includes(key))) throw new TypeError("Invalid command envelope");
+  if (!record(value) || value.protocolVersion !== 2 || Object.keys(value).some(key => !["protocolVersion", "id", "workspace", "session", "command"].includes(key))) throw new TypeError("Invalid command envelope");
   assertMessageID(value.id);
   const workspace = workspaceSelector(value.workspace);
   if (Object.keys(value.workspace as object).length !== 1) throw new TypeError("Invalid Workspace selector");

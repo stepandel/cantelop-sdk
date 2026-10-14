@@ -10,7 +10,7 @@ import { CantelopClient } from '../dist/index.js';
 import { buildEdgeApi } from '../dist/build.js';
 const bindings = { CANTELOP_INTEGRATION_TOKEN: 'test-app-token', CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS: '120' };
 const workspaceId = 'wsp_' + '1'.repeat(32), messageId = 'msg_' + '2'.repeat(32);
-const envelope = command => ({ protocolVersion: 3, id: messageId, workspace: { slug: 'customer' }, session: { id: 'chat' }, command });
+const envelope = command => ({ protocolVersion: 2, id: messageId, workspace: { slug: 'customer' }, session: { id: 'chat' }, command });
 // Commands are addressed by path; a malformed body still reaches validation through a valid path.
 const commandPath = body => APP_COMMAND_TYPES.includes(body?.command?.type) ? body.command.type : 'dispatch';
 const request = (body, headers = {}) => new Request(`https://agent.example/commands/${commandPath(body)}`, {
@@ -103,7 +103,7 @@ test('dispatch and steer use clean admission handlers: canonical Workspace, stab
   } });
   for (const type of ['dispatch', 'steer']) {
     const response = await worker.fetch(request(envelope({ type, message: { text: 'hi' } }), { 'CANTELOP_APP_ID': 'forged', 'X-Cantelop-App-Id': 'forged' }), bindings);
-    assert.equal(response.status, 202); assert.equal((await response.json()).protocolVersion, 3);
+    assert.equal(response.status, 202); assert.equal((await response.json()).protocolVersion, 2);
     const admission = calls.at(-1);
     assert.equal(new URL(admission.url).pathname, '/__cantelop/integration/v2/messages');
     assert.deepEqual(await admission.json(), { session: { id: 'chat', workspace_id: workspaceId, keep_alive_seconds: 120 }, message: { id: messageId, payload: {__cantelop_command:2,type,message:{text:"hi"}} } });
@@ -179,7 +179,7 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
     await writeFile(definition, `import { CantelopClient } from ${JSON.stringify(new URL("../dist/client.js", import.meta.url).pathname)}; export default new CantelopClient().app({ name: "first-agent",runtime:{ receive() {} }});`);
     const artifact = await buildEdgeApi({ definition, outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
     assert.equal(artifact.manifest.kind, 'cantelop-protocol-edge');
-    assert.equal(artifact.manifest.integration_protocol_version, 3);
+    assert.equal(artifact.manifest.integration_protocol_version, 2);
     assert.deepEqual(artifact.manifest.optional_bindings, ['CANTELOP_INTEGRATION_TOKEN_PREVIOUS', 'CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT']);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, 'utf8')), artifact.manifest);
     const worker = (await import(pathToFileURL(artifact.mainModule).href)).default;
@@ -192,7 +192,7 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
 
 test('normal backend transport addresses only the App Edge command endpoint and never follows redirects', async () => {
   const original = globalThis.fetch; const calls = [];
-  globalThis.fetch = async req => { calls.push(req); const body = await req.json(); return Response.json({ protocolVersion: 3, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }); };
+  globalThis.fetch = async req => { calls.push(req); const body = await req.json(); return Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }); };
   try {
     const session = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, edgeUrl: 'https://agent.example', accessToken: 'app-token' }).workspace({ id: workspaceId }).session();
     await session.dispatch('hello');

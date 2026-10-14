@@ -3,14 +3,14 @@ import test from 'node:test';
 import { CantelopClient, RemoteAppError } from '../dist/index.js';
 const workspaceId = 'wsp_' + '1'.repeat(32);
 const workspace = { id: workspaceId, app_id: 'app_' + '2'.repeat(32), slug: 'customer', hostname: 'customer--agent.app.cantelop.dev', created_at: '2026-10-09T00:00:00Z', updated_at: '2026-10-09T00:00:00Z' };
-const accepted = body => Response.json({ protocolVersion: 3, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
+const accepted = body => Response.json({ protocolVersion: 2, id: body.id, status: 'accepted', accepted_at: '2026-10-09T00:00:00Z' }, { status: 202 });
 
 test('Workspace auth requires an App declaration, uses a reserved Session and returns a browser terminal', async () => {
   const calls = [], id = 'msg_' + 'a'.repeat(32), terminalId = 'trm_' + 'c'.repeat(32), ticket = 'd'.repeat(64);
   const connection = { async fetch(request) {
     const body = await request.json(); calls.push(body);
     const auth = body.command.auth;
-    return Response.json({ protocolVersion: 3, id: body.id, reply: auth.type === 'terminal'
+    return Response.json({ protocolVersion: 2, id: body.id, reply: auth.type === 'terminal'
       ? { type: 'terminal', terminalId, ticket, expiresAt: '2026-10-12T00:01:00Z', url: `wss://agent.example/__cantelop/auth/workspaces/wsp_${'1'.repeat(32)}/terminals/${terminalId}` }
       : auth.type === 'close' ? { type: 'closed', terminalId: auth.terminalId }
       : { type: 'status', authenticated: false } });
@@ -91,8 +91,8 @@ test('request retry identity and stop/reactivation use commands without provisio
   const calls = [], id = 'msg_' + '3'.repeat(32);
   const session = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection: { async fetch(request) {
     const body = await request.json(); calls.push(body);
-    if (body.command.type === 'stop') return Response.json({ protocolVersion: 3, id: body.id });
-    if (body.command.type === 'request') return Response.json({ protocolVersion: 3, id: body.id, reply: { answer: 'done' } });
+    if (body.command.type === 'stop') return Response.json({ protocolVersion: 2, id: body.id });
+    if (body.command.type === 'request') return Response.json({ protocolVersion: 2, id: body.id, reply: { answer: 'done' } });
     return accepted(body);
   } } }).workspace({ slug: 'customer' }).session({ id: 'chat' });
   assert.deepEqual(await session.request('hi', { id, timeoutMs: 15000 }), { answer: 'done' });
@@ -124,7 +124,7 @@ test('dispatch and steer expose stable retry identities for ambiguous admission 
     const ref = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection: { fetch() { calls++; throw new TypeError('fetch failed'); } } }).workspace({ slug: 'customer' }).session();
     await assert.rejects(ref[type]('hello'), error => error instanceof RemoteAppError && error.code === 'command_outcome_unknown' && /^msg_[0-9a-f]{32}$/.test(error.messageId));
     assert.equal(calls, 1);
-    const invalid = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection: { fetch: async () => Response.json({ protocolVersion: 3, id: 'wrong', status: 'accepted' }) } }).workspace({ id: workspaceId }).session();
+    const invalid = new CantelopClient().app({ name: "first-agent", runtime: { receive() {} }, connection: { fetch: async () => Response.json({ protocolVersion: 2, id: 'wrong', status: 'accepted' }) } }).workspace({ id: workspaceId }).session();
     await assert.rejects(invalid[type]('hello'), error => error.code === 'invalid_message_response' && !!error.messageId);
   }
 });

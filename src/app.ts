@@ -7,7 +7,7 @@ import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.j
 import { AUTH_KEEP_ALIVE_SECONDS, AUTH_SESSION_ID, isAuthSessionID, AUTH_TERMINAL_PROTOCOL, LOGIN_ID_PATTERN, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
-import { CANTELOP_INTEGRATION_PROTOCOL_VERSION as PROTOCOL_VERSION, MAX_COMMAND_BYTES, appCommandPath, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
+import { MAX_COMMAND_BYTES, appCommandPath, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** A named App with a typed runtime and its own Workspace namespace. */
 export class App<Message = unknown, Event = never, Reply = never, View = unknown> {
@@ -52,7 +52,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
     const selector = workspaceSelector(input);
     const authDeclared = this.#auth;
     let pending: Promise<Workspace> | undefined;
-    const workspaceCommand = (type: "workspace.resolve" | "workspace.database", workspace = selector) => send({ protocolVersion: PROTOCOL_VERSION, id: messageID(), workspace, session: null, command: { type } });
+    const workspaceCommand = (type: "workspace.resolve" | "workspace.database", workspace = selector) => send({ protocolVersion: 2, id: messageID(), workspace, session: null, command: { type } });
     function resolve(): Promise<Workspace> {
       pending ??= workspaceCommand("workspace.resolve").then(value => {
         const databaseFetch = async (request: Request) => {
@@ -72,12 +72,12 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
         if (!authDeclared) throw new TypeError("App does not declare auth");
         const requestAuth = async (auth: AuthCommand, options: SessionCommandOptions = {}): Promise<AuthResult> => {
           const id = options.id ?? messageID(); assertMessageID(id);
-          const envelope = prepare({ protocolVersion: PROTOCOL_VERSION, id, workspace: selector,
+          const envelope = prepare({ protocolVersion: 2, id, workspace: selector,
             session: { id: AUTH_SESSION_ID }, command: { type: "auth", auth, timeoutMs: 120_000, keepAliveSeconds: AUTH_KEEP_ALIVE_SECONDS } });
           let value: unknown;
           try { value = await send(envelope, options.signal); }
           catch (error) { throw submissionError(error, id, options.signal); }
-          if (!record(value) || value.protocolVersion !== PROTOCOL_VERSION || value.id !== id || !record(value.reply) || typeof value.reply.type !== "string")
+          if (!record(value) || value.protocolVersion !== 2 || value.id !== id || !record(value.reply) || typeof value.reply.type !== "string")
             throw new RemoteAppError("invalid_auth_response", 0, id);
           if (value.reply.type === "error") {
             const codes = ["auth_logout_unconfirmed","code_login_not_supported","login_failed","login_not_active","login_timeout","code_rejected"];
@@ -132,7 +132,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
         assertSessionID(id); assertKeepAlive(config.keepAliveSeconds);
         if (isAuthSessionID(id)) throw new TypeError("Reserved auth Session ID");
         const keepAliveSeconds = config.keepAliveSeconds;
-        const envelope = (command: SessionCommand, commandId = messageID()): AppCommandEnvelope => ({ protocolVersion: PROTOCOL_VERSION, id: commandId, workspace: selector, session: { id }, command });
+        const envelope = (command: SessionCommand, commandId = messageID()): AppCommandEnvelope => ({ protocolVersion: 2, id: commandId, workspace: selector, session: { id }, command });
         const keepAlive = (options: { readonly keepAliveSeconds?: number }) => {
           assertKeepAlive(options.keepAliveSeconds);
           const value = options.keepAliveSeconds ?? keepAliveSeconds;
@@ -145,11 +145,11 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
           let value: unknown;
           try { value = await send(command, options.signal); }
           catch (error) { throw submissionError(error, submissionId, options.signal); }
-          if (!record(value) || value.protocolVersion !== PROTOCOL_VERSION || value.id !== submissionId || value.status !== "accepted" || typeof value.accepted_at !== "string" || !Number.isFinite(Date.parse(value.accepted_at))) throw new RemoteAppError("invalid_message_response", 0, submissionId);
+          if (!record(value) || value.protocolVersion !== 2 || value.id !== submissionId || value.status !== "accepted" || typeof value.accepted_at !== "string" || !Number.isFinite(Date.parse(value.accepted_at))) throw new RemoteAppError("invalid_message_response", 0, submissionId);
           return Object.freeze({ id: submissionId, state: "accepted", acceptedAt: new Date(value.accepted_at),
             async status() {
               const value = await send(envelope({ type: "status", messageId: submissionId }));
-              if (!record(value) || value.protocolVersion !== PROTOCOL_VERSION) throw new RemoteAppError("invalid_message_status_response", 0);
+              if (!record(value) || value.protocolVersion !== 2) throw new RemoteAppError("invalid_message_status_response", 0);
               return readMessageStatus(value, submissionId);
             },
           });
@@ -164,7 +164,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
             let value: unknown;
             try { value = await send(command, options.signal); }
             catch (error) { throw submissionError(error, submissionId, options.signal); }
-            if (!record(value) || value.protocolVersion !== PROTOCOL_VERSION || value.id !== submissionId || !("reply" in value)) throw new RemoteAppError("invalid_request_response", 0, submissionId);
+            if (!record(value) || value.protocolVersion !== 2 || value.id !== submissionId || !("reply" in value)) throw new RemoteAppError("invalid_request_response", 0, submissionId);
             return value.reply as Reply;
           },
           stream: (options?: SessionStreamOptions) => streamSessionEvents<Event>(request => {
@@ -179,12 +179,12 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
             let value: unknown;
             try { value = await send(envelope({ type: "cancel", ...keepAlive({}) }, commandId), options.signal); }
             catch (error) { throw submissionError(error, commandId, options.signal); }
-            if (!record(value) || value.protocolVersion !== PROTOCOL_VERSION || value.id !== commandId || !["requested", "idle"].includes(value.state as string)) throw new RemoteAppError("invalid_cancellation_response", 0, commandId);
+            if (!record(value) || value.protocolVersion !== 2 || value.id !== commandId || !["requested", "idle"].includes(value.state as string)) throw new RemoteAppError("invalid_cancellation_response", 0, commandId);
             return Object.freeze({ state: value.state as SessionCancellation["state"] });
           },
           async view(options: { readonly signal?: AbortSignal } = {}): Promise<SessionView<View>> {
             const value = await send(envelope({ type: "view" }), options.signal);
-            if (!record(value) || value.protocolVersion !== PROTOCOL_VERSION || value.sessionId !== id || typeof value.revision !== "string" || !value.revision || typeof value.updatedAt !== "string" || !Number.isFinite(Date.parse(value.updatedAt)) || !("state" in value)) throw new RemoteAppError("invalid_session_view", 0);
+            if (!record(value) || value.protocolVersion !== 2 || value.sessionId !== id || typeof value.revision !== "string" || !value.revision || typeof value.updatedAt !== "string" || !Number.isFinite(Date.parse(value.updatedAt)) || !("state" in value)) throw new RemoteAppError("invalid_session_view", 0);
             if (typeof value.workspaceId !== "string" || !/^wsp_[0-9a-f]{32}$/.test(value.workspaceId)) throw new RemoteAppError("invalid_session_view", 0);
             if (selector.id !== undefined && value.workspaceId !== selector.id) throw new RemoteAppError("workspace_conflict", 0);
             try { assertCursor(value.cursor); } catch { throw new RemoteAppError("invalid_session_view", 0); }
