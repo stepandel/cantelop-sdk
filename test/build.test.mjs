@@ -130,7 +130,7 @@ test("a built runtime serves the App's auth provider and its terminal relay", as
     for (const deadline = Date.now() + 5_000; ;) {
       try {
         const response = await fetch(`http://${base}/__cantelop/v2/messages`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({
-          session: { id: "cantelop-native-auth", workspace_id: "wsp_0123456789abcdef0123456789abcdef", keep_alive_seconds: 300 },
+          session: { id: "cantelop-native-auth-wsp_0123456789abcdef0123456789abcdef", workspace_id: "wsp_0123456789abcdef0123456789abcdef", keep_alive_seconds: 300 },
           message: { id, payload: { __cantelop_command: 2, type: "auth", auth } }, reply: true }) });
         assert.equal(response.status, 202);
         break;
