@@ -74,7 +74,7 @@ The socket carries two kinds of message:
 - **Binary messages** are raw terminal bytes, in both directions.
 - **Text messages** are JSON control messages. Only `{ "type": "resize", "columns", "rows" }` exists.
 
-The socket closes when the CLI exits. After that, ask `status()` whether sign-in succeeded.
+The socket closes when the CLI exits. After that, ask `status()` whether sign-in succeeded. The auth Sandbox may already be released by then, so this call can reactivate it from the Workspace's stored credentials; check once rather than polling.
 
 ## Lifecycle
 
@@ -83,7 +83,7 @@ The socket closes when the CLI exits. After that, ask `status()` whether sign-in
 - **Single-use ticket.** Each ticket can connect once.
 - **Time limit.** A login ends after 10 minutes.
 - **Ending a login.** Closing the browser socket, calling `close({ terminalId })`, or calling `logout()` ends an unfinished login.
-- **Keeping the Sandbox alive.** The auth Sandbox stays non-quiescent while a login is running.
+- **Keeping the Sandbox alive.** Auth commands request zero idle keep-alive. The auth Sandbox stays non-quiescent while a login is running, then becomes eligible for immediate platform release after the login and its reply or terminal cleanup finish. A structured login attempt whose CLI already exited still holds the Sandbox until its code is submitted, it is cancelled, or it expires. The next auth command can reactivate it using credentials stored in the Workspace.
 - **Pre-connect output.** Output printed before the browser connects is kept in memory, up to 64 KiB, and delivered once it connects.
 - **Credentials.** They stay with the native CLI in the persistent Workspace, so agent Sessions in the same Workspace share them.
 

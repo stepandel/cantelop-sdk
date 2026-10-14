@@ -55,3 +55,15 @@ test("lifetime abort closes native login and native link parsing rejects injecte
     assert.equal(claudeAuth.codeLogin.link(text),undefined);
   assert.equal(claudeAuth.codeLogin.link("\x1b[32mhttps://claude.ai/oauth\x1b[0m\n"),"https://claude.ai/oauth");
 });
+test("auth stays non-quiescent through the pre-attach window and an exited-but-unsubmitted code attempt",async t=>{
+  const source=`const fs=require('node:fs');console.log('Open https://claude.ai/oauth/authorize?test=1');console.log('Paste code:');setTimeout(()=>{fs.writeFileSync(process.argv[1],'ok');process.exit(0);},50);`;
+  const {login,processes}=await fixture(t,source);
+  const started=await login.login();assert.equal(started.type,"login");
+  await new Promise(resolve=>processes[0].once("exit",resolve));await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(login.active,true);
+  assert.deepEqual(await login.code(started.attemptId,"ignored"),{type:"status",authenticated:true});assert.equal(login.active,false);
+  const {auth,context}=await fixture(t);
+  const terminals=new AuthTerminals({status:auth.status,logout:auth.logout,terminal:auth.terminal},{},context.signal,()=>{});
+  const opened=await terminals.handle({type:"terminal"},context.session);assert.equal(opened.type,"terminal");assert.equal(terminals.active,true);
+  await terminals.handle({type:"close",terminalId:opened.terminalId},context.session);assert.equal(terminals.active,false);
+});

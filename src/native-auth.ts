@@ -26,6 +26,8 @@ export type AuthResult =
 
 /** Reserved backend protocol placeholder; the Edge scopes it to the canonical Workspace. */
 export const AUTH_SESSION_ID = "cantelop-native-auth";
+/** Auth commands keep no idle window: runtime quiescence alone holds the Sandbox while a login or unsubmitted code attempt exists. */
+export const AUTH_KEEP_ALIVE_SECONDS = 0;
 const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 /** Logical Session IDs are App-wide, so each Workspace needs its own stable auth actor. */
 export function workspaceAuthSessionID(workspaceId: string): string {

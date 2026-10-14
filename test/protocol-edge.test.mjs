@@ -25,7 +25,7 @@ test('auth commands route through a Workspace-bound request with a reserved Sess
       ? { type: 'terminal', terminalId, ticket: '4'.repeat(64), expiresAt: '2026-10-12T00:01:00Z' }
       : { type: 'status', authenticated: false } });
   };
-  const body = { ...envelope({ type: 'auth', auth: { type: 'status' }, timeoutMs: 45_000, keepAliveSeconds: 900 }), session: { id: 'cantelop-native-auth' } };
+  const body = { ...envelope({ type: 'auth', auth: { type: 'status' }, timeoutMs: 45_000, keepAliveSeconds: 0 }), session: { id: 'cantelop-native-auth' } };
   const undeclared = createProtocolWorker({ runtimeId: 'test.v1', fetch: platform });
   const refused = await undeclared.fetch(request(body), bindings);
   assert.equal(refused.status, 404);
@@ -40,7 +40,7 @@ test('auth commands route through a Workspace-bound request with a reserved Sess
   assert.deepEqual(delivered.message.payload, { __cantelop_command: 2, type: 'auth', auth: { type: 'status' } });
   assert.equal(delivered.session.id, `cantelop-native-auth-${workspaceId}`);
   assert.equal(delivered.session.workspace_id, workspaceId);
-  assert.equal(delivered.session.keep_alive_seconds, 900);
+  assert.equal(delivered.session.keep_alive_seconds, 0);
   const terminal = await worker.fetch(request({ ...body, command: { ...body.command, auth: { type: 'terminal' } } }), bindings);
   assert.equal((await terminal.json()).reply.url, `wss://agent.example/__cantelop/auth/workspaces/${workspaceId}/terminals/${terminalId}`);
   assert.equal((await worker.fetch(request(envelope(body.command)), bindings)).status, 400);
@@ -240,7 +240,7 @@ test('auth actors reuse the canonical Workspace across selectors and remain dist
     sessions.push(body.session);
     return Response.json({ id: body.message.id, reply: { type: 'status', authenticated: true } });
   } });
-  const body = { ...envelope({ type: 'auth', auth: { type: 'status' }, timeoutMs: 45_000, keepAliveSeconds: 900 }), session: { id: 'cantelop-native-auth' } };
+  const body = { ...envelope({ type: 'auth', auth: { type: 'status' }, timeoutMs: 45_000, keepAliveSeconds: 0 }), session: { id: 'cantelop-native-auth' } };
   for (const workspace of [{ slug: 'customer' }, { id: workspaceId }, { slug: 'other' }, { id: otherId }, { slug: 'customer' }]) {
     assert.equal((await worker.fetch(request({ ...body, workspace }), bindings)).status, 200);
   }

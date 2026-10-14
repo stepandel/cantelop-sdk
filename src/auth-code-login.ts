@@ -14,7 +14,8 @@ export class AuthCodeLogin {
     private waitMs = 20_000, private lifetimeMs = 10 * 60_000) {
     context.signal.addEventListener("abort", () => { void this.stop().catch(() => undefined); }, { once: true });
   }
-  get active(): boolean { return !!this.#attempt && !this.#attempt.ended; }
+  /** An exited CLI still counts until its code is submitted, cancelled or expires, so the Sandbox keeps the attempt. */
+  get active(): boolean { return !!this.#attempt; }
   async login(force = false): Promise<AuthResult> {
     this.context.signal.throwIfAborted();
     if (force) {
@@ -48,7 +49,7 @@ export class AuthCodeLogin {
         notify();
       });
       process.once("close", () => {
-        current.ended=true; current.text=""; clearTimeout(current.timer); notify(); close(); this.changed();
+        current.ended=true; current.text=""; notify(); close(); this.changed();
       });
       this.changed();
       if (this.context.signal.aborted) await this.stop();
