@@ -4,6 +4,8 @@ Some harnesses wrap a stock CLI that signs in with the user's own subscription, 
 
 No part of the App ever handles the sign-in code or the resulting credentials: not the App backend, not the Edge, not Cantelop's delivery records. The SDK relays terminal bytes in memory and nothing else. It does not parse, log, store or replay them. This follows Anthropic's [Claude Code terms](https://code.claude.com/docs/en/legal-and-compliance), which allow an end user to sign in to the unmodified binary on a hosting platform. The same terms forbid third parties from collecting, storing or intermediating Claude.ai credentials or session tokens.
 
+Hosted Cantelop does not yet relay the native terminal to browsers. On deployed Apps, use the [structured link/code login](#structured-linkcode-login), which needs a provider with a `codeLogin` adapter such as the packaged `claudeAuth`. The Codex and OpenCode example providers have no `codeLogin` adapter and rely on the terminal.
+
 ## Declare auth on the App
 
 ```ts
@@ -105,7 +107,7 @@ Each provider has its own terms for hosted sign-in. Confirm them before offering
 - `terminal`
 - `close` (with `terminalId`)
 
-The Edge resolves the canonical Workspace ID and forwards auth to `cantelop-native-auth-{workspaceId}`. This stable internal actor is shared by auth calls in that Workspace; different Workspaces receive different actors. Ordinary Sessions keep their own IDs and reuse the same Workspace filesystem, including saved CLI credentials. The runtime still accepts the legacy auth actor for older clients.
+The Edge resolves the canonical Workspace ID and forwards auth to `cantelop-native-auth-{workspaceId}`. This stable internal actor is shared by auth calls in that Workspace; different Workspaces receive different actors. Ordinary Sessions keep their own IDs and reuse the same Workspace filesystem, including saved CLI credentials.
 
 For `terminal`, the reply carries `terminalId`, `ticket` and `expiresAt`. The Edge adds `url` before returning it.
 

@@ -18,7 +18,7 @@ for await (const event of session.stream()) {
 }
 ```
 
-The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. This prerelease requires CLI build protocol 6 and runtime-only manifest schema 3; deploy with the companion platform CLI. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
+The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. Run and deploy it with Cantelop CLI 0.15.2 or newer. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
 
 Use `session.steer({type:"prompt",prompt:"adjust the task"})` and
 `session.cancel()`. These are SDK work commands delivered through the

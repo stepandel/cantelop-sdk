@@ -1,8 +1,69 @@
 # Cantelop SDK
 
-Cantelop runs agents in isolated Sandboxes with durable Workspaces. The 1.0 SDK exposes App → Workspace → Session directly to application backends. Developers define their Session runtime; the SDK generates the protocol-managed Edge API and the platform deploys it with opinionated middleware.
+Cantelop runs agents in isolated Sandboxes with durable Workspaces. The SDK exposes App → Workspace → Session directly to application backends. Developers define their Session runtime; the SDK generates the protocol-managed Edge API and the platform deploys it with opinionated middleware.
 
-This repository prepares **1.0.0-alpha.11**. Apps use backend resource APIs and runtime-only project schema **3** with CLI build protocol **6**. Custom HTTP ingress is optional and reserved for webhooks. Native auth terminal providers additionally require compatible platform terminal transport; see [integration contracts](docs/integration-foundation.md) and [native auth](docs/native-auth.md).
+Apps use backend resource APIs and runtime-only project schema **3** with CLI build protocol **6**. Custom HTTP ingress is optional and reserved for webhooks. See [integration contracts](docs/integration-foundation.md) and [native auth](docs/native-auth.md).
+
+## Get started
+
+You need Node.js 22 or newer, Bun 1.3.10 for the default local development runner, and the Cantelop CLI 0.15.2 or newer (`brew install stepandel/tap/cantelop`; check with `cantelop version` and `bun --version`). Deploying also needs Docker with `linux/amd64` build support and a Cantelop account. Local development can use Docker instead of Bun with `cantelop dev --container`.
+
+Create a project in an empty directory:
+
+```sh
+cantelop init -app hello -provider openai   # or: -provider claude, -provider pi
+npm install @cantelop/sdk
+```
+
+`init` writes `cantelop.json`, the App definition `src/cantelop.ts`, the Session runtime `src/agent.ts`, and `package.json`. With CLI 0.15.2, give the generated App an explicit inline message contract in `src/cantelop.ts` before starting development:
+
+```ts
+import { CantelopClient } from "@cantelop/sdk";
+import { receive } from "./agent.js";
+
+const cantelop = new CantelopClient();
+export const agent = cantelop.app<{ prompt: string }>({
+  name: "hello",
+  runtime: { receive },
+  environment: { CODEX_API_KEY: { secret: true, required: true } },
+});
+```
+
+The inline contract avoids CLI 0.15.2's starter declaration and backend type-directory copying errors. If you chose the Claude or Pi starter, keep its generated `environment` declaration and make the same `cantelop.app<{ prompt: string }>` edit.
+
+Create `.env` in the project root and replace the placeholder with your OpenAI API key. The OpenAI starter uses the Codex SDK, which reads `CODEX_API_KEY`:
+
+```dotenv
+CODEX_API_KEY=<your-openai-api-key>
+```
+
+For the Claude starter, use `ANTHROPIC_API_KEY` instead. For Pi, declare the selected model provider's credential in the App's `environment` and set its value in `.env`. Keep `.env` out of version control by adding it to `.gitignore`.
+
+Start local development; the CLI reads `.env` automatically:
+
+```sh
+cantelop dev
+```
+
+`cantelop dev` serves the App at `http://127.0.0.1:8787`, rebuilds as you edit, records a credential in the SDK's `local` profile, and writes a compiled backend client to `.cantelop/client/`. Call the App from a backend script run with `CANTELOP_PROFILE=local`:
+
+```js
+import { agent } from "./.cantelop/client/client.mjs";
+
+const session = agent.workspace({ slug: "ada" }).session();
+const message = await session.dispatch({ prompt: "write hello.txt" });
+console.log(session.id, message.id, message.state); // "accepted": admitted, not finished
+```
+
+When it works locally, sign in and deploy. `--env-file` imports the provider secrets your App declares:
+
+```sh
+cantelop login
+cantelop deploy --create-app --env-file .env
+cantelop app credentials --app hello          # backend configuration, in dotenv form
+```
+
+Store the printed credentials in your backend's secret store; see [App configuration](docs/app-configuration.md). Any change to runtime logic or types gives the App a new runtime identity, so rebuild and redeploy your backend whenever you deploy the App; see [deploy the backend with the App](docs/runtime-definitions.md#deploy-the-backend-with-the-app).
 
 ## Integrate from an application backend
 
@@ -61,7 +122,7 @@ await session.dispatch({ type: "prompt", prompt: "Continue" });
 
 Dispatch and steer accept the same message type and return an ID/status reference. Dispatch invokes the harness’s `queue` method; steer invokes its `steer` method. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
 
-`cancel()` interrupts the active harness run and preserves queued input. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Steering and run cancellation are implemented by the harness; the platform delivers their envelopes as ordinary messages. Durable views require the coordinated platform implementation.
+`cancel()` interrupts the active harness run and preserves queued input. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Steering and run cancellation are implemented by the harness; the platform delivers their envelopes as ordinary messages. Durable views are not yet available on hosted Cantelop.
 
 ## Stream output
 
@@ -105,11 +166,11 @@ Applications own durable jobs, checkpoints, and idempotency. The optional `onAct
 }
 ```
 
-The [manifest schema](schemas/app-v3.json) points to a definition module and has no App name, runtime configuration, or customer API entry. App names, environment declarations, and optional `dockerfile: "docker/Dockerfile"` belong in `cantelop.app(...)`. Cantelop still owns runtime startup, Workspace mounts, listener ports, and shutdown.
+The [manifest schema](schemas/app-v3.json) points to a definition module and has no App name, runtime configuration, or customer API entry. App names, environment declarations, and optional `dockerfile: "docker/Dockerfile"` belong in `cantelop.app(...)`. Cantelop owns runtime startup, Workspace mounts, listener ports, and shutdown.
 
 The SDK build module is tooling. `buildAppArtifacts({ definition, outdir })` generates separate Edge/Sandbox artifacts for each named App and a shared compiled backend module. Individual builds/watch accept an `app` name selector when a module defines multiple Apps. Each deployment must match `app_name` and `session_runtime_id`; the backend compiler removes every App's runtime-only dependencies. `db/schema.ts` is discovered independently and describes each App's isolated Workspace databases. See [runtime compilation](docs/runtime-definitions.md).
 
-The platform deploys the generated Edge Worker through the existing dispatcher/outbound trust chain. Compatible CLI support must update initialization, local connections, manifest validation, artifact upload, and deployment before this path can be used in production. Webhook handlers belong in the customer’s own application and call the same SDK primitives.
+`cantelop deploy` uploads the generated artifacts, and the platform serves the generated Edge Worker through its dispatcher/outbound trust chain. Webhook handlers can live in the customer’s own application and call the same SDK primitives, or run on the App's Edge as [App webhooks](docs/webhooks.md).
 
 ## Examples and development
 
@@ -144,7 +205,9 @@ await session.cancel();
 
 Submission IDs remain available for receipts, retries and output correlation. Dispatch status describes intake; a queued run may outlive intake completion. Requests wait for `queue` to return its reply while other input and control remain responsive. `stop()` releases the Sandbox and retains Session identity. Harness memory belongs to one incarnation; recovery remains application-owned.
 
-For custom receive runtimes, `activity.start`, `queue`, `steer`, and `cancel` remain available. Register provider methods through activity options `onSteer` and `onCancel`; those hooks belong to the active execution.
+For custom receive runtimes, `activity.start`, `queue`, `steer`, and `cancel` are available. Register provider methods through activity options `onSteer` and `onCancel`; those hooks belong to the active execution.
+
+Hosted Cantelop does not store Session views yet, so deployed Apps can't commit or read them.
 
 The runtime explicitly commits the application's read model:
 
@@ -181,4 +244,4 @@ Stock harness integrations are available for [Codex](examples/codex/README.md), 
 
 Apps can declare `auth` to let each Workspace sign in to a stock CLI with the user's own subscription. Sign-in uses the CLI's native process. Applications can show a link/code form or intentionally expose its terminal; native credentials remain in the Workspace. The Claude Code example uses this; see [native auth](docs/native-auth.md).
 
-Workspace auth methods are available on `app.workspace(selector).auth()`. For a provider with a `codeLogin` adapter (including packaged `claudeAuth`), `login()` returns `{authenticated:true}` or `{authenticated:false,attemptId,url,expiresAt}`. `submitCode({attemptId,code})` returns native authentication status or a stable `code_rejected` error, and `cancelLogin({attemptId})` stops that attempt. `login({force:true})` confirms native logout before starting a fresh login. The SDK owns attempts, prompt parsing, bounded private output, expiration and process cleanup. Application authorization and account preferences stay on your backend. Low-level `terminal()`/`close()` remain available for integrations that intentionally expose a native terminal; a terminal UI is not required.
+Workspace auth methods are available on `app.workspace(selector).auth()`. For a provider with a `codeLogin` adapter (including packaged `claudeAuth`), `login()` returns `{authenticated:true}` or `{authenticated:false,attemptId,url,expiresAt}`. `submitCode({attemptId,code})` returns native authentication status or a stable `code_rejected` error, and `cancelLogin({attemptId})` stops that attempt. `login({force:true})` confirms native logout before starting a fresh login. The SDK owns attempts, prompt parsing, bounded private output, expiration and process cleanup. Application authorization and account preferences stay on your backend. Low-level `terminal()`/`close()` serve integrations that intentionally expose a native terminal; a terminal UI is not required. Hosted Cantelop does not yet relay the native terminal to browsers.

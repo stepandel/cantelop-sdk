@@ -49,7 +49,7 @@ export const support = cantelop.app<Message>({
 
 A configured homepage is public at the App hostname's root. GET invokes it normally; HEAD invokes it and returns status/headers with no body. Other methods return 405 with `Allow: GET, HEAD`. Unexpected errors return a generic `homepage_failed` 500. If omitted, no root route is added and existing protocol routing behavior remains unchanged.
 
-The compiler includes homepage dependencies only in Edge and removes the handler from backend definitions. Homepage-only edits preserve Session identity. This does not add static asset serving or a general route surface; inline assets or independently hosted assets can be used. CLI/platform adoption must permit public root requests to reach the generated Worker, alongside provider-authenticated webhook ingress.
+The compiler includes homepage dependencies only in Edge and removes the handler from backend definitions. Homepage-only edits preserve Session identity. This does not add static asset serving or a general route surface; inline assets or independently hosted assets can be used. Public root requests reach the generated Worker without the integration token, like provider-authenticated webhook ingress.
 
 ## Execution boundaries
 
@@ -72,6 +72,6 @@ Handlers must use the context's App rather than capture/import the enclosing App
 
 ## Deployment
 
-The Edge manifest lists webhook paths/methods; deployment still uses a generated Worker rather than a customer API entrypoint. The CLI/platform must deploy this artifact and synchronize the declared secrets into Edge bindings as well as the runtime environment. The platform ingress must permit webhook paths to reach the Worker without requiring the integration bearer token used by `/commands/*`. Provider verification runs inside the webhook handler.
+The Edge manifest lists webhook paths/methods; deployment uses the generated Worker rather than a customer API entrypoint. `cantelop deploy` uploads it, and Cantelop synchronizes the declared secrets into Edge bindings as well as the runtime environment (`cantelop deploy --env-file .env` or `cantelop env sync` imports them). Webhook paths reach the Worker without the integration bearer token used by `/commands/*`; provider verification runs inside the webhook handler.
 
-The current prerelease's CLI/platform adoption remains a follow-up. No provider webhook registration, managed subscriptions or provider adapters are included. The unpublished protocol/schema versions stay unchanged.
+Cantelop does not register provider webhooks, manage subscriptions or ship provider adapters. Configure the webhook URL and secret with the provider yourself.

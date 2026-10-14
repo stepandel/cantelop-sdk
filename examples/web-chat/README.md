@@ -34,10 +34,10 @@ for await (const event of session.stream({ signal })) {
 
 ## Run
 
-This SDK alpha requires the coordinated CLI/platform rollout: schema 3, build protocol 6, App integration credentials, integration-v2 per-command paths and retained event replay. Current production CLI/platform deployments cannot run this protocol yet. The web server and UI run locally now; live agent responses require a compatible App Edge deployment. The automated tests qualify the HTTP → real SDK → controlled Edge response flow, rather than a live deployment.
+Live agent responses need the App deployed with Cantelop CLI 0.15.2 or newer. The automated tests cover the HTTP → real SDK → controlled Edge response flow without a live deployment.
 
 1. From the SDK root, run `pnpm install` and `pnpm build`.
-2. Deploy/configure this web-chat App with a compatible CLI/platform and supply `OPENAI_API_KEY` in its runtime environment.
+2. Deploy this web-chat App with `cantelop deploy` and supply `OPENAI_API_KEY` in its runtime environment.
 3. Configure this backend with that App's integration profile or App-scoped environment configuration. See [App configuration](../../docs/app-configuration.md). For environment configuration, supply `CANTELOP_APP_SLUG` and `CANTELOP_INTEGRATION_TOKEN`; use `CANTELOP_EDGE_URL` for a local Edge origin override. These are backend configuration, never browser variables.
 4. Run `pnpm --filter @cantelop/example-web-chat dev`.
 5. Open `http://127.0.0.1:3000` and send a message. `PORT` changes the web server port; `CHAT_WORKSPACE_SLUG` changes its server-owned Workspace (default `web-chat-demo`).

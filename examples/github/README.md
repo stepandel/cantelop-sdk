@@ -12,7 +12,7 @@ Repository numeric IDs map to `repo-<id>` Workspace slugs; issue numbers map to 
 
 ## Configure
 
-With a compatible CLI/platform, deploy the generated Edge/Sandbox artifacts and configure:
+Deploy the App with `cantelop deploy` (Cantelop CLI 0.15.2 or newer) and configure:
 
 - `GITHUB_WEBHOOK_SECRET`: the secret configured on the repository webhook; read as `env.GITHUB_WEBHOOK_SECRET` on Edge. All required App environment values must be provisioned before invoking HTTP handlers.
 - `GITHUB_TOKEN`: a token restricted to the target repository with permission to write issue comments; used by the runtime.
@@ -21,6 +21,6 @@ With a compatible CLI/platform, deploy the generated Edge/Sandbox artifacts and 
 
 Configure the GitHub repository webhook to send issue events as JSON to `https://<app-host>/webhooks/github`. The route authenticates GitHub signatures, so provider requests need no Cantelop integration bearer token. Prefer a private test repository when trying the example: it sends issue text to OpenAI and publishes the generated comment.
 
-Run `pnpm --filter @cantelop/example-github check` to type-check locally; `pnpm check:examples` qualifies compiler boundaries and matching artifacts. The current prerelease needs coordinated CLI/platform adoption before deployment. Nothing registers a GitHub webhook automatically.
+Run `pnpm --filter @cantelop/example-github check` to type-check locally; `pnpm check:examples` qualifies compiler boundaries and matching artifacts. Nothing registers a GitHub webhook automatically.
 
 The handler acknowledges only after admission. Cantelop does not add an ingress queue or guarantee exactly-once comment publication; retries after an ambiguous outbound API result need application-level reconciliation.

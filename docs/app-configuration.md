@@ -19,7 +19,7 @@ Constructing a client, App, Workspace, or Session does not contact the network o
 
 ## Scoped CLI/runtime configuration
 
-The CLI/platform follow-up must provide integration credentials scoped to named Apps. A private integration profile can include several:
+Cantelop issues integration credentials scoped to named Apps. A private integration profile can include several:
 
 ```json
 {
@@ -66,4 +66,4 @@ const app = cantelop.app({
 
 A custom connection owns routing, authentication and reserved metadata. Alternatively supply `edgeUrl` and `accessToken` together on the App. URLs require HTTPS, with HTTP loopback permitted for local development. Credentials are backend-only; SDK transport does not follow redirects.
 
-Runtime handlers, provider environment declarations and optional Dockerfile configuration also belong on the App. Actual provider secrets are injected into its Sandbox by coordinated CLI/platform support. See [the definition contract](runtime-definitions.md).
+Runtime handlers, provider environment declarations and optional Dockerfile configuration also belong on the App. Cantelop injects the actual provider secrets, set through the CLI, into its Sandbox. See [the definition contract](runtime-definitions.md).
