@@ -9,9 +9,11 @@ export interface ClaudeSessionConfig {
   allowedTools: string[]
   mcps: Record<string, McpServer>
 }
+/** Per-task overrides; omitted fields inherit App defaults. Lists and MCP maps replace defaults. */
+export type ClaudeSessionSettings = Partial<ClaudeSessionConfig>
 export type ClaudeSessionCommand =
   | { type: 'snapshot' | 'drain' }
-  | { type: 'queue' | 'steer'; id: string; text: string }
+  | { type: 'queue' | 'steer'; id: string; text: string; settings?: ClaudeSessionSettings }
   | { type: 'cancel'; id: string }
 export type ClaudeSessionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'steered' | 'interrupted'
 export interface ClaudeSessionMessage {
@@ -30,5 +32,5 @@ export type ClaudeSessionEvent =
   | { type: 'error'; code: string }
 
 // These helpers are backend/browser-safe; no native process modules are imported.
-export { validateClaudeSessionConfig } from './claude-config.js'
+export { validateClaudeSessionConfig, validateClaudeSessionSettings } from './claude-config.js'
 export { ClaudeSessionOutput } from './claude-output.js'

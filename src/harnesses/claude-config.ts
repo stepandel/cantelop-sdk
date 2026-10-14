@@ -1,4 +1,4 @@
-import type { ClaudeSessionConfig as SessionConfig } from './claude-protocol.js'
+import type { ClaudeSessionConfig as SessionConfig, ClaudeSessionSettings } from './claude-protocol.js'
 function fail(message: string): never {
   throw new Error(message)
 }
@@ -38,9 +38,9 @@ export function validateClaudeSessionConfig(value: unknown): SessionConfig {
     (typeof maxTurns !== 'number' || !Number.isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 100)
   )
     fail('maxTurns must be an integer from 1 to 100')
-  const tools = value.tools ?? [],
-    allowedTools = value.allowedTools ?? [],
-    mcps = value.mcps ?? {}
+  const tools = value.tools === undefined ? [] : value.tools,
+    allowedTools = value.allowedTools === undefined ? [] : value.allowedTools,
+    mcps = value.mcps === undefined ? {} : value.mcps
   if (!strings(tools) || !strings(allowedTools)) fail('Invalid tool arrays')
   if (!mcps || typeof mcps !== 'object' || Array.isArray(mcps) || Object.keys(mcps).length > 20)
     fail('Invalid MCP configuration')
@@ -80,4 +80,11 @@ export function validateClaudeSessionConfig(value: unknown): SessionConfig {
     ...(systemPrompt !== undefined ? { systemPrompt: systemPrompt as string } : {}),
     ...(maxTurns !== undefined ? { maxTurns: maxTurns as number } : {}),
   }
+}
+
+/** Validate overrides without turning omitted fields into explicit empty settings. */
+export function validateClaudeSessionSettings(value: unknown): ClaudeSessionSettings {
+  const config = validateClaudeSessionConfig(value)
+  const fields = value as Record<string, unknown>
+  return structuredClone(Object.fromEntries(Object.entries(config).filter(([key]) => fields[key] !== undefined)))
 }

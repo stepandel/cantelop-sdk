@@ -14,10 +14,17 @@ import {
   type ClaudeEvent,
   type NativeFragmentEvent,
 } from './claude.js'
-import { randomUUID } from 'node:crypto'
-import { validateClaudeSessionConfig } from './claude-config.js'
-import { StateStore, type State } from './claude-state.js'
-import type { ClaudeSessionCommand as Command, ClaudeSessionEvent as Event, ClaudeSessionMessage as Message, ClaudeSessionStatus as Status, ClaudeSessionReply as Reply } from './claude-protocol.js'
+import { createHash, randomUUID } from 'node:crypto'
+import { validateClaudeSessionConfig, validateClaudeSessionSettings } from './claude-config.js'
+import { isDeepStrictEqual } from 'node:util'
+import { StateStore, type State, type WorkMessage as Message } from './claude-state.js'
+import type { ClaudeSessionCommand as Command, ClaudeSessionEvent as Event, ClaudeSessionStatus as Status, ClaudeSessionReply as Reply, ClaudeSessionSettings as Settings } from './claude-protocol.js'
+// Stable identity for retries without retaining completed task credentials.
+function settingsHash(settings: Settings): string {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, next]) => [key, canonical(next)])) : value
+  return createHash('sha256').update(JSON.stringify(canonical(settings))).digest('hex')
+}
 type Context = SessionContext<Command, Event, Reply>
 
 type ClaudeFactory = (
@@ -26,19 +33,21 @@ type ClaudeFactory = (
 ) => SessionHarness<ClaudeMessage, ClaudeEvent>
 
 /** Durable Claude Session lifecycle. Native execution remains in createClaudeHarness.
- * Configuration is declared by the App; interrupted running work is never replayed.
+ * App defaults and message settings configure each task; interrupted work is never replayed.
  * Queue, targeted cancellation, steering, snapshots and recovery are package-owned.
  * App settings are snapshotted at construction and applied on every activation.
  */
 export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, factory: ClaudeFactory = createClaudeHarness) {
   const defaults = structuredClone(options)
-  const { tools, allowedTools, mcps, model, systemPrompt, maxTurns } = defaults
+  const { tools, allowedTools, mcps, model, systemPrompt, maxTurns, ...nativeDefaults } = defaults
   const config = validateClaudeSessionConfig({
     tools, allowedTools, mcps, model: model === '' ? undefined : model, systemPrompt, maxTurns,
   })
+  const appSettings = Object.fromEntries(Object.entries({tools, allowedTools, mcps, model, systemPrompt, maxTurns}).filter(([, value]) => value !== undefined)) as Settings
   const workspace = defaults.workspace ?? process.cwd()
   let resources: SessionHarnessContext | undefined
   let claude: SessionHarness<ClaudeMessage, ClaudeEvent> | undefined
+  let nativeSettings: Settings | undefined
   let state: State | undefined, store: StateStore | undefined
   let active: { message: Message; controller: AbortController; outcome?: Status } | undefined
   const save = () => store!.save(state!)
@@ -49,13 +58,16 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
     state.config = structuredClone(config)
     // A previous Sandbox may have executed tools before disappearing. Never
     // automatically replay that running turn; retain queued work for later.
-    for (const message of state.messages) if (message.status === 'running') message.status = 'interrupted'
+    for (const message of state.messages) {
+      if (message.status === 'running') message.status = 'interrupted'
+      if (message.status !== 'queued') delete message.settings
+    }
     await save()
   }
   const status = (output: SessionOutput<Event>, message: Message) =>
     output.send({ type: 'message.status', id: message.id, status: message.status })
   function snapshot(): Extract<Reply, { type: 'session.state' }> {
-    const messages = state!.messages.slice(-50).map((m) => ({ ...m, text: m.text.slice(0, 256) }))
+    const messages = state!.messages.slice(-50).map((m) => ({ id: m.id, status: m.status, text: m.text.slice(0, 256) }))
     return {
       type: 'session.state',
       configured: !!state!.config,
@@ -63,22 +75,23 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       truncated: state!.messages.length > 50 || state!.messages.some((m) => m.text.length > 256),
     }
   }
-  function nativeHarness() {
-    if (claude) return claude
+  function nativeHarness(settings: Settings) {
+    if (claude && isDeepStrictEqual(nativeSettings, settings)) return claude
     if (!resources) throw new Error('Session activation is required')
     claude = factory(resources, {
       workspace,
-      ...defaults,
+      ...nativeDefaults,
+      ...settings,
       conversation: { id: state!.conversationId, resumable: state!.resume },
-      ...(defaults.model === 'default' ? { model: '' } : {}),
+      ...(settings.model === 'default' ? { model: '' } : {}),
     })
+    nativeSettings = structuredClone(settings)
     return claude
   }
   async function start(context: Context) {
     if (context.activity.active || !state!.queue.length) return
     const id = state!.queue.shift()!,
       message = state!.messages.find((m) => m.id === id)!
-    const native = nativeHarness()
     const controller = new AbortController()
     active = { message, controller }
     message.status = 'running'
@@ -93,6 +106,7 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       if (activity.signal.aborted) abort()
       try {
         await status(activity.output, message)
+        const native = nativeHarness(message.settings ?? appSettings)
         const prompt: ClaudeMessage = { type: 'prompt', prompt: message.text }
         await native.queue(prompt, {
           ...resources!,
@@ -125,6 +139,12 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       } finally {
         activity.signal.removeEventListener('abort', abort)
         active = undefined
+        delete message.settings
+        // A task-specific harness must not retain its MCP credentials after completion.
+        if (!isDeepStrictEqual(nativeSettings, appSettings)) {
+          claude = undefined
+          nativeSettings = undefined
+        }
         await save()
         // SDK buffers this internal message until the activity fully settles.
         activity.send({ type: 'drain' })
@@ -161,15 +181,18 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
         } else if (message.status === 'queued') {
           state!.queue = state!.queue.filter((id) => id !== message.id)
           message.status = 'cancelled'
+          delete message.settings
           await save()
           await status(context.output, message)
         }
         return
       }
       if (command.type !== 'queue' && command.type !== 'steer') return
+      const overrides = command.settings === undefined ? {} : validateClaudeSessionSettings(command.settings)
+      const fingerprint = settingsHash(overrides)
       const existing = state!.messages.find((m) => m.id === command.id)
       if (existing) {
-        if (existing.text !== command.text) await context.output.send({ type: 'error', code: 'message_id_conflict' })
+        if (existing.text !== command.text || (existing.settingsHash ?? settingsHash({})) !== fingerprint) await context.output.send({ type: 'error', code: 'message_id_conflict' })
         else await status(context.output, existing)
         return
       }
@@ -177,7 +200,8 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
         await context.output.send({ type: 'error', code: 'session_full' })
         return
       }
-      const message: Message = { id: command.id, text: command.text, status: 'queued' }
+      const settings = structuredClone({ ...appSettings, ...overrides }) as Settings
+      const message: Message = { id: command.id, text: command.text, status: 'queued', settings, settingsHash: fingerprint }
       state!.messages.push(message)
       if (command.type === 'steer') state!.queue.unshift(message.id)
       else state!.queue.push(message.id)
