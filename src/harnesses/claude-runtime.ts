@@ -26,12 +26,16 @@ type ClaudeFactory = (
 ) => SessionHarness<ClaudeMessage, ClaudeEvent>
 
 /** Durable Claude Session lifecycle. Native execution remains in createClaudeHarness.
- * Configuration is accepted once per Session; interrupted running work is never replayed.
+ * Configuration is declared by the App; interrupted running work is never replayed.
  * Queue, targeted cancellation, steering, snapshots and recovery are package-owned.
- * Factory defaults are immutable; per-Session tools/MCPs come from configure messages.
+ * App settings are snapshotted at construction and applied on every activation.
  */
 export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, factory: ClaudeFactory = createClaudeHarness) {
   const defaults = structuredClone(options)
+  const { tools, allowedTools, mcps, model, systemPrompt, maxTurns } = defaults
+  const config = validateClaudeSessionConfig({
+    tools, allowedTools, mcps, model: model === '' ? undefined : model, systemPrompt, maxTurns,
+  })
   const workspace = defaults.workspace ?? process.cwd()
   let resources: SessionHarnessContext | undefined
   let claude: SessionHarness<ClaudeMessage, ClaudeEvent> | undefined
@@ -42,6 +46,7 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
     if (state) return
     store = new StateStore(workspace, sessionId)
     state = await store.load()
+    state.config = structuredClone(config)
     // A previous Sandbox may have executed tools before disappearing. Never
     // automatically replay that running turn; retain queued work for later.
     for (const message of state.messages) if (message.status === 'running') message.status = 'interrupted'
@@ -61,22 +66,16 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
   function nativeHarness() {
     if (claude) return claude
     if (!resources) throw new Error('Session activation is required')
-    const config = state!.config!
     claude = factory(resources, {
       workspace,
       ...defaults,
-      tools: config.tools,
-      allowedTools: config.allowedTools,
-      mcps: config.mcps,
       conversation: { id: state!.conversationId, resumable: state!.resume },
-      ...(config.model !== undefined ? { model: config.model === 'default' ? '' : config.model } : {}),
-      ...(config.systemPrompt !== undefined ? { systemPrompt: config.systemPrompt } : {}),
-      ...(config.maxTurns !== undefined ? { maxTurns: config.maxTurns } : {}),
+      ...(defaults.model === 'default' ? { model: '' } : {}),
     })
     return claude
   }
   async function start(context: Context) {
-    if (context.activity.active || !state!.queue.length || !state!.config) return
+    if (context.activity.active || !state!.queue.length) return
     const id = state!.queue.shift()!,
       message = state!.messages.find((m) => m.id === id)!
     const native = nativeHarness()
@@ -137,6 +136,7 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
     async onActivate(context: SessionActivationContext<Command, Event>) {
       resources = context
       await initialize(context.session.id)
+      await context.output.send({ type: 'session.ready', sessionId: context.session.id })
     },
     async receive(context: Context) {
       await initialize(context.session.id)
@@ -145,23 +145,8 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
         context.reply(snapshot())
         return
       }
-      if (command.type === 'configure') {
-        if (state!.config) {
-          context.reply({ type: 'error', code: 'already_configured' })
-          return
-        }
-        state!.config = validateClaudeSessionConfig(command.config)
-        await save()
-        await context.output.send({ type: 'session.ready', sessionId: context.session.id })
-        context.reply(snapshot())
-        return
-      }
       if (command.type === 'drain') {
         await start(context)
-        return
-      }
-      if (!state!.config) {
-        await context.output.send({ type: 'error', code: 'session_not_configured' })
         return
       }
       if (command.type === 'cancel') {

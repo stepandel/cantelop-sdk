@@ -56,8 +56,8 @@ async function until(predicate) {
         await new Promise((r) => setTimeout(r, 5));
     }
 }
-function harness(runtime, root) {
-    const behaviour = createClaudeRuntime({ workspace: root, permissionMode: 'dontAsk', settingSources: [] }, runtime.create), events = [];
+function harness(runtime, root, settings = {}) {
+    const behaviour = createClaudeRuntime({ workspace: root, permissionMode: 'dontAsk', settingSources: [], ...settings }, runtime.create), events = [];
     const replies = [];
     let activityActive = false, activityTask = Promise.resolve(), mailbox = Promise.resolve();
     const output = {
@@ -137,18 +137,11 @@ function harness(runtime, root) {
 async function fixture(t) {
     const root = await mkdtemp(join(tmpdir(), 'cantelop-test-'));
     t.after(() => rm(root, { recursive: true, force: true }));
-    const runtime = new FakeClaude(), h = harness(runtime, root);
-    await h.send({
-        type: 'configure',
-        config: {
-            tools: ['Read'],
-            allowedTools: [],
-            mcps: {},
-            model: 'sonnet',
-            systemPrompt: 'Persisted rules',
-            maxTurns: 24,
-        },
+    const runtime = new FakeClaude(), h = harness(runtime, root, {
+        tools: ['Read'], allowedTools: [], mcps: {}, model: 'sonnet',
+        systemPrompt: 'Persisted rules', maxTurns: 24,
     });
+    await h.send({ type: 'snapshot' });
     return { root, runtime, h };
 }
 test('managed activity keeps mailbox responsive; steering precedes FIFO queue and resumes conversation', async (t) => {
@@ -181,13 +174,13 @@ test('queued cancellation, duplicate IDs and active cancellation', async (t) => 
     for (const id of ['a', 'b'])
         assert.ok(h.events.some((e) => e.type === 'message.status' && e.id === id && e.status === 'cancelled'));
 });
-test('durable configuration survives reactivation; interrupted work is not replayed', async (t) => {
+test('App configuration replaces legacy Session settings; interrupted work is not replayed', async (t) => {
     const { root, runtime } = await fixture(t);
     const store = new StateStore(root, 'session-a'), state = await store.load();
     state.resume = true;
     state.messages.push({ id: 'old', text: 'possibly ran tools', status: 'running' });
     await store.save(state);
-    const replacement = harness(runtime, root);
+    const replacement = harness(runtime, root, {tools: ['Write'], allowedTools: [], mcps: {}, model: 'opus', systemPrompt: 'App rules', maxTurns: 12});
     await replacement.send({ type: 'snapshot' });
     const snapshot = replacement.replies.find((e) => e.type === 'session.state');
     assert.ok(snapshot?.type === 'session.state');
@@ -196,8 +189,8 @@ test('durable configuration survives reactivation; interrupted work is not repla
     await replacement.send({ type: 'queue', id: 'new', text: 'next' });
     await until(() => runtime.runs.length === 1);
     assert.equal(runtime.runs[0].turn.resume, true);
-    assert.deepEqual(runtime.runs[0].turn.config, state.config);
-    assert.equal(runtime.runs[0].turn.config.systemPrompt, 'Persisted rules');
+    assert.deepEqual(runtime.runs[0].turn.config, {tools: ['Write'], allowedTools: [], mcps: {}, model: 'opus', systemPrompt: 'App rules', maxTurns: 12});
+    assert.deepEqual((await store.load()).config, runtime.runs[0].turn.config);
     runtime.runs[0].resolve();
     await replacement.idle();
 });
@@ -258,7 +251,6 @@ test('SDK recovery restarts only pending work and preserves interrupted status',
 });
 test('terminal native auth failure emits auth.required for the affected message', async (t) => {
     const { runtime, h } = await fixture(t);
-    await h.send({ type: 'configure', config: { tools: [], allowedTools: [], mcps: {} } });
     const id = crypto.randomUUID();
     await h.send({ type: 'queue', id, text: 'test' });
     await until(() => runtime.runs.length === 1);
@@ -294,8 +286,40 @@ test('uses one configured SDK factory per incarnation with a separate lifetime a
 test('invalid configuration is rejected before persistence or native harness creation', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cantelop-invalid-config-'));
   t.after(() => rm(root, {recursive:true,force:true}));
-  const runtime = new FakeClaude(), h = harness(runtime, root);
-  await assert.rejects(h.send({type:'configure',config:{tools:['--unsafe'],allowedTools:[],mcps:{}}}), /Invalid tool arrays/);
+  const runtime = new FakeClaude();
+  assert.throws(() => harness(runtime, root, {tools:['--unsafe']}), /Invalid tool arrays/);
   assert.equal((await new StateStore(root,'session-a').load()).config, undefined);
   assert.equal(runtime.factories.length, 0);
+});
+
+
+test('first task uses snapshotted App settings without a configure request', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cantelop-app-settings-'));
+  t.after(() => rm(root, {recursive:true,force:true}));
+  const runtime = new FakeClaude();
+  const settings = {tools:['Read'], allowedTools:['Read'], mcps:{docs:{type:'http',url:'https://docs.example/mcp'}}, model:'sonnet', systemPrompt:'App rules', maxTurns:8};
+  const expected = structuredClone(settings);
+  const h = harness(runtime, root, settings);
+  settings.tools.push('Write');
+  settings.mcps.docs.url = 'https://changed.example/mcp';
+  await h.send({type:'queue',id:'first',text:'Start'});
+  await until(() => runtime.runs.length === 1);
+  assert.deepEqual(runtime.runs[0].turn.config, expected);
+  assert.ok(h.events.some(e => e.type === 'session.ready'));
+  runtime.runs[0].resolve();
+  await h.idle();
+});
+
+test('omitted App settings preserve native defaults and allow immediate tasks', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cantelop-stock-settings-'));
+  t.after(() => rm(root, {recursive:true,force:true}));
+  const runtime = new FakeClaude(), h = harness(runtime, root);
+  await h.send({type:'snapshot'});
+  assert.equal(h.replies[0].configured, true);
+  await h.send({type:'queue',id:'first',text:'Start'});
+  await until(() => runtime.runs.length === 1);
+  for (const key of ['tools','allowedTools','mcps','model','systemPrompt','maxTurns'])
+    assert.equal(runtime.factories[0].options[key], undefined);
+  runtime.runs[0].resolve();
+  await h.idle();
 });

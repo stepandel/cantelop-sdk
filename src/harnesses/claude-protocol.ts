@@ -11,7 +11,6 @@ export interface ClaudeSessionConfig {
 }
 export type ClaudeSessionCommand =
   | { type: 'snapshot' | 'drain' }
-  | { type: 'configure'; config: ClaudeSessionConfig }
   | { type: 'queue' | 'steer'; id: string; text: string }
   | { type: 'cancel'; id: string }
 export type ClaudeSessionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'steered' | 'interrupted'

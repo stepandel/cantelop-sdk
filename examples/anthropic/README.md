@@ -113,7 +113,7 @@ incarnation, and the work signal tied to the individual activity/submission.
 
 ### Durable Session lifecycle
 
-Applications that need configure-once settings, persistent queueing, targeted cancellation, snapshots and recovery can declare the packaged runtime instead of implementing a behaviour:
+Applications that need App-declared settings, persistent queueing, targeted cancellation, snapshots and recovery can declare the packaged runtime instead of implementing a behaviour:
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
@@ -122,15 +122,19 @@ import type { ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply } fro
 
 export const agent = new CantelopClient().app<ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply>({
   name: "durable-claude",
-  runtime: createClaudeRuntime({ workspace: "/workspace", permissionMode: "dontAsk", settingSources: [] }),
+  runtime: createClaudeRuntime({
+    workspace: "/workspace", permissionMode: "dontAsk", settingSources: [],
+    tools: ["Read"], allowedTools: ["Read"], mcps: {},
+    model: "sonnet", systemPrompt: "Investigate issues and report your findings.", maxTurns: 24,
+  }),
   auth: claudeAuth,
   dockerfile: claudeDockerfile,
 });
 ```
 
-Request `{type:"configure",config:{tools:[],allowedTools:[],mcps:{}}}` once before dispatching `{type:"queue",id,text}`. Configuration may include model, system prompt and turn limit. Native defaults come from the factory options and environment; the SDK does not impose application tool permissions. The runtime uses `createClaudeHarness` internally once per incarnation. Its settings, MCP credentials and permission defaults are snapshotted.
+Declare tools, allowed tools, MCPs, model, system prompt and turn limit in `createClaudeRuntime(...)` at App initialization. Dispatch `{type:"queue",id,text}` immediately; no configuration request is needed. Omitted settings retain native defaults and environment fallbacks. Explicit `tools: []` disables tools and `mcps: {}` disables external MCPs. The runtime uses `createClaudeHarness` internally once per incarnation. Its settings, MCP credentials and permission defaults are snapshotted.
 
-The SDK persists Session configuration, history and pending IDs atomically under `<workspace>/.cantelop/<hashed-session-id>.json`. This format supports migration from existing durable Claude integrations. Running work becomes `interrupted` on replacement and is never replayed; queued work resumes on recovery. `steer` interrupts the active turn and prioritizes its new input after native cleanup. `cancel` targets a queued or active ID. History is bounded to 1,000 messages; snapshots contain the latest 50 previews. Events use the exported Session protocol, including attributed Claude fragments and `auth.required`. Authorize configure/queue/cancel requests on the application backend.
+The SDK persists Session configuration, history and pending IDs atomically under `<workspace>/.cantelop/<hashed-session-id>.json`. On each activation, App settings replace any legacy Session configuration while retaining conversation history and pending work. This format supports migration from existing durable Claude integrations. Running work becomes `interrupted` on replacement and is never replayed; queued work resumes on recovery. `steer` interrupts the active turn and prioritizes its new input after native cleanup. `cancel` targets a queued or active ID. History is bounded to 1,000 messages; snapshots contain the latest 50 previews. Events use the exported Session protocol, including attributed Claude fragments and `auth.required`. Authorize queue/steer/cancel requests on the application backend.
 
 ### Link-and-code sign-in
 
