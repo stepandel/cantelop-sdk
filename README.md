@@ -6,17 +6,46 @@ Apps use backend resource APIs and runtime-only project schema **3** with CLI bu
 
 ## Get started
 
-You need Node.js 22 or newer and the Cantelop CLI 0.15.2 or newer (`brew install stepandel/tap/cantelop`; check with `cantelop version`). Deploying also needs Docker with `linux/amd64` build support and a Cantelop account.
+You need Node.js 22 or newer, Bun 1.3.10 for the default local development runner, and the Cantelop CLI 0.15.2 or newer (`brew install stepandel/tap/cantelop`; check with `cantelop version` and `bun --version`). Deploying also needs Docker with `linux/amd64` build support and a Cantelop account. Local development can use Docker instead of Bun with `cantelop dev --container`.
 
-Create a project in an empty directory and run it locally:
+Create a project in an empty directory:
 
 ```sh
 cantelop init -app hello -provider openai   # or: -provider claude, -provider pi
 npm install @cantelop/sdk
+```
+
+`init` writes `cantelop.json`, the App definition `src/cantelop.ts`, the Session runtime `src/agent.ts`, and `package.json`. With CLI 0.15.2, give the generated App an explicit inline message contract in `src/cantelop.ts` before starting development:
+
+```ts
+import { CantelopClient } from "@cantelop/sdk";
+import { receive } from "./agent.js";
+
+const cantelop = new CantelopClient();
+export const agent = cantelop.app<{ prompt: string }>({
+  name: "hello",
+  runtime: { receive },
+  environment: { CODEX_API_KEY: { secret: true, required: true } },
+});
+```
+
+The inline contract avoids CLI 0.15.2's starter declaration and backend type-directory copying errors. If you chose the Claude or Pi starter, keep its generated `environment` declaration and make the same `cantelop.app<{ prompt: string }>` edit.
+
+Create `.env` in the project root and replace the placeholder with your OpenAI API key. The OpenAI starter uses the Codex SDK, which reads `CODEX_API_KEY`:
+
+```dotenv
+CODEX_API_KEY=<your-openai-api-key>
+```
+
+For the Claude starter, use `ANTHROPIC_API_KEY` instead. For Pi, declare the selected model provider's credential in the App's `environment` and set its value in `.env`. Keep `.env` out of version control by adding it to `.gitignore`.
+
+Start local development; the CLI reads `.env` automatically:
+
+```sh
 cantelop dev
 ```
 
-`init` writes `cantelop.json`, the App definition `src/cantelop.ts`, the Session runtime `src/agent.ts`, and `package.json`. `cantelop dev` serves the App at `http://127.0.0.1:8787`, rebuilds as you edit, records a credential in the SDK's `local` profile, and writes a compiled backend client to `.cantelop/client/`. Call the App from a backend script run with `CANTELOP_PROFILE=local`:
+`cantelop dev` serves the App at `http://127.0.0.1:8787`, rebuilds as you edit, records a credential in the SDK's `local` profile, and writes a compiled backend client to `.cantelop/client/`. Call the App from a backend script run with `CANTELOP_PROFILE=local`:
 
 ```js
 import { agent } from "./.cantelop/client/client.mjs";

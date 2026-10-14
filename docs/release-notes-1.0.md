@@ -6,6 +6,7 @@ The first stable release of `@cantelop/sdk`, the backend integration and Session
 
 - Node.js 22 or newer
 - Cantelop CLI 0.15.2 or newer
+- Bun 1.3.10 for local development, or Docker with `cantelop dev --container`
 
 ```sh
 npm install @cantelop/sdk
