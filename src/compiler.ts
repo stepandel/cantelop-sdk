@@ -13,7 +13,11 @@ export class RuntimeContractError extends TypeError {
   constructor(message: string, readonly watchFiles: readonly string[]) { super(message); }
 }
 
-/** Fingerprint the App's structural contract without including sibling App source. */
+/**
+ * Fingerprint the App's structural contract without including sibling App source.
+ * Never print a type that can contain user types: TypeScript names a type it cannot
+ * reach from a location as import("<absolute path>"), which would tie the ID to the checkout.
+ */
 function contractFingerprint(checker: ts.TypeChecker, types: readonly ts.Type[], location: ts.Node, program: ts.Program): string {
   const seen = new Map<ts.Type, number>();
   const primitive = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike |
@@ -25,8 +29,17 @@ function contractFingerprint(checker: ts.TypeChecker, types: readonly ts.Type[],
     const previous = seen.get(type);
     if (previous !== undefined) return { ref: previous };
     const id = seen.size; seen.set(type, id);
-    if (checker.isArrayType(type) || checker.isTupleType(type)) return { id, kind: checker.isTupleType(type) ? "tuple" : "array", name: checker.typeToString(type), elements: checker.getTypeArguments(type as ts.TypeReference).map(visit) };
-    if (type.getSymbol()?.declarations?.some(declaration => program.isSourceFileDefaultLibrary(declaration.getSourceFile()))) return { id, libraryType: checker.typeToString(type, location, ts.TypeFormatFlags.NoTruncation) };
+    if (checker.isArrayType(type) || checker.isTupleType(type)) {
+      const tuple = checker.isTupleType(type) ? (type as ts.TypeReference).target as ts.TupleType : undefined;
+      return { id, kind: tuple ? "tuple" : "array", readonly: tuple ? tuple.readonly : type.getSymbol()?.name === "ReadonlyArray", ...(tuple ? { elementFlags: tuple.elementFlags } : {}), elements: checker.getTypeArguments(type as ts.TypeReference).map(visit) };
+    }
+    // Library types are identified by name, with their type arguments visited. Library mapped
+    // types such as Partial<T> have an anonymous symbol and resolve to properties below.
+    const symbol = type.getSymbol();
+    if (symbol && !(symbol.flags & ts.SymbolFlags.TypeLiteral) && symbol.declarations?.some(declaration => program.isSourceFileDefaultLibrary(declaration.getSourceFile()))) {
+      const reference = type.flags & ts.TypeFlags.Object && (type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference;
+      return { id, libraryType: checker.getFullyQualifiedName(symbol), typeArguments: reference ? checker.getTypeArguments(type as ts.TypeReference).map(visit) : [] };
+    }
     return {
       id,
       properties: checker.getPropertiesOfType(type).sort((a, b) => a.name.localeCompare(b.name)).map(property => ({
@@ -268,9 +281,11 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
       backendStatements.add(dependency); allStatements.add(dependency);
     }
     const runtimeSource = selectedSource(runtimeStatements) + "\nexport default " + print(runtime) + ";\n" + (authExpression ? "export const auth = " + print(authExpression) + ";\n" : "");
-    const bundle = await build({ stdin: { contents: runtimeSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, bundle: true, platform: "node", format: "esm", target: "esnext", conditions: ["bun", "node", "import", "default"], external: ["bun:*"], write: false, metafile: true, minify: false, logLevel: "silent", plugins: [rejectDefinitionImport] });
+    // The runtime ID hashes this bundle, and esbuild keys CommonJS and lazy ESM modules by paths
+    // relative to its working directory. Anchor them at the definition, not the build's cwd.
+    const bundle = await build({ stdin: { contents: runtimeSource, resolveDir: path.dirname(filename), sourcefile: filename, loader: "ts" }, absWorkingDir: path.dirname(filename), bundle: true, platform: "node", format: "esm", target: "esnext", conditions: ["bun", "node", "import", "default"], external: ["bun:*"], write: false, metafile: true, minify: false, logLevel: "silent", plugins: [rejectDefinitionImport] });
     const runtimeModule = bundle.outputFiles![0]!.text;
-    for (const input of Object.keys(bundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(input));
+    for (const input of Object.keys(bundle.metafile?.inputs ?? {})) if (!input.startsWith("<")) watchFiles.push(path.resolve(path.dirname(filename), input));
     const contract = contractFingerprint(checker, checker.getTypeArguments(checker.getTypeAtLocation(expression) as ts.TypeReference), expression, program);
     const id = "rt_" + createHash("sha256").update(name).update((await transform(runtimeModule, { minify: true, legalComments: "none", target: "esnext" })).code).update(contract).update(JSON.stringify(configuration)).digest("hex");
     const replacement = `{receive() { throw new Error("App runtime executes in the Sandbox"); }, [Symbol.for("dev.cantelop.sdk.compiled-runtime.v1")]: ${JSON.stringify(id)}}`;
