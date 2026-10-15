@@ -4,6 +4,7 @@ import test from "node:test";
 import { createSessionRuntimeHandler } from "../dist/runtime.js";
 
 const sandboxId = "sbx-" + "a".repeat(32);
+const authSessionId = "cantelop-native-auth-wsp_" + "b".repeat(32);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() {
   let resolve;
@@ -48,7 +49,7 @@ test("App auth serves the reserved Session without creating a harness or enterin
   let creates = 0, statuses = 0, logouts = 0;
   const runtime = { create: () => { creates++; return { queue() {}, steer() {}, cancel() { return false; } }; } };
   const auth = {
-    status(context) { statuses++; assert.equal(context.session.id, "cantelop-native-auth"); return logouts === 0; },
+    status(context) { statuses++; assert.equal(context.session.id, authSessionId); return logouts === 0; },
     logout() { logouts++; },
     terminal() { throw new Error("not started in this test"); },
   };
@@ -56,11 +57,11 @@ test("App auth serves the reserved Session without creating a harness or enterin
   await ordinary.send(801, { type: "auth", auth: { type: "status" } }, true);
   await ordinary.settled(801);
   assert.equal((await ordinary.status(801)).state, "failed");
-  const undeclared = await fixture(t, runtime, "cantelop-native-auth");
+  const undeclared = await fixture(t, runtime, authSessionId);
   await undeclared.send(802, { type: "auth", auth: { type: "status" } }, true);
   await undeclared.settled(802);
   assert.equal((await undeclared.status(802)).state, "failed");
-  const allowed = await fixture(t, runtime, "cantelop-native-auth", { auth });
+  const allowed = await fixture(t, runtime, authSessionId, { auth });
   await allowed.send(803, { type: "auth", auth: { type: "status" } }, true);
   await allowed.settled(803);
   assert.deepEqual((await allowed.reply(803)).reply, { type: "status", authenticated: true });
@@ -211,11 +212,11 @@ test("operation admission limits never invoke rejected harness input or cancel o
 });
 
 
-test("scoped auth actors must belong to their Workspace and cannot dispatch agent tasks", async t => {
+test("auth actors are Workspace-scoped, must belong to their Workspace and cannot dispatch agent tasks", async t => {
   let statuses = 0, creates = 0;
   const runtime = { create() { creates++; throw new Error("auth must not create a harness"); } };
   const auth = { status() { statuses++; return true; }, logout() {}, terminal() { throw new Error("unused"); } };
-  const scoped = await fixture(t, runtime, "cantelop-native-auth-wsp_" + "b".repeat(32), { auth });
+  const scoped = await fixture(t, runtime, authSessionId, { auth });
   await scoped.send(901, { type: "auth", auth: { type: "status" } }, true);
   await scoped.settled(901);
   assert.deepEqual((await scoped.reply(901)).reply, { type: "status", authenticated: true });
@@ -226,5 +227,13 @@ test("scoped auth actors must belong to their Workspace and cannot dispatch agen
   await foreign.send(903, { type: "auth", auth: { type: "status" } }, true);
   await foreign.settled(903);
   assert.equal((await foreign.status(903)).state, "failed");
+  // The backend placeholder is only rewritten by the Edge; it is never an auth actor or an ordinary Session.
+  const placeholder = await fixture(t, runtime, "cantelop-native-auth", { auth });
+  await placeholder.send(904, { type: "auth", auth: { type: "status" } }, true);
+  await placeholder.settled(904);
+  assert.equal((await placeholder.status(904)).state, "failed");
+  await placeholder.send(905, { type: "dispatch", message: "not auth" });
+  await placeholder.settled(905);
+  assert.equal((await placeholder.status(905)).state, "failed");
   assert.deepEqual({ statuses, creates }, { statuses: 1, creates: 0 });
 });

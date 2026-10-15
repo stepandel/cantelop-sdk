@@ -22,10 +22,6 @@ try {
   assert.ok(pack.size > 0);
   const paths = pack.files.map(({ path: file }) => file);
   assert.ok(paths.includes("dist/build.js"));
-  for (const removed of ["api", "edge", "router"]) {
-    assert.equal(paths.some(file => file.startsWith(`dist/${removed}.`)), false);
-    assert.equal(`./${removed}` in manifest.exports, false);
-  }
   for (const target of Object.values(manifest.imports["#cantelop-app-config"])) {
     assert.ok(paths.includes(target.replace(/^\.\//, "")), "configuration adapter is not packed");
   }
@@ -74,14 +70,8 @@ try {
     'import * as runtime from "@cantelop/sdk/runtime";',
     'assert.equal(build.CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 6);',
     'assert.equal(typeof build.watchLocalProject, "function");',
-    'assert.equal("buildApi" in build, false);',
-    'assert.equal("buildLocalApi" in build, false);',
-    'assert.equal("defineApi" in sdk, false);',
     'assert.equal(typeof sdk.CantelopClient, "function");',
-    'assert.equal("createApp" in sdk, false);',
-    'assert.equal("defineSessionBehaviour" in sessionSDK, false); assert.equal("defineSessionRuntime" in sdk, false);',
     'assert.deepEqual(Object.keys(runtime).sort(), ["createSessionDatabase", "createSessionRuntimeHandler", "serveSessionRuntime"]);',
-    'for (const name of ["api", "edge"]) await assert.rejects(import(`@cantelop/sdk/${name}`), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });',
     'await import("@cantelop/sdk/harnesses/claude/protocol");',
     'const edge = await build.buildEdgeApi({ definition: "./definition.mjs", outdir: "./edge" });',
     'assert.equal(edge.manifest.kind, "cantelop-protocol-edge");',
@@ -146,10 +136,8 @@ try {
     'new CantelopClient().app({ name: "first-agent", runtime: { id: "package.v1", receive() {} } });',
     '// @ts-expect-error The client must be constructed with new.',
     'CantelopClient();',
-    '// @ts-expect-error The factory options type was removed.',
-    'type LegacyOptions = import("@cantelop/sdk").CreateAppOptions;',
     '// App is the typed Workspace/Session owner.',
-    'type LegacyApp = import("@cantelop/sdk").App<unknown>;',
+    'type TypedApp = import("@cantelop/sdk").App<unknown>;',
     'new CantelopClient().app({ name: "first-agent", runtime, connection });',
     'new CantelopClient().app({ name: "first-agent", runtime, connection });',
     '// @ts-expect-error App selectors require exactly one ID or slug.',
@@ -174,8 +162,6 @@ try {
     'await session.cancel();',
     '// @ts-expect-error Cancellation targets the active run, not a message.',
     'session.cancel(receipt.id);',
-    '// @ts-expect-error Session-wide abort was removed.',
-    'session.abort();',
     'const command: AppCommandEnvelope<{ prompt: string }> = { protocolVersion: 2, id: receipt.id, workspace: { slug: "customer" }, session: { id: session.id }, command: { type: "steer", message: { prompt: "focus" } } };',
     'const view = await session.view();',
     'const updatedAt: Date = view.updatedAt;',

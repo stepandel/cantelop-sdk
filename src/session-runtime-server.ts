@@ -37,7 +37,7 @@ import {
 import { markSessionRuntimeStartup, markMessageLifecycle } from "./session-runtime-startup.js";
 import { FollowupMessages, InMemoryActivity, type ActivityLifecycle } from "./activity.js";
 import { decodeRuntimeCommand, type RuntimeCommand } from "./runtime-command.js";
-import { isAuthSessionID, isAppAuth, type AppAuth } from "./native-auth.js";
+import { isAuthSessionID, isReservedAuthSessionID, isAppAuth, type AppAuth } from "./native-auth.js";
 import { AUTH_TERMINAL_ROUTE, AuthTerminals } from "./auth-terminal.js";
 import { InMemoryMailbox } from "./mailbox.js";
 import { RuntimeQuiescence } from "./runtime-quiescence.js";
@@ -215,7 +215,7 @@ function createSessionRuntimeAdapter<Input, Event = never, Reply = never, View =
     const sequence = nextIntakeSequence++;
     const replyHolder: { value: unknown } | undefined = replyRequested ? { value: undefined } : undefined;
     let replied = false;
-    if (isAuthSessionID(session.id) && command.type !== "auth") {
+    if (isReservedAuthSessionID(session.id) && command.type !== "auth") {
       started();
       return Object.freeze({ generation, settled: Promise.reject(new TypeError("Reserved auth Session requires an auth command")), ...(replyHolder ? { reply: replyHolder } : {}) });
     }

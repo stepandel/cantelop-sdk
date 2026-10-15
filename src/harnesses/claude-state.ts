@@ -5,7 +5,7 @@ import type { ClaudeSessionMessage as Message, ClaudeSessionConfig as SessionCon
 /** Private durable work record. Settings may contain credentials; never expose in snapshots. */
 export interface WorkMessage extends Message {
   settings?: ClaudeSessionSettings
-  settingsHash?: string
+  settingsHash: string
 }
 export interface State {
   conversationId: string

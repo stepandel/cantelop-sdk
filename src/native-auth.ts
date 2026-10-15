@@ -34,12 +34,15 @@ export function workspaceAuthSessionID(workspaceId: string): string {
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) throw new TypeError("Invalid auth Workspace ID");
   return `${AUTH_SESSION_ID}-${workspaceId}`;
 }
-/** Accept the legacy actor for existing runtimes, while checking scoped actors against their Workspace. */
+/** Workspace auth actors; with a workspaceId, the actor must also belong to that Workspace. */
 export function isAuthSessionID(id: string, workspaceId?: string): boolean {
-  if (id === AUTH_SESSION_ID) return true;
   const suffix = id.slice(AUTH_SESSION_ID.length + 1);
   return id.startsWith(`${AUTH_SESSION_ID}-`) && WORKSPACE_ID_PATTERN.test(suffix) &&
     (workspaceId === undefined || suffix === workspaceId);
+}
+/** Ordinary Sessions can use neither the backend placeholder nor a Workspace auth actor. */
+export function isReservedAuthSessionID(id: string): boolean {
+  return id === AUTH_SESSION_ID || isAuthSessionID(id);
 }
 /** WebSocket subprotocol; the ticket travels as the second offered subprotocol, never in the URL. */
 export const AUTH_TERMINAL_PROTOCOL = "cantelop-terminal.v1";

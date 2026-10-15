@@ -106,7 +106,8 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       if (activity.signal.aborted) abort()
       try {
         await status(activity.output, message)
-        const native = nativeHarness(message.settings ?? appSettings)
+        // Queued work always carries the settings it accepted.
+        const native = nativeHarness(message.settings!)
         const prompt: ClaudeMessage = { type: 'prompt', prompt: message.text }
         await native.queue(prompt, {
           ...resources!,
@@ -192,7 +193,7 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       const fingerprint = settingsHash(overrides)
       const existing = state!.messages.find((m) => m.id === command.id)
       if (existing) {
-        if (existing.text !== command.text || (existing.settingsHash ?? settingsHash({})) !== fingerprint) await context.output.send({ type: 'error', code: 'message_id_conflict' })
+        if (existing.text !== command.text || existing.settingsHash !== fingerprint) await context.output.send({ type: 'error', code: 'message_id_conflict' })
         else await status(context.output, existing)
         return
       }
