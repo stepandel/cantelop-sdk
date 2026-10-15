@@ -2,7 +2,7 @@
 
 Cantelop runs agents in isolated Sandboxes with durable Workspaces. The SDK exposes App → Workspace → Session directly to application backends. Developers define their Session runtime; the SDK generates the protocol-managed Edge API and the platform deploys it with opinionated middleware.
 
-Apps use backend resource APIs and runtime-only project schema **3** with CLI build protocol **6**. Custom HTTP ingress is optional and reserved for webhooks. See [integration contracts](docs/integration-foundation.md) and [native auth](docs/native-auth.md).
+Apps use backend resource APIs and [project schema](schemas/app-v3.json) **3** with CLI build protocol **6**. Custom HTTP ingress is optional and reserved for webhooks. See [integration contracts](docs/integration-foundation.md) and [native auth](docs/native-auth.md).
 
 ## Get started
 
@@ -156,21 +156,6 @@ Work receives a signal, typed output/view, submission identity and Session resou
 Custom runtimes can use `runtime: { receive, onActivate?, onRecover?, redelivery? }`. Their intake is serialized; move long-running work into `context.activity` to keep control intake responsive.
 
 Applications own durable jobs, checkpoints, and idempotency. The optional `onActivate` hook restores state once per incarnation; the optional `onRecover` hook opts into replacement-Sandbox recovery. Redelivery remains opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies retain their JSON and size limits.
-
-## Runtime-only project
-
-```json
-{
-  "schema_version": 3,
-  "definition": "src/cantelop.ts"
-}
-```
-
-The [manifest schema](schemas/app-v3.json) points to a definition module and has no App name, runtime configuration, or customer API entry. App names, environment declarations, and optional `dockerfile: "docker/Dockerfile"` belong in `cantelop.app(...)`. Cantelop owns runtime startup, Workspace mounts, listener ports, and shutdown.
-
-The SDK build module is tooling. `buildAppArtifacts({ definition, outdir })` generates separate Edge/Sandbox artifacts for each named App and a shared compiled backend module. Individual builds/watch accept an `app` name selector when a module defines multiple Apps. Each deployment must match `app_name` and `session_runtime_id`; the backend compiler removes every App's runtime-only dependencies. `db/schema.ts` is discovered independently and describes each App's isolated Workspace databases. See [runtime compilation](docs/runtime-definitions.md).
-
-`cantelop deploy` uploads the generated artifacts, and the platform serves the generated Edge Worker through its dispatcher/outbound trust chain. Webhook handlers can live in the customer’s own application and call the same SDK primitives, or run on the App's Edge as [App webhooks](docs/webhooks.md).
 
 ## Examples and development
 
