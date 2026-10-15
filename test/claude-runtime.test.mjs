@@ -177,7 +177,7 @@ test('queued cancellation, duplicate IDs and active cancellation', async (t) => 
     for (const id of ['a', 'b'])
         assert.ok(h.events.some((e) => e.type === 'message.status' && e.id === id && e.status === 'cancelled'));
 });
-test('App configuration replaces legacy Session settings; interrupted work is not replayed', async (t) => {
+test('App configuration applies to existing Session state; interrupted work is not replayed', async (t) => {
     const { root, runtime } = await fixture(t);
     const store = new StateStore(root, 'session-a'), state = await store.load();
     state.resume = true;
@@ -219,7 +219,7 @@ test('forwards SDK-native fragments with application message attribution', async
 test('SDK recovery restarts only pending work and preserves interrupted status', async (t) => {
     const { root, runtime } = await fixture(t);
     const store = new StateStore(root, 'session-a'), state = await store.load();
-    state.messages.push({ id: 'running', text: 'already attempted', status: 'running' }, { id: 'pending', text: 'not started', status: 'queued' });
+    state.messages.push({ id: 'running', text: 'already attempted', status: 'running' }, { id: 'pending', text: 'not started', status: 'queued', settings: {} });
     state.queue = ['pending'];
     await store.save(state);
     const replacement = harness(runtime, root);

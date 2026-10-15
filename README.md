@@ -185,7 +185,7 @@ pnpm check:package
 pnpm test:bun
 ```
 
-Package qualification checks the actual npm tarball, removed exports/files, generated Edge and native runtime build artifacts, and a clean consumer's integration types. Publishing remains a separate operation; see [release guidance](docs/releasing.md).
+Package qualification checks the actual npm tarball and its packed files, generated Edge and native runtime build artifacts, and a clean consumer's integration types. Publishing remains a separate operation; see [release guidance](docs/releasing.md).
 
 All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope, each at its own `POST /commands/{type}` path (`/commands/dispatch`, `/commands/view`, …), so request logs and the Cantelop console show which SDK call each request was. The Edge interprets each operation through its own handler; Edge ↔ Sandbox remains the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
 

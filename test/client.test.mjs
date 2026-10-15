@@ -21,7 +21,9 @@ test('Workspace auth requires an App declaration, uses a reserved Session and re
   assert.throws(() => client.app({ name: 'bad-auth', runtime, connection, auth: { status() {} } }), /status, logout and terminal/);
   const provider = { status() { return true; }, logout() {}, terminal() { throw new Error('Sandbox only'); } };
   const auth = client.app({ name: 'first-agent', runtime, connection, auth: provider }).workspace({ slug: 'customer' }).auth();
-  assert.throws(() => client.app({ name: "reserved", runtime, connection }).workspace({ id: workspaceId }).session({ id: `cantelop-native-auth-${workspaceId}` }), /Reserved auth Session ID/);
+  const reservedWorkspace = client.app({ name: "reserved", runtime, connection }).workspace({ id: workspaceId });
+  for (const reserved of ["cantelop-native-auth", `cantelop-native-auth-${workspaceId}`])
+    assert.throws(() => reservedWorkspace.session({ id: reserved }), /Reserved auth Session ID/);
   assert.equal(await auth.status({ id }), false);
   const terminal = await auth.terminal();
   assert.deepEqual({ ...terminal, protocols: [...terminal.protocols] }, {
