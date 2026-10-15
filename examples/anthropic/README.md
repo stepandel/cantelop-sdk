@@ -46,17 +46,21 @@ Cancellation sends SIGTERM and escalates to SIGKILL after one second. Cleanup al
 
 ## Native authentication and state
 
-The App declares `auth: claudeAuth` ([src/auth.ts](src/auth.ts)), so each Workspace can sign in to Claude with the user's own subscription. Resolve the Workspace from your verified user identity, then hand the returned terminal to that user's browser:
+The App declares `auth: claudeAuth`, so each Workspace can sign in to Claude with the user's own subscription. Resolve the Workspace from your verified user identity, then run the link-and-code sign-in from your backend:
 
 ```ts
 const auth = app.workspace({ slug: verifiedUserWorkspace }).auth();
-if (!await auth.status()) {
-  const { url, protocols } = await auth.terminal();
-  // Browser: new WebSocket(url, protocols), rendered with a terminal such as xterm.js.
+const login = await auth.login();
+if (!login.authenticated) {
+  // Show login.url to the user and collect the code Anthropic's page displays.
+  await auth.submitCode({ attemptId: login.attemptId, code });
+  // Cancel an abandoned attempt with auth.cancelLogin({ attemptId: login.attemptId }).
 }
 ```
 
-The browser shows the stock `claude auth login` in its own PTY. The user opens Anthropic's sign-in page and pastes the code into the CLI. Every sign-in method the CLI offers stays available. Your backend and the Session never see the code or the credentials. Afterwards, `auth.status()` reports the result. `auth.close({ terminalId })` ends an unfinished login, and `auth.logout()` runs the native logout. See [native auth](../../docs/native-auth.md) for the browser snippet, lifecycle and protocol.
+No terminal component or WebSocket transport is needed for this flow. The SDK starts the unmodified CLI privately and waits for its link and code prompt. A rejected code (`code_rejected`) leaves the same attempt available for retry. A completed code requires fresh native status before authentication succeeds. Output stays in bounded Session memory and is never returned to the application. Codes are validated and written only to that attempt's stdin; credentials remain in the Workspace. `login({ force: true })` confirms native logout before starting a fresh login.
+
+As a low-level alternative, `auth.terminal()` hands the stock `claude auth login` PTY to the user's browser over a WebSocket, with every sign-in method the CLI offers. Hosted Cantelop does not yet relay that terminal. `auth.close({ terminalId })` ends an unfinished terminal login, and `auth.logout()` runs the native logout. See [native auth](../../docs/native-auth.md) for the browser snippet, lifecycle and protocol.
 
 The provider runs Claude's own `auth status`, `auth login` and `auth logout` with the Workspace-scoped environment. The packaged `login-pty.py` gives the CLI a real terminal, applies resizes, and relays bytes without recording them. Native credentials remain under the Workspace's `.claude` directory, so every Session in the Workspace uses them. The adapter does not inject inherited API keys, and the host's auth/config environment is unchanged.
 
@@ -149,26 +153,3 @@ Task settings are private durable queue data and are excluded from snapshots and
 
 
 The SDK persists Session configuration, history and pending IDs atomically under `<workspace>/.cantelop/<hashed-session-id>.json`. App settings are applied on every activation, while conversation history and pending work are retained. This format supports migration from existing durable Claude integrations. Running work becomes `interrupted` on replacement and is never replayed; queued work resumes on recovery. `steer` interrupts the active turn and prioritizes its new input after native cleanup. `cancel` targets a queued or active ID. History is bounded to 1,000 messages; snapshots contain the latest 50 previews. Events use the exported Session protocol, including attributed Claude fragments and `auth.required`. Authorize queue/steer/cancel requests on the application backend.
-
-### Link-and-code sign-in
-
-`claudeAuth` includes the SDK's structured native login adapter. On your backend:
-
-```ts
-const auth = agent.workspace({ slug: "customer" }).auth();
-const login = await auth.login({ force: false });
-if (!login.authenticated) {
-  // Return this link and attempt ID to your sign-in form.
-  console.log(login.url, login.attemptId);
-  // Submit the returned code with auth.submitCode({ attemptId: login.attemptId, code }).
-  // Cancel an abandoned attempt with auth.cancelLogin({ attemptId: login.attemptId }).
-}
-```
-
-No terminal component or WebSocket transport is needed for this flow. The SDK
-starts the unmodified CLI privately and waits for its link and code prompt.
-A rejected code leaves the same attempt available for retry. A completed code
-requires fresh native status before authentication succeeds. Output stays in
-bounded Session memory and is never returned to the application. Codes are
-validated and written only to that attempt's stdin; credentials remain in the
-Workspace. The terminal API described above remains an explicit low-level option.

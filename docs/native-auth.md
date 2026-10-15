@@ -2,9 +2,11 @@
 
 Some harnesses wrap a stock CLI that signs in with the user's own subscription, for example Claude Code with a Claude Pro or Max plan. Cantelop supports this by giving the user the CLI's **own terminal**. The user completes the CLI's sign-in there, and the CLI stores its credentials in the Workspace.
 
-No part of the App ever handles the sign-in code or the resulting credentials: not the App backend, not the Edge, not Cantelop's delivery records. The SDK relays terminal bytes in memory and nothing else. It does not parse, log, store or replay them. This follows Anthropic's [Claude Code terms](https://code.claude.com/docs/en/legal-and-compliance), which allow an end user to sign in to the unmodified binary on a hosting platform. The same terms forbid third parties from collecting, storing or intermediating Claude.ai credentials or session tokens.
+In the terminal flow, no part of the App handles the sign-in code or the resulting credentials: not the App backend, not the Edge, not Cantelop's delivery records. The SDK relays terminal bytes in memory and nothing else. It does not parse, log, store or replay them. This follows Anthropic's [Claude Code terms](https://code.claude.com/docs/en/legal-and-compliance), which allow an end user to sign in to the unmodified binary on a hosting platform. The same terms forbid third parties from collecting, storing or intermediating Claude.ai credentials or session tokens.
 
-Hosted Cantelop does not yet relay the native terminal to browsers. On deployed Apps, use the [structured link/code login](#structured-linkcode-login), which needs a provider with a `codeLogin` adapter such as the packaged `claudeAuth`. The Codex and OpenCode example providers have no `codeLogin` adapter and rely on the terminal.
+In the [structured link/code login](#structured-linkcode-login), your backend relays the user's short-lived sign-in code to the CLI without logging or persisting it; the credentials still stay in the Workspace.
+
+Hosted Cantelop does not yet relay the native terminal to browsers. On deployed Apps, use the structured link/code login, which needs a provider with a `codeLogin` adapter such as the packaged `claudeAuth`. The Codex and OpenCode example providers have no `codeLogin` adapter and rely on the terminal.
 
 ## Declare auth on the App
 
