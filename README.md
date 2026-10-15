@@ -6,7 +6,7 @@ Cantelop runs agents for your application in isolated Sandboxes with durable Wor
 - **Workspace:** durable files and a database, typically one per customer or user. Every Session in a Workspace shares them.
 - **Session:** one conversation or task. Its Sandbox is released when idle and reactivated by the next message; the Session identity stays reusable.
 
-You define the Session runtime. The SDK generates the App's Edge API, and Cantelop deploys both.
+You define the Session runtime. The SDK generates the App's Edge API, and Cantelop deploys both. Apps use [project schema 3](schemas/app-v3.json).
 
 ## Get started
 
@@ -137,6 +137,8 @@ Backends import the compiled client, or bundle the App definition with the Cante
 
 `CantelopClient` supplies shared connection context, optionally selecting a profile. Each `cantelop.app({ name, runtime })` declares a named App with its own typed runtime and Workspace namespace. One client can define multiple Apps. App names are deployment slugs, independent of JavaScript export names. Connections and scoped credentials resolve automatically per App; constructing these objects does not provision resources. See [App configuration](docs/app-configuration.md).
 
+Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope, each at its own `POST /commands/{type}` path (`/commands/dispatch`, `/commands/view`, …), so request logs and the Cantelop console show which SDK call each request was. Edge ↔ Sandbox is the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
+
 Workspace and Session references are lazy. Omitting a Session ID generates one immediately. `dispatch()` lazily resolves/provisions a Workspace slug and activates a Sandbox when needed. A canonical Workspace ID never provisions a replacement. Explicit resolution and database access share the Workspace reference’s cached metadata. Session IDs are App-scoped even though references are nested under Workspace.
 
 Acceptance means durable message admission, not agent completion. Runtimes that declare a reply type, such as `createClaudeRuntime` or a custom harness, also support `session.request(message, { timeoutMs })`, which waits for one JSON reply. Timeout or disconnect ends waiting and does not prove execution stopped. A failed request exposes its Message ID through `RemoteAppError`; reuse that ID for an ambiguous retry. The SDK does not automatically replay writes.
@@ -258,23 +260,6 @@ for await (const event of session.stream({ after: snapshot.cursor })) {
 Supervised activity can also call its own `view.commit(state)` capability while it is active. This capability follows the activity signal and closes when that activity settles.
 
 A view read never opens a Workspace or activates a Sandbox. A missing projection returns `session_view_not_found`. Views survive stop and host restart; stream resume is subject to the platform's bounded replay retention. Projection commits advance the stream cursor without appearing as application events.
-
-## Project layout and builds
-
-```json
-{
-  "schema_version": 3,
-  "definition": "src/cantelop.ts"
-}
-```
-
-The [manifest schema](schemas/app-v3.json) points to a definition module and has no App name, runtime configuration, or customer API entry. App names, environment declarations, and optional `dockerfile` belong in `cantelop.app(...)`. Cantelop owns runtime startup, Workspace mounts, listener ports, and shutdown.
-
-The SDK build module is tooling. `buildAppArtifacts({ definition, outdir })` generates separate Edge/Sandbox artifacts for each named App and a shared compiled backend module. Individual builds/watch accept an `app` name selector when a module defines multiple Apps. Each deployment must match `app_name` and `session_runtime_id`; the backend compiler removes every App's runtime-only dependencies. `db/schema.ts` is discovered independently and describes each App's isolated Workspace databases. See [runtime compilation](docs/runtime-definitions.md).
-
-Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope, each at its own `POST /commands/{type}` path (`/commands/dispatch`, `/commands/view`, …), so request logs and the Cantelop console show which SDK call each request was. Edge ↔ Sandbox is the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
-
-`cantelop deploy` uploads the generated artifacts, and the platform serves the generated Edge Worker through its dispatcher/outbound trust chain. Webhook handlers can live in the customer’s own application and call the same SDK primitives, or run on the App's Edge as [App webhooks](docs/webhooks.md).
 
 ## Examples
 
