@@ -1,8 +1,10 @@
 # Agent integration examples
 
-Start with [the web chat app](web-chat/README.md) for a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through a named App definition and keeps credentials out of browser code.
+Start with [Claude Code](anthropic/README.md). It uses the Claude Code harness packaged in `@cantelop/sdk/harnesses/claude`, so its whole App is one definition file, and each Workspace signs in with its user's own Claude subscription. The [README's Get started](../README.md#get-started) walks through the same setup.
 
-[Codex](codex/README.md), [Claude Code](anthropic/README.md), and [OpenCode](opencode/README.md) wrap published stock CLIs directly, following the [claude-code-api pattern](https://github.com/stepandel/claude-code-api). Each starts a subprocess per turn, uses native Workspace-owned authentication, forwards JSON events and resumes its persisted native conversation. Each native runner implements `SessionHarness` with `queue`, `steer` and `cancel` and is returned directly from `runtime.create`.
+[The web chat app](web-chat/README.md) is a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through a named App definition and keeps credentials out of browser code.
+
+[Claude Code](anthropic/README.md), [Codex](codex/README.md), and [OpenCode](opencode/README.md) wrap published stock CLIs directly, following the [claude-code-api pattern](https://github.com/stepandel/claude-code-api). Each starts a subprocess per turn, uses native Workspace-owned authentication, forwards JSON events and resumes its persisted native conversation. Each native runner implements `SessionHarness` with `queue`, `steer` and `cancel` and is returned directly from `runtime.create`. Claude Code is packaged in the SDK; the Codex and OpenCode runners live in their example directories.
 
 All three implement `steer` by admitting priority input and interrupting the current turn; app constructors register `runtime: { create }`. Steering will prioritize the new prompt, interrupt the active operation, wait for process-group cleanup, then resume the native conversation. Provider tools, prompts, permissions and agent loops remain native.
 

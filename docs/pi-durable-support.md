@@ -14,7 +14,7 @@ unmet. Native support needs a storage adapter with verified commit durability,
 an activation and wake contract for pending Pi tasks, and observation that
 starts from Pi's committed state.
 
-The existing [Pi example](../examples/pi/src/session.ts) owns a process-local
+The existing [Pi example](../examples/pi/src/agent.ts) owns a process-local
 `Agent` and prompt queue. Its output is forwarded through Cantelop's transient
 event stream. Neither queue nor transcript nor running tool intent is persisted
 for recovery. Updating its Pi dependencies to 1.0 does not change that model.

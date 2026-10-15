@@ -1,128 +1,161 @@
 # Cantelop SDK
 
-Cantelop runs agents in isolated Sandboxes with durable Workspaces. The SDK exposes App → Workspace → Session directly to application backends. Developers define their Session runtime; the SDK generates the protocol-managed Edge API and the platform deploys it with opinionated middleware.
+Cantelop runs agents for your application in isolated Sandboxes with durable Workspaces. `@cantelop/sdk` is how your backend talks to them and how you define what runs inside each Session. It includes a packaged Claude Code harness, so a working agent App is one short definition file.
 
-Apps use backend resource APIs and runtime-only project schema **3** with CLI build protocol **6**. Custom HTTP ingress is optional and reserved for webhooks. See [integration contracts](docs/integration-foundation.md) and [native auth](docs/native-auth.md).
+- **App:** a deployed agent, with a name, a Session runtime and its configuration.
+- **Workspace:** durable files and a database, typically one per customer or user. Every Session in a Workspace shares them.
+- **Session:** one conversation or task. Its Sandbox is released when idle and reactivated by the next message; the Session identity stays reusable.
+
+You define the Session runtime. The SDK generates the App's Edge API, and Cantelop deploys both.
 
 ## Get started
 
-You need Node.js 22 or newer, Bun 1.3.10 for the default local development runner, and the Cantelop CLI 0.15.2 or newer (`brew install stepandel/tap/cantelop`; check with `cantelop version` and `bun --version`). Deploying also needs Docker with `linux/amd64` build support and a Cantelop account. Local development can use Docker instead of Bun with `cantelop dev --container`.
+You need:
 
-Create a project in an empty directory:
+- Node.js 22 or newer
+- The Cantelop CLI 0.15.2 or newer: `brew install stepandel/tap/cantelop` (check with `cantelop version`)
+- Docker with `linux/amd64` build support
+- A Claude subscription (Pro or Max) to sign the agent in
+- A Cantelop account, when you deploy
+
+### 1. Define the App
+
+In an empty directory:
 
 ```sh
-cantelop init -app hello -provider openai   # or: -provider claude, -provider pi
+npm init -y
+npm pkg set type=module
 npm install @cantelop/sdk
 ```
 
-`init` writes `cantelop.json`, the App definition `src/cantelop.ts`, the Session runtime `src/agent.ts`, and `package.json`. With CLI 0.15.2, give the generated App an explicit inline message contract in `src/cantelop.ts` before starting development:
+Add `cantelop.json`, which points the CLI at your App definition:
+
+```json
+{ "schema_version": 3, "definition": "src/cantelop.ts" }
+```
+
+Add `src/cantelop.ts`:
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
-import { receive } from "./agent.js";
+import {
+  createClaudeHarness, claudeAuth, claudeDockerfile,
+  type ClaudeMessage, type ClaudeEvent,
+} from "@cantelop/sdk/harnesses/claude";
 
 const cantelop = new CantelopClient();
-export const agent = cantelop.app<{ prompt: string }>({
+
+export const agent = cantelop.app<ClaudeMessage, ClaudeEvent>({
   name: "hello",
-  runtime: { receive },
-  environment: { CODEX_API_KEY: { secret: true, required: true } },
+  runtime: { create: createClaudeHarness },
+  auth: claudeAuth,
+  dockerfile: claudeDockerfile,
 });
 ```
 
-The inline contract avoids CLI 0.15.2's starter declaration and backend type-directory copying errors. If you chose the Claude or Pi starter, keep its generated `environment` declaration and make the same `cantelop.app<{ prompt: string }>` edit.
+That is the whole App. `createClaudeHarness` runs the stock Claude Code CLI in each Session's Sandbox and resumes the same conversation on every turn. `claudeAuth` lets each Workspace sign in with its user's own Claude subscription. `claudeDockerfile` is the SDK-maintained Sandbox image with the CLI installed. `name` is the App's deployment slug.
 
-Create `.env` in the project root and replace the placeholder with your OpenAI API key. The OpenAI starter uses the Codex SDK, which reads `CODEX_API_KEY`:
-
-```dotenv
-CODEX_API_KEY=<your-openai-api-key>
-```
-
-For the Claude starter, use `ANTHROPIC_API_KEY` instead. For Pi, declare the selected model provider's credential in the App's `environment` and set its value in `.env`. Keep `.env` out of version control by adding it to `.gitignore`.
-
-Start local development; the CLI reads `.env` automatically:
+### 2. Run it locally
 
 ```sh
-cantelop dev
+cantelop dev --container
 ```
 
-`cantelop dev` serves the App at `http://127.0.0.1:8787`, rebuilds as you edit, records a credential in the SDK's `local` profile, and writes a compiled backend client to `.cantelop/client/`. Call the App from a backend script run with `CANTELOP_PROFILE=local`:
+This builds the Sandbox image, serves the App at `http://127.0.0.1:8787`, and records a credential in the SDK's `local` profile. The Claude CLI and its sign-in helper live in that image, so use `--container`. Restart it after editing `src/cantelop.ts`.
+
+In a second terminal, compile the backend client. It keeps the App's exports and types but none of its Sandbox code, so a backend can import it:
+
+```sh
+node --input-type=module -e 'import { buildBackendClient } from "@cantelop/sdk/build"; await buildBackendClient({ definition: "src/cantelop.ts", outdir: ".cantelop/client" })'
+```
+
+`cantelop build` and `cantelop deploy` also write this client. Rebuild it whenever you change the App definition.
+
+### 3. Sign in and send a prompt
+
+Save this backend script as `try.mjs`:
 
 ```js
+import { createInterface } from "node:readline/promises";
 import { agent } from "./.cantelop/client/client.mjs";
 
-const session = agent.workspace({ slug: "ada" }).session();
-const message = await session.dispatch({ prompt: "write hello.txt" });
-console.log(session.id, message.id, message.state); // "accepted": admitted, not finished
+const workspace = agent.workspace({ slug: "ada" });
+
+// Sign the Workspace in to Claude once. The credentials stay in the Workspace.
+const auth = workspace.auth();
+const login = await auth.login();
+if (!login.authenticated) {
+  console.log(`Sign in to Claude: ${login.url}`);
+  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  const code = await terminal.question("Paste the code: ");
+  terminal.close();
+  if (!await auth.submitCode({ attemptId: login.attemptId, code })) throw new Error("Sign-in failed");
+}
+
+const session = workspace.session();
+await session.dispatch({ type: "prompt", prompt: "Write hello.txt containing a haiku" });
+for await (const event of session.stream()) {
+  console.log(event.data); // Claude Code's stream-json events
+  if (event.data.type === "result") break;
+}
 ```
 
-When it works locally, sign in and deploy. `--env-file` imports the provider secrets your App declares:
+```sh
+CANTELOP_PROFILE=local node try.mjs
+```
+
+The first run prints a Claude sign-in link. Open it, sign in, and paste the code the page shows. Later runs reuse the Workspace's credentials. Sign a Workspace in before its first prompt: the harness can't run Claude without credentials, and a prompt sent earlier fails without producing output.
+
+`dispatch()` returns once the message is durably admitted, not when the agent finishes. `stream()` relays the agent's events as it works.
+
+### 4. Deploy
 
 ```sh
 cantelop login
-cantelop deploy --create-app --env-file .env
-cantelop app credentials --app hello          # backend configuration, in dotenv form
+cantelop deploy --create-app
+cantelop app credentials --app hello   # backend configuration, in dotenv form
 ```
 
-Store the printed credentials in your backend's secret store; see [App configuration](docs/app-configuration.md). Any change to runtime logic or types gives the App a new runtime identity, so rebuild and redeploy your backend whenever you deploy the App; see [deploy the backend with the App](docs/runtime-definitions.md#deploy-the-backend-with-the-app).
+`deploy` builds and uploads the App and refreshes `.cantelop/client/`. Store the printed credentials in your backend's secret store; see [App configuration](docs/app-configuration.md). Each user's Workspace then signs in once through the same `login()` and `submitCode()` calls, made from your backend.
 
-## Integrate from an application backend
+Any change to runtime logic or types gives the App a new runtime identity, so rebuild and redeploy your backend whenever you deploy the App; see [deploy the backend with the App](docs/runtime-definitions.md#deploy-the-backend-with-the-app).
 
-```ts
-// src/cantelop.ts — the application and deployment definition.
-import { CantelopClient } from "@cantelop/sdk";
-import type { Message, Event, Reply } from "./contracts.js";
-import { create } from "./agent.js";
-
-const cantelop = new CantelopClient();
-
-export const support = cantelop.app<Message, Event, Reply>({
-  name: "support-agent",
-  runtime: { create },
-});
-```
+## Use the App from your backend
 
 ```ts
-import { support } from "./cantelop.js";
+import { agent } from "./.cantelop/client/client.mjs";
 
-const workspace = support.workspace({ slug: "customer-123" });
-// Or: support.workspace({ id: canonicalWorkspaceId });
+const workspace = agent.workspace({ slug: "customer-123" });
+// Or: agent.workspace({ id: canonicalWorkspaceId });
 const session = workspace.session({ id: "conversation-456" });
+
+const message = await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+const status = await message.status();
 ```
 
-Backend builds use the Cantelop compiler transform to exclude Sandbox dependencies; ordinary source imports load their dependencies. See [runtime compilation](docs/runtime-definitions.md).
+Backends import the compiled client, or bundle the App definition with the Cantelop compiler plugin, which removes Sandbox-only dependencies. Importing `src/cantelop.ts` untransformed loads the harness and its dependencies. See [runtime compilation](docs/runtime-definitions.md).
 
 `CantelopClient` supplies shared connection context, optionally selecting a profile. Each `cantelop.app({ name, runtime })` declares a named App with its own typed runtime and Workspace namespace. One client can define multiple Apps. App names are deployment slugs, independent of JavaScript export names. Connections and scoped credentials resolve automatically per App; constructing these objects does not provision resources. See [App configuration](docs/app-configuration.md).
 
-Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. The Edge API remains deployed; its implementation is owned by the protocol rather than developer-authored routing.
+Workspace and Session references are lazy. Omitting a Session ID generates one immediately. `dispatch()` lazily resolves/provisions a Workspace slug and activates a Sandbox when needed. A canonical Workspace ID never provisions a replacement. Explicit resolution and database access share the Workspace reference’s cached metadata. Session IDs are App-scoped even though references are nested under Workspace.
 
-Workspace and Session references are lazy. Omitting a Session ID generates one immediately. `dispatch()` lazily resolves/provisions a Workspace slug and activates a Sandbox when needed. A canonical Workspace ID never provisions a replacement. Explicit resolution and database access share the Workspace reference’s cached metadata. Session commands send the selected Workspace to Edge for operation-specific lookup.
+Acceptance means durable message admission, not agent completion. Runtimes that declare a reply type, such as `createClaudeRuntime` or a custom harness, also support `session.request(message, { timeoutMs })`, which waits for one JSON reply. Timeout or disconnect ends waiting and does not prove execution stopped. A failed request exposes its Message ID through `RemoteAppError`; reuse that ID for an ambiguous retry. The SDK does not automatically replay writes.
 
-```ts
-const receipt = await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
-const status = await receipt.status();
-const reply = await session.request(
-  { type: "prompt", prompt: "Return one answer" },
-  { timeoutMs: 15_000 },
-);
-```
-
-Acceptance means durable message admission, not agent completion. `request()` enters the normal-priority mailbox and returns one JSON reply when the handler finishes. Timeout or disconnect ends waiting and does not prove execution stopped. A failed request exposes its Message ID through `RemoteAppError`; reuse that ID for an ambiguous retry. The SDK does not automatically replay writes.
-
-## Session lifecycle and controls
-
-Workspaces provide durable files and databases. Session memory and temporary files are ephemeral; Session identity remains reusable. Multiple Sessions may share a Workspace, so the application owns coordination of shared state. Session IDs remain App-scoped even though references are nested under Workspace.
+## Steer, cancel and stop
 
 ```ts
-await session.stop();
-// The same identity can activate on a new Sandbox.
-await session.dispatch({ type: "prompt", prompt: "Continue" });
+await session.steer({ type: "prompt", prompt: "Focus on the authentication module" });
+await session.cancel(); // { state: "requested" | "idle" }
+await session.stop();   // release the Sandbox; the Session identity stays reusable
 ```
 
-`stop()` releases the current Sandbox and closes streams, potentially interrupting work. It retains current errors for an unmaterialized Session. The integration route includes the Workspace selector for platform ownership/binding checks without provisioning.
+Dispatch and steer accept the same message type and return an ID/status reference. Dispatch invokes the harness’s `queue` method; steer invokes its `steer` method. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default. The Claude harness queues dispatched prompts in order. A steer interrupts the active turn, waits for the CLI's process group to exit, then resumes the same conversation with the new prompt ahead of queued work.
 
-Dispatch and steer accept the same message type and return an ID/status reference. Dispatch invokes the harness’s `queue` method; steer invokes its `steer` method. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default.
+`session.cancel({ id?, signal? })` takes no target message ID. It invokes the harness’s `cancel()` method, which selects and signals its active operation. `requested` acknowledges interruption, not completed cleanup; the harness keeps ownership of the operation until cleanup settles. Queued input is preserved; cancellation while idle does not affect later input. Retrying the same command ID reuses its result and cannot interrupt a subsequent run.
 
-`cancel()` interrupts the active harness run and preserves queued input. `stop()` releases the Sandbox while retaining the Session identity. `view()` returns a typed durable application projection with revision and an event cursor for subscribing after the snapshot. Steering and run cancellation are implemented by the harness; the platform delivers their envelopes as ordinary messages. Durable views are not yet available on hosted Cantelop.
+Submission IDs serve receipts, retries and output correlation. Message status describes intake, so a queued run can outlive its message's `handled` status.
+
+`stop()` releases the current Sandbox and closes streams, potentially interrupting work. The next message activates the same Session on a new Sandbox. Workspaces keep durable files and databases; Session memory, harness memory and temporary files belong to one Sandbox incarnation. Multiple Sessions may share a Workspace, so the application owns coordination of shared state.
 
 ## Stream output
 
@@ -132,11 +165,50 @@ for await (const event of session.stream({ signal })) {
 }
 ```
 
-`stream()` is an async iterator over existing SSE output. Metadata includes cursor `{ streamId, sequence }`, Session ID, Message ID, and creation time. Resume explicitly with `session.stream({ after: savedCursor })`. Replay remains bounded; cursor expiration and stream reset retain their remote error codes. The SDK does not reconnect automatically.
+`stream()` is an async iterator over the Session's SSE output. Metadata includes cursor `{ streamId, sequence }`, Session ID, Message ID, and creation time. Resume explicitly with `session.stream({ after: savedCursor })`. Replay is bounded; cursor expiration and stream reset keep their remote error codes. The SDK does not reconnect automatically.
 
 Breaking iteration or aborting the subscription only closes its stream. It does not cancel agent work or keep the Sandbox warm. Browser-facing routes remain part of the application's own authorized backend.
 
-## Define the runtime
+The Claude harness emits Claude Code's native `stream-json` objects. Frames over 48 KiB arrive as `native.fragment` events; concatenate their `json` in `index` order and parse the result.
+
+## Sign Workspaces in
+
+Apps that declare `auth` let each Workspace sign in to a stock CLI with the user's own subscription. Native credentials stay in the Workspace, so every Session there shares them. Use auth only on Workspaces that belong to a single verified user, and derive the selector from that user's identity.
+
+`app.workspace(selector).auth()` exposes the sign-in methods. For a provider with a `codeLogin` adapter, such as `claudeAuth`, `login()` returns `{authenticated:true}` or `{authenticated:false,attemptId,url,expiresAt}`. `submitCode({attemptId,code})` returns native authentication status or a stable `code_rejected` error, and `cancelLogin({attemptId})` stops that attempt. `login({force:true})` confirms native logout before starting a fresh login. The SDK owns attempts, prompt parsing, bounded private output, expiration and process cleanup. Application authorization and account preferences stay on your backend.
+
+Low-level `terminal()`/`close()` serve integrations that intentionally expose the CLI's own terminal. Hosted Cantelop does not yet relay that terminal to browsers. See [native auth](docs/native-auth.md).
+
+## Configure the Claude harness
+
+Pass options to choose the model, tools, prompt and limits for each Session:
+
+```ts
+export const agent = cantelop.app<ClaudeMessage, ClaudeEvent>({
+  name: "hello",
+  runtime: {
+    create: (context) => createClaudeHarness(context, {
+      model: "sonnet",
+      permissionMode: "dontAsk",
+      allowedTools: ["Read", "Grep", "Glob"],
+      systemPrompt: "Investigate issues and report your findings.",
+      maxTurns: 24,
+    }),
+  },
+  auth: claudeAuth,
+  dockerfile: claudeDockerfile,
+});
+```
+
+Options also cover `tools`, `settingSources`, `mcps` and a `conversation` seed. They are snapshotted when the factory runs; the SDK context supplies the canonical Session identity. Without options, the harness keeps the CLI's native configuration, with `CLAUDE_MODEL` and `CLAUDE_PATH` read from the App's declared environment.
+
+`createClaudeRuntime(options)` packages a durable Session lifecycle on top of the harness: App-declared defaults, a persistent queue, targeted cancellation, snapshots, recovery, `auth.required` events and per-task settings in queue/steer payloads. Its protocol types are in `@cantelop/sdk/harnesses/claude/protocol`. The [Claude Code example](examples/anthropic/README.md) covers both, plus custom images and `NativeClaude` for custom construction.
+
+## Other runtimes
+
+Stock CLI harnesses for [Codex](examples/codex/README.md) and [OpenCode](examples/opencode/README.md) follow the same pattern as the Claude harness, as examples rather than packaged exports. [Pi](examples/pi/README.md) and [OpenAI Agents](examples/openai/README.md) show framework integrations.
+
+To write your own, return a harness from `runtime.create`:
 
 ```ts
 // src/agent.ts — the harness factory compiled into the Sandbox.
@@ -153,59 +225,13 @@ The factory runs once per Session runtime incarnation, on the first harness comm
 
 Work receives a signal, typed output/view, submission identity and Session resources. The SDK tracks operation lifetimes, attribution and deadlines without selecting provider scheduling behavior. `cancel()` returns whether an active operation was signalled and preserves waiting input. The compiler bundles the factory and its dependencies into the Sandbox while excluding them from backend and Edge artifacts.
 
-Custom runtimes can use `runtime: { receive, onActivate?, onRecover?, redelivery? }`. Their intake is serialized; move long-running work into `context.activity` to keep control intake responsive.
+Custom runtimes can instead use `runtime: { receive, onActivate?, onRecover?, redelivery? }`. Their intake is serialized; move long-running work into `context.activity` with `activity.start`, `queue`, `steer`, and `cancel`, and register provider methods through activity options `onSteer` and `onCancel`.
 
-Applications own durable jobs, checkpoints, and idempotency. The optional `onActivate` hook restores state once per incarnation; the optional `onRecover` hook opts into replacement-Sandbox recovery. Redelivery remains opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies retain their JSON and size limits.
+Applications own durable jobs, checkpoints, and idempotency. The optional `onActivate` hook restores state once per incarnation; the optional `onRecover` hook opts into replacement-Sandbox recovery. Redelivery is opt-in for deduplicating intake handlers. Successful `receive` acknowledges application intake; it does not mean a durable job has completed. Persist state under `/workspace` or in the Workspace database. Output/replies keep their JSON and size limits.
 
-## Runtime-only project
+Runtimes that don't need a custom image can run locally without `--container`: plain `cantelop dev` runs Sessions natively with Bun 1.3.10 and rebuilds as you edit.
 
-```json
-{
-  "schema_version": 3,
-  "definition": "src/cantelop.ts"
-}
-```
-
-The [manifest schema](schemas/app-v3.json) points to a definition module and has no App name, runtime configuration, or customer API entry. App names, environment declarations, and optional `dockerfile: "docker/Dockerfile"` belong in `cantelop.app(...)`. Cantelop owns runtime startup, Workspace mounts, listener ports, and shutdown.
-
-The SDK build module is tooling. `buildAppArtifacts({ definition, outdir })` generates separate Edge/Sandbox artifacts for each named App and a shared compiled backend module. Individual builds/watch accept an `app` name selector when a module defines multiple Apps. Each deployment must match `app_name` and `session_runtime_id`; the backend compiler removes every App's runtime-only dependencies. `db/schema.ts` is discovered independently and describes each App's isolated Workspace databases. See [runtime compilation](docs/runtime-definitions.md).
-
-`cantelop deploy` uploads the generated artifacts, and the platform serves the generated Edge Worker through its dispatcher/outbound trust chain. Webhook handlers can live in the customer’s own application and call the same SDK primitives, or run on the App's Edge as [App webhooks](docs/webhooks.md).
-
-## Examples and development
-
-[The multi-App example](examples/multi-app/README.md) shows two Apps under one client. [Provider examples](examples/README.md) have backend `src/cantelop.ts` and native `src/agent.ts`. [Workspace database documentation](docs/workspace-databases.md) covers renewal and transaction behavior. [App webhooks and optional homepages](docs/webhooks.md) enable headless integrations with a public landing page; the [GitHub example](examples/github/README.md) verifies deliveries and dispatches through the same App interface.
-
-```sh
-pnpm install --frozen-lockfile
-pnpm check
-pnpm test
-pnpm check:examples
-pnpm check:package
-pnpm test:bun
-```
-
-Package qualification checks the actual npm tarball, removed exports/files, generated Edge and native runtime build artifacts, and a clean consumer's integration types. Publishing remains a separate operation; see [release guidance](docs/releasing.md).
-
-All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope, each at its own `POST /commands/{type}` path (`/commands/dispatch`, `/commands/view`, …), so request logs and the Cantelop console show which SDK call each request was. The Edge interprets each operation through its own handler; Edge ↔ Sandbox remains the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
-
-For a runnable browser and server integration, see [the web chat example](examples/web-chat/README.md).
-
-### Harness controls and durable Session views
-
-Dispatch, steer and cancel share ordinary delivery. The platform treats their SDK command payloads as opaque. The harness implementation owns queueing, steering and active-operation cancellation. The SDK owns command receipts and operation-scoped output and replies.
-
-```ts
-await session.dispatch(message);
-await session.steer(newDirection);
-await session.cancel();
-```
-
-`session.cancel({ id?, signal? })` takes no target message ID and returns `{ state: "requested" | "idle" }`. It invokes the harness’s `cancel()` method, which selects and signals its active operation. `requested` acknowledges interruption, not completed cleanup. The harness retains ownership of the active operation until cleanup settles before reusing provider resources. Queued input is preserved; cancellation while idle does not affect later input. Retrying the same command ID reuses its result and cannot interrupt a subsequent run.
-
-Submission IDs remain available for receipts, retries and output correlation. Dispatch status describes intake; a queued run may outlive intake completion. Requests wait for `queue` to return its reply while other input and control remain responsive. `stop()` releases the Sandbox and retains Session identity. Harness memory belongs to one incarnation; recovery remains application-owned.
-
-For custom receive runtimes, `activity.start`, `queue`, `steer`, and `cancel` are available. Register provider methods through activity options `onSteer` and `onCancel`; those hooks belong to the active execution.
+## Durable Session views
 
 Hosted Cantelop does not store Session views yet, so deployed Apps can't commit or read them.
 
@@ -219,9 +245,7 @@ async function receive(context: SessionContext<Message, Event, Reply, State>) {
 }
 ```
 
-`view.commit` resolves after the platform stores the projection and its atomic
-event boundary. Customer code owns application state and recovery; committing a
-view does not replace the application's database or replay its runtime closures.
+`view.commit` resolves after the platform stores the projection and its atomic event boundary. Customer code owns application state and recovery; committing a view does not replace the application's database or replay its runtime closures.
 
 ```ts
 const snapshot = await session.view();
@@ -231,17 +255,46 @@ for await (const event of session.stream({ after: snapshot.cursor })) {
 }
 ```
 
-Supervised activity can also call its own `view.commit(state)` capability while
-it is active. This capability follows the activity signal and closes when that
-activity settles.
+Supervised activity can also call its own `view.commit(state)` capability while it is active. This capability follows the activity signal and closes when that activity settles.
 
-A view read never opens a Workspace or activates a Sandbox. A missing projection
-returns `session_view_not_found`. Views survive stop and host restart; stream
-resume remains subject to the platform's bounded replay retention. Projection
-commits advance the stream cursor without appearing as application events.
+A view read never opens a Workspace or activates a Sandbox. A missing projection returns `session_view_not_found`. Views survive stop and host restart; stream resume is subject to the platform's bounded replay retention. Projection commits advance the stream cursor without appearing as application events.
 
-Stock harness integrations are available for [Codex](examples/codex/README.md), [Claude Code](examples/anthropic/README.md), and [OpenCode](examples/opencode/README.md). Claude Code is packaged at `@cantelop/sdk/harnesses/claude`, exporting `createClaudeHarness`, `NativeClaude`, `claudeAuth`, `claudeDockerfile`, and message/event/options types. `createClaudeRuntime(options)` also packages the durable queue/cancel/steer/snapshot/recovery lifecycle with Claude defaults declared in the App’s runtime options and optional task settings carried in queue/steer message payloads, using `createClaudeHarness` internally; its protocol types are available from `@cantelop/sdk/harnesses/claude/protocol`. Use `createClaudeHarness(context, options)` for per-Session tool/MCP permissions, prompts, turn limits, model selection and conversation migration, or keep the one-argument factory for stock defaults. Configuration is snapshotted and the SDK context supplies canonical Session identity. Set `runtime: { create: createClaudeHarness }`, `auth: claudeAuth`, and `dockerfile: claudeDockerfile` to use the SDK-maintained runner and image; see the Claude example for a complete App definition. They wrap stock CLI runners directly, preserve native Workspace authentication and conversation IDs, and use interrupt-and-queue steering with process-group cleanup.
+## Project layout and builds
 
-Apps can declare `auth` to let each Workspace sign in to a stock CLI with the user's own subscription. Sign-in uses the CLI's native process. Applications can show a link/code form or intentionally expose its terminal; native credentials remain in the Workspace. The Claude Code example uses this; see [native auth](docs/native-auth.md).
+```json
+{
+  "schema_version": 3,
+  "definition": "src/cantelop.ts"
+}
+```
 
-Workspace auth methods are available on `app.workspace(selector).auth()`. For a provider with a `codeLogin` adapter (including packaged `claudeAuth`), `login()` returns `{authenticated:true}` or `{authenticated:false,attemptId,url,expiresAt}`. `submitCode({attemptId,code})` returns native authentication status or a stable `code_rejected` error, and `cancelLogin({attemptId})` stops that attempt. `login({force:true})` confirms native logout before starting a fresh login. The SDK owns attempts, prompt parsing, bounded private output, expiration and process cleanup. Application authorization and account preferences stay on your backend. Low-level `terminal()`/`close()` serve integrations that intentionally expose a native terminal; a terminal UI is not required. Hosted Cantelop does not yet relay the native terminal to browsers.
+The [manifest schema](schemas/app-v3.json) points to a definition module and has no App name, runtime configuration, or customer API entry. App names, environment declarations, and optional `dockerfile` belong in `cantelop.app(...)`. Cantelop owns runtime startup, Workspace mounts, listener ports, and shutdown.
+
+The SDK build module is tooling. `buildAppArtifacts({ definition, outdir })` generates separate Edge/Sandbox artifacts for each named App and a shared compiled backend module. Individual builds/watch accept an `app` name selector when a module defines multiple Apps. Each deployment must match `app_name` and `session_runtime_id`; the backend compiler removes every App's runtime-only dependencies. `db/schema.ts` is discovered independently and describes each App's isolated Workspace databases. See [runtime compilation](docs/runtime-definitions.md).
+
+Traffic follows `backend → SDK → protocol-managed App Edge Worker → outbound Worker/broker → Session runtime`. All App operations use the versioned `{ protocolVersion, id, workspace, session, command }` envelope, each at its own `POST /commands/{type}` path (`/commands/dispatch`, `/commands/view`, …), so request logs and the Cantelop console show which SDK call each request was. Edge ↔ Sandbox is the independently versioned actor protocol. See [the command and durable view contracts](docs/integration-foundation.md).
+
+`cantelop deploy` uploads the generated artifacts, and the platform serves the generated Edge Worker through its dispatcher/outbound trust chain. Webhook handlers can live in the customer’s own application and call the same SDK primitives, or run on the App's Edge as [App webhooks](docs/webhooks.md).
+
+## Examples
+
+- [Claude Code](examples/anthropic/README.md): the packaged harness, link/code sign-in and the durable `createClaudeRuntime` lifecycle.
+- [Web chat](examples/web-chat/README.md): a browser → application backend → `CantelopClient` integration.
+- [GitHub issue agent](examples/github/README.md): an App webhook that verifies signed deliveries and dispatches through the same App interface.
+- [Multi-App](examples/multi-app/README.md): two Apps under one client.
+- [All examples](examples/README.md), including Codex, OpenCode, Pi and OpenAI Agents.
+
+[Workspace databases](docs/workspace-databases.md) covers renewal, transactions and schema migrations.
+
+## Develop the SDK
+
+```sh
+pnpm install --frozen-lockfile
+pnpm check
+pnpm test
+pnpm check:examples
+pnpm check:package
+pnpm test:bun
+```
+
+Package qualification checks the actual npm tarball, removed exports/files, generated Edge and native runtime build artifacts, and a clean consumer's integration types. Publishing is a separate operation; see [release guidance](docs/releasing.md).
