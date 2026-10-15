@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
   buildSessionRuntime,
@@ -150,6 +151,63 @@ test("a built runtime serves the App's auth provider and its terminal relay", as
   let output = "";
   while (!output.includes("built-login")) output += Buffer.from((await reader.read()).value).toString("utf8");
   await reader.cancel();
+});
+
+test("runtime IDs do not depend on the absolute path of the project checkout", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cantelop-runtime-id-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const repository = fileURLToPath(new URL("..", import.meta.url));
+  const checkout = async name => {
+    const project = path.join(directory, name);
+    const sdk = path.join(project, "node_modules/@cantelop/sdk");
+    // Copy the SDK the way a package manager installs it; a symlink would resolve both checkouts to one real path.
+    await cp(path.join(repository, "dist"), path.join(sdk, "dist"), { recursive: true });
+    await cp(path.join(repository, "package.json"), path.join(sdk, "package.json"));
+    await symlink(path.join(repository, "node_modules"), path.join(sdk, "node_modules"), "dir");
+    // esbuild keys CommonJS modules by path, and the runtime bundle is part of the ID.
+    const legacy = path.join(project, "node_modules/legacy-greeting");
+    await mkdir(legacy);
+    await writeFile(path.join(legacy, "package.json"), '{"name":"legacy-greeting","main":"index.js","types":"index.d.ts"}');
+    await writeFile(path.join(legacy, "index.js"), 'module.exports = () => "hello";');
+    await writeFile(path.join(legacy, "index.d.ts"), "declare const greeting: () => string; export = greeting;");
+    await writeFile(path.join(project, "package.json"), '{"type":"module"}');
+    await mkdir(path.join(project, "src"));
+    const definition = path.join(project, "src/cantelop.ts");
+    await writeFile(definition, [
+      'import { CantelopClient } from "@cantelop/sdk";',
+      'import { createClaudeRuntime, claudeAuth, claudeDockerfile } from "@cantelop/sdk/harnesses/claude";',
+      'import type { ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply } from "@cantelop/sdk/harnesses/claude/protocol";',
+      'import greeting from "legacy-greeting";',
+      "const cantelop = new CantelopClient();",
+      "export const agent = cantelop.app<ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply>({",
+      '  name: "durable-claude",',
+      '  runtime: createClaudeRuntime({ workspace: "/workspace", tools: ["Read"], allowedTools: ["Read"], mcps: {} }),',
+      "  auth: claudeAuth,",
+      "  dockerfile: claudeDockerfile,",
+      "});",
+      'export const greeter = cantelop.app({ name: "greeter", runtime: { receive() { console.log(greeting()); } } });',
+    ].join("\n"));
+    // Like the CLI, compile with the project's own SDK installation.
+    const { buildBackendClient } = await import(pathToFileURL(path.join(sdk, "dist/build.js")).href);
+    return {
+      sdk,
+      ids: async () => (await buildBackendClient({ definition, outdir: path.join(project, ".cantelop/client") })).manifest.apps.map(app => app.session_runtime_id),
+    };
+  };
+  const original = await checkout("checkout");
+  const relocated = await checkout("relocated-checkout");
+  const [agent, greeter] = await original.ids();
+  assert.match(agent, /^rt_[a-f0-9]{64}$/);
+  assert.deepEqual(await relocated.ids(), [agent, greeter]);
+
+  // A structural change to the App's types still changes its ID, here inside Partial<ClaudeSessionConfig>.
+  const protocol = path.join(relocated.sdk, "dist/harnesses/claude-protocol.d.ts");
+  const declarations = await readFile(protocol, "utf8");
+  assert.match(declarations, /maxTurns\?: number;/);
+  await writeFile(protocol, declarations.replace("maxTurns?: number;", "maxTurns?: string;"));
+  const [changedAgent, unchangedGreeter] = await relocated.ids();
+  assert.notEqual(changedAgent, agent);
+  assert.equal(unchangedGreeter, greeter);
 });
 
 test("runtime-only schema discovery and watching preserve managed database artifacts", async t => {
