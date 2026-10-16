@@ -81,9 +81,10 @@ test('reserved state, credentials and dependency directories never transfer',asy
   const f=await fixture(t);for(const directory of ['node_modules','.git','.cantelop']){await mkdir(path.join(f.root,directory));await writeFile(path.join(f.root,directory,'secret'),'private');}
   await writeFile(path.join(f.root,'.env'),'secret');await writeFile(path.join(f.root,'ok'),'ok');const sync=await f.start({ignore:['.git','node_modules','.env']});await sync.ready();assert.deepEqual([...f.files.keys()],['ok']);
 });
-test('local links fail closed and hostile remote paths cannot escape the local directory',async t=>{
+test('scans omit local links and downloads cannot follow them or escape the directory',async t=>{
   const f=await fixture(t);const outside=await mkdtemp(path.join(tmpdir(),'sync-outside-'));t.after(()=>rm(outside,{recursive:true,force:true}));await writeFile(path.join(outside,'secret'),'private');
-  await symlink(outside,path.join(f.root,'escape'));const sync=await f.start();await assert.rejects(sync.ready());assert.equal(f.files.size,0);
+  await symlink(outside,path.join(f.root,'escape'));const sync=await f.start();await sync.ready();assert.equal(f.files.size,0);
+  f.put('escape/secret','attack');await assert.rejects(sync.flush());assert.equal(await readFile(path.join(outside,'secret'),'utf8'),'private');f.files.delete('escape/secret');
   await unlink(path.join(f.root,'escape'));f.put('../secret','attack');await assert.rejects(sync.flush());assert.equal(await readFile(path.join(outside,'secret'),'utf8'),'private');
 });
 test('checksum failures do not publish a downloaded file',async t=>{
