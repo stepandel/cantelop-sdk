@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { mkdir, readFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import type { ClaudeSessionEvent, ClaudeSessionSettings, ClaudeViewInput, ClaudeSessionView } from './claude-protocol.js'
+import type { ClaudeSessionEvent, ClaudeSessionSettings, ClaudeViewInput, ClaudeSessionView, ClaudeSessionReply } from './claude-protocol.js'
 import { claudeView } from './claude-view.js'
 import { writeDurableJson } from './durable-file.js'
 
@@ -29,6 +29,7 @@ export interface DurableClaudeState {
   assistantId?: string
   truncated: boolean
   outbox: ClaudePublication[]
+  controls: { id: string; fingerprint: string; reply: ClaudeSessionReply; runId?: string }[]
 }
 const statuses = new Set(['accepted', 'delivering', 'running', 'completed', 'failed', 'cancelled', 'interrupted'])
 function decode(value: any): DurableClaudeState {
@@ -43,7 +44,7 @@ function decode(value: any): DurableClaudeState {
         return { id: m.id, text: m.text, runId: 'legacy', nativeId: randomUUID(), fingerprint: m.settingsHash ?? '',
           status: interrupted || !statuses.has(m.status) ? 'interrupted' : m.status,
           ...(interrupted ? { reason: 'legacy_runtime_replaced' } : {}) }
-      }), run: null, entries: [], truncated: value.messages.length > 0, outbox: [] }
+      }), run: null, entries: [], truncated: value.messages.length > 0, outbox: [], controls: [] }
   }
   if (value.version !== 2 || !Number.isSafeInteger(value.revision) || value.revision < 0 || typeof value.nativeStarted !== 'boolean' ||
       !Array.isArray(value.entries) || !Array.isArray(value.outbox) || typeof value.truncated !== 'boolean' ||
@@ -52,8 +53,11 @@ function decode(value: any): DurableClaudeState {
         typeof m.nativeId !== 'string' || typeof m.fingerprint !== 'string' || !statuses.has(m.status)) ||
       value.outbox.some((p: any) => !p || !Number.isSafeInteger(p.revision) || p.revision > value.revision ||
         p.view?.revision !== p.revision || !Array.isArray(p.events))) throw new Error('Invalid Claude state')
+  value.controls ??= []
+  if (!Array.isArray(value.controls) || value.controls.length > 1000 || value.controls.some((r: any) =>
+      !r || typeof r.id !== 'string' || typeof r.fingerprint !== 'string' || !r.reply || !['cancel.accepted', 'session.reset'].includes(r.reply.type))) throw new Error('Invalid Claude controls')
   if (value.run !== null && (!value.run || typeof value.run.id !== 'string' || !Array.isArray(value.run.inputIds) ||
-      !['running', 'cancelling', 'completed', 'failed', 'cancelled', 'interrupted'].includes(value.run.status))) throw new Error('Invalid Claude run')
+      !['running', 'finishing', 'cancelling', 'completed', 'failed', 'cancelled', 'interrupted'].includes(value.run.status))) throw new Error('Invalid Claude run')
   return value
 }
 
@@ -80,7 +84,7 @@ export class DurableClaudeStore {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
         this.current = { version: 2, revision: 0, conversationId: randomUUID(), nativeStarted: false,
-          messages: [], run: null, entries: [], truncated: false, outbox: [] }
+          messages: [], run: null, entries: [], truncated: false, outbox: [], controls: [] }
       }
     })()
   }
@@ -91,7 +95,7 @@ export class DurableClaudeStore {
       state.revision++
       if (!Number.isSafeInteger(state.revision)) throw new Error('Claude revision exhausted')
       if (state.outbox.length >= 256) throw new Error('Claude publication capacity')
-      state.outbox.push({ revision: state.revision, view: claudeView(state), events: structuredClone(events) })
+      state.outbox.push({ revision: state.revision, view: claudeView(state), events: structuredClone(events).map(event => event.type === 'claude' || event.type === 'claude.fragment' ? { ...event, revision: state.revision } : event) })
       await writeDurableJson(this.path, state)
       this.current = state
     })

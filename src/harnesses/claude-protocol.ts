@@ -12,23 +12,26 @@ export interface ClaudeSessionConfig {
 /** Per-task overrides; omitted fields inherit App defaults. Lists and MCP maps replace defaults. */
 export type ClaudeSessionSettings = Partial<ClaudeSessionConfig>
 export type ClaudeSessionCommand =
-  | { type: 'snapshot' | 'drain' }
-  | { type: 'queue' | 'steer'; id: string; text: string; settings?: ClaudeSessionSettings }
-  | { type: 'cancel'; id: string }
-export type ClaudeSessionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'steered' | 'interrupted'
-export interface ClaudeSessionMessage {
-  id: string
-  text: string
-  status: ClaudeSessionStatus
-}
-export type ClaudeSessionReply = Extract<ClaudeSessionEvent, { type: 'session.state' | 'error' }>
+  | { type: 'snapshot' }
+  | { type: 'reset' }
+  | { type: 'sync' }
+  | { type: 'input' | 'steer'; id: string; text: string; settings?: ClaudeSessionSettings }
+  | { type: 'cancel'; id?: string }
+export type ClaudeSessionStatus = ClaudeInputStatus
+export type ClaudeSessionMessage = ClaudeViewInput
+export type ClaudeSessionReply =
+  | { type: 'session.state'; state: ClaudeSessionView }
+  | { type: 'input.status'; id: string; runId: string; status: ClaudeInputStatus }
+  | { type: 'cancel.accepted'; requested: boolean }
+  | { type: 'session.reset'; conversationId: string }
+  | { type: 'error'; code: string }
 export type ClaudeSessionEvent =
+  | ClaudeSessionChange
   | { type: 'auth.required'; id: string }
   | { type: 'session.ready'; sessionId: string }
-  | { type: 'session.state'; messages: ClaudeSessionMessage[]; configured: boolean; truncated: boolean }
-  | { type: 'message.status'; id: string; status: ClaudeSessionStatus }
-  | { type: 'claude'; id: string; event: unknown }
-  | { type: 'claude.fragment'; id: string; eventId: string; index: number; total: number; json: string }
+  | { type: 'message.status'; id: string; status: ClaudeInputStatus }
+  | { type: 'claude'; id: string; event: unknown; revision?: number }
+  | { type: 'claude.fragment'; id: string; eventId: string; index: number; total: number; json: string; revision?: number }
   | { type: 'error'; code: string }
 
 // These helpers are backend/browser-safe; no native process modules are imported.
@@ -47,7 +50,7 @@ export interface ClaudeViewInput {
 export interface ClaudeViewRun {
   id: string
   inputIds: string[]
-  status: 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  status: 'running' | 'finishing' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   error?: string
 }
 export interface ClaudeConversationEntry {
