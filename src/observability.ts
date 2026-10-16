@@ -189,7 +189,7 @@ export class RuntimeObserver {
     private readonly buffer: RuntimeObservationBuffer,
   ) {}
 
-  async span<Result>(name: string, work: () => Result | Promise<Result>): Promise<Result> {
+  async span<Result>(name: string, work: () => Result | Promise<Result>, attributes: Readonly<Record<string, string>> = {}): Promise<Result> {
     if (typeof work !== "function") throw new TypeError("Runtime span work must be a function");
     validateName(name);
     if (this.trace === undefined) return work();
@@ -199,7 +199,7 @@ export class RuntimeObserver {
     this.buffer.publishBestEffort(this.messageId, Object.freeze({
       type: "span.started", span_id: spanId,
       ...(parentSpanId === undefined ? {} : { parent_span_id: parentSpanId }),
-      name, kind: "internal", started_at: new Date().toISOString(), attributes: Object.freeze({}),
+      name, kind: "internal", started_at: new Date().toISOString(), attributes: Object.freeze({ ...attributes }),
     }));
     let status: "ok" | "error" = "ok";
     try {

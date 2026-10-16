@@ -1,99 +1,49 @@
-# Provider examples
+# Agent integration examples
 
-The OpenAI, Anthropic, Pi, and OpenCode examples each contain two deployment artifacts:
+Start with [Claude Code](anthropic/README.md). It uses the Claude Code harness packaged in `@cantelop/sdk/harnesses/claude`, so its whole App is one definition file, and each Workspace signs in with its user's own Claude subscription. The [README's Get started](../README.md#get-started) walks through the same setup.
+
+[The web chat app](web-chat/README.md) is a complete browser → application backend → `CantelopClient` integration. It owns its OpenAI runtime through a named App definition and keeps credentials out of browser code.
+
+[Claude Code](anthropic/README.md), [Codex](codex/README.md), and [OpenCode](opencode/README.md) wrap published stock CLIs directly, following the [claude-code-api pattern](https://github.com/stepandel/claude-code-api). Each starts a subprocess per turn, uses native Workspace-owned authentication, forwards JSON events and resumes its persisted native conversation. Each native runner implements `SessionHarness` with `queue`, `steer` and `cancel` and is returned directly from `runtime.create`. Claude Code is packaged in the SDK; the Codex and OpenCode runners live in their example directories.
+
+All three implement `steer` by admitting priority input and interrupting the current turn; app constructors register `runtime: { create }`. Steering will prioritize the new prompt, interrupt the active operation, wait for process-group cleanup, then resume the native conversation. Provider tools, prompts, permissions and agent loops remain native.
+
+[Durable Codex](codex-durable/README.md) uses the packaged native app-server integration with committed intake, recovery and observation replay. [OpenAI Agents](openai/README.md), [Pi](pi/README.md), and the web chat example show additional integrations. OpenAI Agents is a separate framework example; it is not the Codex harness.
+
+The examples define runtime factories and ordinary application backend clients:
 
 ```text
-src/api.ts      Edge HTTP middleware
-src/session.ts  Linux-native Session behaviour
-cantelop.json   Build and deployment manifest
+src/cantelop.ts   Shared client and named App/runtime configuration
+src/contracts.ts  Shared message and event types
+src/agent.ts      Runtime factory and native harness adapter
+cantelop.json     Definition module selection
 ```
 
-Each provider directory is a complete, self-contained implementation with its
-own contracts, request validation, and routes. Provider SDKs, credentials, and
-incremental events remain confined to the native Session behaviour entrypoint.
-Cantelop injects the current App into each API definition. Every API exposes
-five routes: `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
-`POST /cancel`. Chat creates or reuses a Session from an optional ID; steer and
-cancel require an existing Session ID. All message routes call the same asynchronous
-`dispatch()` method and return an accepted message reference with HTTP status
-`202`. Each example defines an explicit `SessionMessage` protocol with
-`prompt`, `steer`, and `cancel` commands, plus a `SessionEvent` stream for text
-deltas and completion. A steer received while idle starts a provider turn.
-OpenAI keeps busy-time prompts in a per-Session FIFO because a text `run()`
-cannot accept more input. Anthropic feeds prompts and prioritized steer commands
-into its live `SDKUserMessage` stream. Pi applies active steer directly to its
-Agent and keeps ordinary busy-time prompts in a Cantelop FIFO. OpenCode runs a
-headless server per activity and queues busy-time prompts and
-steer commands. See its [setup guide](./opencode/README.md) for the custom image
-and warm-Sandbox conversation lifetime. All four
-propagate cancel through the Session activity's `AbortSignal`. The Session
-identity is propagated into the native Session runtime. The events route adapts
-the App route to the platform event broker with `session.events(request)`.
-
-Subscribe with SSE by passing the same Session coordinates used by the message
-routes:
+Each provider example exports a named `app` on an App-agnostic client with automatic App configuration. Configure the App once; select a Workspace by ID or slug and create Session references from it. It does not define HTTP routes, request validation middleware, or a customer Edge API. Provider CLIs/SDKs stay in the runtime; native authentication remains in the user's Workspace. An application can use its own existing routes, jobs, or webhook handlers to call the same client.
 
 ```ts
-const query = new URLSearchParams({
-  sessionId,
-  workspaceSlug,
-  keepAliveSeconds: String(keepAliveSeconds),
-});
-const events = new EventSource(`/events?${query}`);
+import { app } from "./src/cantelop.ts";
 
-events.onmessage = ({ data }) => {
-  const event = JSON.parse(data);
-  if (event.type === "text_delta") render(event.delta);
-  if (event.type === "done") events.close();
-};
+const workspace = app.workspace({ slug: "customer-123" });
+const session = workspace.session({ id: "conversation-456" });
+await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+for await (const event of session.stream()) {
+  render(event.data); // Provider-specific native output type.
+}
 ```
 
-Choose the `sessionId` in the client, open the subscription, and then send the
-first `POST /chat` with that ID. This ensures the live subscription exists
-before the Session can publish its first delta.
+Use the same ID to address an existing Session, or omit it to spawn another Session sharing the Workspace. A canonical Workspace ID can replace the slug selector. Output can be replayed explicitly with the last cursor; disconnecting the iterator does not cancel work. Subscribe before dispatching when live subscription ordering matters, or use retained replay to recover earlier output within the broker's retention window.
 
-`EventSource` automatically sends the last SSE event ID (`stream_id:sequence`)
-when it reconnects. To resume a newly created subscription, append
-`stream_id=<stream ID>&after=<last sequence>` to the query. The response envelope
-includes the application event fields plus the trusted `stream_id`, `sequence`,
-`session_id`, `message_id`, and `created_at` fields. A replaced or evicted stream
-reports `event_stream_reset` rather than silently starting a new replay.
+Use `session.dispatch(message)` to queue ordinary work, `session.steer(message)` to steer the active harness, and `session.cancel()` to interrupt its current run. Provider examples register a session-scoped `runtime.create` factory. Pi supports native steering, OpenAI Agents and web chat select priority queueing, and the three direct CLI examples select interrupt-and-queue steering. Cancellation preserves waiting harness input, and each harness retains its provider slot until cleanup completes. Custom receive/activity examples remain available for application-owned orchestration.
 
-The same route also supports an output-only WebSocket:
+Codex, Claude and OpenCode forward native JSON events, fragmenting oversized frames. They require no shared provider API keys. Native authentication and conversation metadata live in the user's Workspace; live SQLite state stays local (OpenCode restores through native export/import). Custom images install pinned stock CLIs. These examples’ queues remain incarnation-local; durable pending jobs and recovery are application-owned.
 
-```ts
-const socket = new WebSocket(
-  `${location.origin.replace(/^http/, "ws")}/events?${query}`,
-  "cantelop.events.v1",
-);
+Run and deploy an example with Cantelop CLI 0.15.2 or newer: `cantelop dev` runs it locally, and `cantelop deploy` uploads its generated Edge and Sandbox artifacts and provisions App credentials.
 
-socket.onmessage = ({ data }) => {
-  const event = JSON.parse(data);
-  if (event.type === "text_delta") render(event.delta);
-  if (event.type === "done") socket.close();
-};
-```
+Each deployment example has one `tsconfig.json` covering its application and runtime code. Relative imports use `.ts` to reference the source files directly; TypeScript checks them without emitting files, and the Cantelop compiler bundles deployment artifacts.
 
-Send `prompt`, `steer`, and `cancel` through their HTTP routes, not through the
-WebSocket. A WebSocket reconnect should include
-`stream_id=<stream ID>&after=<last sequence>` because WebSockets do not provide
-SSE's `Last-Event-ID` header. In a real application,
-authenticate and authorize `/events` before calling `session.events(request)`;
-the examples intentionally omit application-specific auth.
+Run `pnpm check:examples` from the SDK root to type-check backend clients and runtimes and qualify their runtime-only artifacts. [Application-owned queue](application-queue/README.md) and [supervised activity](supervised-activity/README.md) examples retain persistence, recovery, and subprocess behavior.
 
-Each manifest targets an illustrative App slug. Create that App or change its
-`app` value before running `cantelop deploy`; generated App IDs are never stored
-in the example source.
+[The multi-App example](multi-app/README.md) declares two independently typed Apps on one client and builds separate Edge/Sandbox artifacts.
 
-Run all API and Session runtime type checks plus deployment bundle smoke checks from
-the repository root:
-
-```bash
-pnpm check:examples
-```
-
-For a credential-free lifecycle example with persisted outcomes, queued follow-up
-messages, cancellation, and a Bun subprocess adapter, see
-[Supervised long-running agents](./supervised-activity/README.md).
-
-[Database schema example](database/README.md) shows typed Drizzle queries and automatic Workspace migrations.
+[Headless GitHub issue agent](github/README.md) defines an optional App webhook route that verifies signed deliveries and dispatches to a repository Workspace and issue Session. Its runtime generates an answer and posts a GitHub comment.

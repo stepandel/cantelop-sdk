@@ -1,14 +1,14 @@
 # Workspace databases
 
 Cantelop automatically provisions a remote Turso/libSQL database for each
-Workspace. The API and Sessions in that Workspace share the same database.
+Workspace. The application backend and Sessions in that Workspace share the same database.
 Provisioning is asynchronous; opening the database can report
 `database_not_ready` while registration is pending.
 
-## API
+## Application backend
 
 ```ts
-const workspace = await app.workspaces.open({ slug: "default" });
+const workspace = app.workspace({ slug: "default" });
 const db = await workspace.database();
 await db.execute({
   sql: "INSERT INTO metadata (session_id, value) VALUES (?, ?)",
@@ -43,9 +43,9 @@ Renew before `expiresAt`, and do not log either token.
 ## SQL and connection lifecycle
 
 Clients support parameterized `execute`, atomic `batch`, `executeMultiple`, and
-interactive `transaction`. Application code owns its schema definitions. Compatible CLI/platform versions
-automatically generate and apply application migrations from `db/schema.ts`.
-API and Session code receive ordinary Workspace credentials, including schema
+interactive `transaction`. Application code owns its schema definitions. Cantelop
+automatically generates and applies application migrations from `db/schema.ts`.
+Backend and Session code receive ordinary Workspace credentials, including schema
 operations. Both surfaces connect directly to the same Workspace database.
 
 ```ts
@@ -73,9 +73,9 @@ already issued credentials remain valid until expiry.
 
 ## Local development
 
-With a compatible CLI and SDK, `cantelop dev` implements these same database
+With a CLI implementing the new build/integration protocols, `cantelop dev` implements these same database
 interfaces using disposable SQLite files under `.cantelop/dev/databases/`.
-The API and all Sessions in a Workspace share one database, in native and
+The application backend and all Sessions in a Workspace share one database, in native and
 container mode. Data survives rebuilds and runner restarts. Stop the runner and
 remove that directory to reset local databases; Workspace files are retained.
 Local data is never synchronized with hosted databases, and no login or Turso
@@ -120,8 +120,8 @@ const tasks = await db.query.tasks.findMany();
 
 The CLI runs builds from the project root and discovers `db/schema.ts`. Restart
 `cantelop dev` if you add that file to a project that did not have it at startup. A build
-contains a deterministic schema snapshot, with no system tables, in a version 4
-API manifest. Projects without this file retain their version 3 manifest. The
+contains a deterministic schema snapshot, with no system tables, in the version 1
+Session runtime manifest. Projects without this file omit its database schema. The
 schema file is evaluated in a bounded build subprocess, never in the platform.
 Generated SQL is retained in the Workspace migration history; generated migration
 files do not need to be reviewed or committed. `cantelop dev` applies changes
@@ -158,17 +158,16 @@ Table and index names beginning with `cantelop_`, `sqlite_`, or `__` are reserve
 case-insensitively. Foreign keys must reference another declared application
 table. Only application objects participate in migration generation.
 
-## Existing databases and rollout
+## Existing tables
 
-The Session inbox is in memory. Database provisioning and schema migration do
-not install mailbox tables or a system migration history. Applications own
+The Session inbox is in memory and uses no database tables. Applications own
 persistent queues, checkpoints, and other data through this same database.
 There are no separate system/application credential scopes or table grants.
 
 Migration generation uses the declared schema and its recorded history, never
 unrelated tables. Reserved names protect platform-owned names from managed
 schema changes; they are not an SQL access boundary. Unrelated application tables
-are left untouched. Retired mailbox tables are neither installed nor required.
+are left untouched.
 
 First-time adoption fails with `unmanaged_table_conflict` if a declared table
 already exists without managed migration history, even if its columns look
@@ -177,8 +176,5 @@ managed tables in a fresh Workspace or keep existing tables under their current
 migration mechanism until an explicit baseline workflow is available. Do not
 remove populated tables or fabricate ledger rows to bypass this check.
 
-Deploy the updated platform/CLI support before applications emit version 4
-schema manifests. The application-owned in-memory mailbox remains the sole runtime;
-the retired DB mailbox adapters are absent. SDK and platform schema validation and migration generation
-must stay aligned. Projects without `db/schema.ts` keep runtime-controlled SQL
-and their existing credential behavior.
+Projects without `db/schema.ts` get no generated migrations; their runtime code
+controls the database's SQL directly.

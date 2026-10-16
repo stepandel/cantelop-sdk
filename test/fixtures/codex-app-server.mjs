@@ -1,6 +1,8 @@
 // Protocol fixture only. This is not a native harness or proof of full storage coverage.
 import { createInterface } from "node:readline";
-import { writeFile } from "node:fs/promises";
+import { writeFile, mkdir, appendFile } from "node:fs/promises";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { CODEX_WORKSPACE_STORAGE_DOMAINS } from "../../dist/codex.js";
 
 const mode = process.env.CODEX_FIXTURE_MODE ?? "success";
@@ -14,6 +16,13 @@ if (process.argv.includes("--cantelop-storage-probe")) {
   process.exit(0);
 }
 if (process.env.CODEX_FIXTURE_STARTED) await writeFile(process.env.CODEX_FIXTURE_STARTED, "started");
+if (process.env.CODEX_FIXTURE_ENV) await writeFile(process.env.CODEX_FIXTURE_ENV, JSON.stringify({
+  providerKey: !!process.env.OPENAI_API_KEY, platformToken: !!process.env.CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN,
+}));
+if (process.env.CODEX_FIXTURE_TOOL_PID) {
+  const tool = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  tool.unref(); await writeFile(process.env.CODEX_FIXTURE_TOOL_PID, String(tool.pid));
+}
 const send = message => process.stdout.write(`${JSON.stringify(message)}\n`);
 const event = (method, params) => send({ method, params });
 const reply = (id, result) => send({ id, result });
@@ -28,6 +37,7 @@ const storage = async params => {
 await storage({ operation: "execute", statement: { sql: "CREATE TABLE IF NOT EXISTS codex_fixture_threads (id TEXT PRIMARY KEY, prompt TEXT)" } });
 const reader = createInterface({ input: process.stdin });
 let threadSequence = 0;
+const rollout = id => process.env.CODEX_HOME ? join(process.env.CODEX_HOME, "sessions", `${id}.jsonl`) : undefined;
 reader.on("line", line => {
   void handle(JSON.parse(line)).catch(() => process.exit(3));
 });
@@ -36,20 +46,24 @@ async function handle(message) {
     reply(message.id, { userAgent: "fixture", cantelopWorkspaceStorage: mode === "bad-handshake" ? {} : capabilities });
   } else if (message.method === "initialized") {
     return;
+  } else if (message.method === "config/read") {
+    reply(message.id, { config: { model: "fixture-model" } });
   } else if (message.method === "thread/start") {
     const id = `thread-${process.pid}-${++threadSequence}`;
+    if (rollout(id)) { await mkdir(join(process.env.CODEX_HOME, "sessions"), { recursive: true }); await writeFile(rollout(id), JSON.stringify({ id }) + "\n"); }
     await storage({ operation: "execute", statement: {
       sql: "INSERT INTO codex_fixture_threads (id) VALUES (?)", args: [{ type: "text", value: id }],
     } });
-    reply(message.id, { thread: { id } });
+    reply(message.id, { thread: { id, path: rollout(id) } });
   } else if (message.method === "thread/resume") {
     const result = await storage({ operation: "execute", statement: {
       sql: "SELECT id FROM codex_fixture_threads WHERE id = ?", args: [{ type: "text", value: message.params.threadId }],
     } });
     if (!result.rows.length) send({ id: message.id, error: { code: -1, message: "thread missing" } });
-    else reply(message.id, { thread: { id: message.params.threadId } });
+    else reply(message.id, { thread: { id: message.params.threadId, path: rollout(message.params.threadId) } });
   } else if (message.method === "turn/start") {
     const { threadId, input } = message.params;
+    if (rollout(threadId)) await appendFile(rollout(threadId), JSON.stringify({ prompt: input[0].text }) + "\n");
     await storage({ operation: "execute", statement: {
       sql: "UPDATE codex_fixture_threads SET prompt = ? WHERE id = ?",
       args: [{ type: "text", value: input[0].text }, { type: "text", value: threadId }],

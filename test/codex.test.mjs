@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createClient } from "@libsql/client";
+import { createCodexTestDatabase } from "../scripts/codex-test-database.mjs";
 import { mkdtemp, readFile, access, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,7 @@ import { startCodexWorkspaceStorage } from "../dist/codex-storage.js";
 function database() {
   // Local SQLite is test infrastructure only; production uses the WorkspaceDatabase client.
   const directory = mkdtempSync(join(tmpdir(), "cantelop-codex-database-"));
-  const db = createClient({ url: `file:${join(directory, "fixture.sqlite")}`, intMode: "bigint" });
+  const db = createCodexTestDatabase(`file:${join(directory, "fixture.sqlite")}`);
   const close = db.close.bind(db);
   db.close = () => { close(); rmSync(directory, { recursive: true, force: true }); };
   db.credentials = async () => ({ url: "libsql://fixture.turso.io", authToken: "unused", expiresAt: new Date(Date.now() + 900000).toISOString() });
@@ -57,9 +57,24 @@ test("transactions commit atomically; shutdown rolls back abandoned transactions
   assert.equal(db.closed, false, "borrowed DB stays open");
 });
 
+test("standalone native writes wait for transaction admission without replaying the statement", async t => {
+  const db = database(); t.after(() => db.close());
+  await db.execute("CREATE TABLE admitted (id TEXT PRIMARY KEY)");
+  const owner = await db.transaction("write");
+  const storage = createCodexWorkspaceStorage(db); t.after(() => storage.close());
+  const pending = storage.handle({ operation: "execute", statement: { sql: "INSERT INTO admitted VALUES ('once')" } });
+  await delay(30);
+  await owner.commit(); owner.close();
+  await pending;
+  assert.equal((await db.execute("SELECT COUNT(*) AS count FROM admitted")).rows[0].count, 1n);
+});
+
 test("ambiguous writes are not replayed and SQL/credentials are not leaked", async () => {
   let writes = 0;
-  const storage = createCodexWorkspaceStorage({ execute: async () => { writes++; throw new Error("secret SQL and token"); } });
+  const storage = createCodexWorkspaceStorage({ transaction: async () => ({
+    execute: async statement => { if (statement === "SELECT 1") return {}; writes++; throw new Error("secret SQL and token"); },
+    rollback: async () => {}, close() {},
+  }) });
   await assert.rejects(storage.handle({ operation: "execute", statement: { sql: "INSERT INTO sample VALUES (1)" } }), error => {
     assert.equal(error.code, "database_operation_failed"); assert.doesNotMatch(error.message, /secret|token|SQL/); return true;
   });
@@ -158,7 +173,7 @@ test("unknown native approval requests are rejected, not auto-approved", async t
 });
 
 test("storage close reports a failed rollback and still releases the transaction", async () => {
-  const transaction = { closed: false, rollback: async () => { throw new Error("secret rollback detail"); }, close() { this.closed = true; } };
+  const transaction = { closed: false, execute: async () => ({}), rollback: async () => { throw new Error("secret rollback detail"); }, close() { this.closed = true; } };
   const storage = createCodexWorkspaceStorage({ transaction: async () => transaction });
   await storage.handle({ operation: "begin" });
   await assert.rejects(storage.close(), error => {
@@ -167,4 +182,24 @@ test("storage close reports a failed rollback and still releases the transaction
     return true;
   });
   assert.equal(transaction.closed, true);
+});
+
+test("isolated children receive no host credentials and close reaps tool descendants", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-child-cleanup-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const envFile = join(directory, "env.json"), pidFile = join(directory, "tool.pid");
+  const previous = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "fixture-host-key";
+  t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
+  const db = database(); t.after(() => db.close());
+  const codex = await createCodex({ executable, database: db, inheritEnv: false, env: { CODEX_FIXTURE_ENV: envFile, CODEX_FIXTURE_TOOL_PID: pidFile } });
+  t.after(() => codex.close());
+  assert.deepEqual(JSON.parse(await readFile(envFile, "utf8")), { providerKey: false, platformToken: false });
+  const pid = Number(await readFile(pidFile, "utf8"));
+  await codex.close();
+  for (let i = 0; i < 100; i++) {
+    try { process.kill(pid, 0); } catch (error) { if (error.code === "ESRCH") return; throw error; }
+    await delay(10);
+  }
+  assert.fail("A native tool process survived close");
 });

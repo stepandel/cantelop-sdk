@@ -1,0 +1,93 @@
+# Client, App, and compiled runtime
+
+`CantelopClient` supplies shared connection context. Each named App owns its runtime, deployment configuration, and Workspace namespace:
+
+```ts
+import { CantelopClient } from "@cantelop/sdk";
+import { createSupport } from "./support.js";
+import { createResearch } from "./research.js";
+import type { SupportMessage, SupportEvent, ResearchMessage, ResearchReply } from "./contracts.js";
+
+const cantelop = new CantelopClient();
+
+export const support = cantelop.app<SupportMessage, SupportEvent>({
+  name: "support-agent",
+  runtime: { create: createSupport },
+  environment: { OPENAI_API_KEY: { secret: true, required: true } },
+});
+
+export const research = cantelop.app<ResearchMessage, never, ResearchReply>({
+  name: "research-agent",
+  runtime: { create: createResearch },
+});
+
+support.workspace({ slug: "customer-123" }).session({ id: "conversation-456" });
+```
+
+An App name is its existing deployment slug within the selected account/environment. Export names are JavaScript names; renaming `support` does not rename the App. Multiple Apps can share one client. Multiple clients can use different profiles. Names must be unique within a client and within a definition module; there is no process-wide singleton. App construction is local and never provisions or deploys resources.
+
+The primary runtime contract is `{ create, onRecover?, redelivery? }`. `create` receives Session identity, environment, database access, and an incarnation lifetime signal. It returns one `SessionHarness` implementing `queue(message, work)`, `steer(message, work)`, and `cancel()`. The harness owns ordering, steering and interruption behavior; there are no SDK-selected steering modes. Both input methods receive operation-scoped signals, output/view writers and submission identity. `queue` resolves after its submitted operation and cleanup, returning the request reply. `steer` resolves at the implementation’s completion boundary. `cancel` returns a boolean: true when an active operation was signalled, false when idle, preserving waiting input. Factories can be inline or imported. The SDK tracks operation lifetimes and attribution while keeping intake responsive.
+
+For custom orchestration, the lower-level `{ receive, onActivate?, onRecover?, redelivery? }` contract is available. A runtime must select exactly one factory or receive handler. The first three App generics type messages, events and replies; the fourth types view state, including harness work commits. Runtime IDs remain compiler-owned.
+
+App `environment` declares secret/required values and non-secret defaults; actual secrets stay in external CLI/platform configuration. Secret declarations cannot include defaults. An optional project-relative `dockerfile` selects a custom Sandbox image. These belong to each App, allowing different providers/configuration in one project.
+
+## Compiler boundary
+
+The compiler reads source without importing or executing customer code. It discovers exported SDK App instances by type and explicit name, and generates:
+
+- One Sandbox runtime per App, containing its handlers, referenced local declarations/imports, and the SDK listener. The definition's client/App construction is excluded.
+- One protocol Edge Worker per App, with generated runtime compatibility identity.
+- A shared backend module preserving the client, App names, configuration and original exports, while replacing every runtime with an inert implementation and compiler-owned identity. Runtime-only providers/helpers/state are removed.
+
+Backend bundlers must apply the transform. Untransformed imports follow normal JavaScript semantics and load their dependencies:
+
+```ts
+import { build } from "esbuild";
+import { createCantelopCompilerPlugin } from "@cantelop/sdk/build";
+
+await build({
+  entryPoints: ["src/server.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  plugins: [createCantelopCompilerPlugin({ definition: "src/cantelop.ts" })],
+  outfile: "dist/server.mjs",
+});
+```
+
+The build module remains tooling and stays out of application runtime bundles. `buildBackendClient({ definition, outdir })` alternatively produces a shared backend module, `client.d.mts` declarations, and a manifest listing its Apps/identities. Import Apps directly from `./client.mjs` to retain their command, event and reply types without importing the runtime definition. Local type dependencies are emitted under `types/`; copy the whole backend directory when deploying. The build result exposes the declaration entry point as `declarationFile`. Package dependencies remain external, so keep its output in the application's dependency environment.
+
+Definitions must export Apps created by top-level `cantelop.app({...})` calls on an SDK client. Names must be string literals. App options and runtime must be static object literals without spreads; deployment declarations use literal values. Aliases of one App count once; duplicate names on distinct App definitions fail. Local helper declarations and closures are supported, with one top-level variable declaration per statement. Runtime handlers cannot capture App/client instances. Keep definitions declarative: top-level effects, bare side-effect imports, ambiguous unused value declarations, and unrelated value exports are rejected. Put initialization in a referenced runtime module or lifecycle hook.
+
+Build validation checks reachable source with TypeScript and the nearest project config, including handler parameter compatibility. JavaScript and `any` retain their normal checking limits. The compiler validates harness factories and their returned methods without executing customer code. Session cancellation uses selector-bound generic request delivery.
+
+## Build and deployment
+
+Project schema 3 selects a module, without duplicating App names or runtime configuration:
+
+```json
+{ "schema_version": 3, "definition": "src/cantelop.ts" }
+```
+
+`buildAppArtifacts({ definition, outdir, projectRoot? })` builds every App into `<outdir>/<app-name>/edge` and `<outdir>/<app-name>/runtime`, plus a shared backend under `<outdir>/backend`. It rejects inconsistent identities if inputs change during the build.
+
+Individual `buildEdgeApi({ definition, outdir, app? })`, `buildSessionRuntime({ definition, outdir, projectRoot?, app? })`, and `watchLocalProject({ sessionDefinition, sessionRuntimeOutdir, app?, ... })` accept an App name selector. It is optional for a single-App module and required for multiple Apps. Unknown names fail. Edge/native manifests contain `app_name`, `session_runtime_id`, and applicable environment/image configuration.
+
+Runtime identity is generated from each App’s bundled implementation, name, structural type contract and deployment configuration. It doesn't depend on where the project is checked out or which directory the build runs in, so CI and a laptop compute the same identity from the same sources and dependencies. Editing one App preserves an unchanged sibling’s identity; changes to shared runtime dependencies can affect both. Identity is a compatibility check, not a security credential. Each compiled App sends its identity in `X-Cantelop-Session-Runtime`; Edge returns `session_runtime_mismatch` (409) for a missing/different value before private routing. Compiled identity takes precedence over CLI metadata, so stale code cannot adopt a newer deployment's identity.
+
+### Deploy the backend with the App
+
+Any edit to an App's runtime logic or to its message, event, reply or view types changes the App's runtime identity. A backend built against the previous runtime then gets `session_runtime_mismatch` (409, thrown as `RemoteAppError`) on every Session command — dispatch, steer, request, cancel, status, stop, stream, view and Workspace auth — until it is rebuilt with the compiler and redeployed. Workspace resolution and database access don't check runtime identity, so they keep working.
+
+Deploy the backend and the App together, from the same source. Until both are out, whichever side still runs the old build gets 409s. Edge rejects these requests before provisioning or forwarding them, so retrying with the same ID once both deployments finish is safe. Webhook and homepage edits don't change runtime identity.
+
+Watch follows implementation and type dependencies. Invalid edits preserve the last successful native manifest and repairs resume builds. Schema watching remains independent. Project `db/schema.ts` applies to the selected Apps' isolated Workspace databases.
+
+The SDK uses project schema 3, CLI build protocol 6, integration protocol 2 and actor protocol 2. Use Cantelop CLI 0.15.2 or newer: `cantelop dev` and `cantelop deploy` build the App, honor its environment and image declarations, and deploy matching Edge and Sandbox artifacts to its hostname. Pass `--app NAME` when the definition exports more than one App.
+
+## Optional webhook implementations
+
+`webhooks` declares exact GET/POST ingress routes on an App; optional `homepage` serves GET/HEAD at `/`. The compiler bundles their handlers and dependencies into Edge, removes them from backend code, and excludes them from the Sandbox. Handlers receive the same typed App through context, with commands executed locally. See [App webhooks](webhooks.md). Cantelop synchronizes declared secrets into Edge bindings, and provider requests reach these routes without the integration token.
+
+Both `buildBackendClient` and `buildAppArtifacts` accept `appName` to override a single App's literal deployment name without modifying its source. All generated artifacts use that name and matching runtime identity; exports and protocol types remain unchanged. Invalid slugs and multi-App overrides are rejected.

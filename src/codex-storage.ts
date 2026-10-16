@@ -3,6 +3,7 @@
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import type { InStatement, ResultSet, Transaction, TransactionMode, WorkspaceDatabase } from "./database.js";
+import { beginCodexTransaction, withCodexTransaction } from "./codex-transaction.js";
 
 /** Wire contract for a native Codex build using the SDK's workspace storage bridge. */
 export const CODEX_WORKSPACE_STORAGE_PROTOCOL_VERSION = 1;
@@ -106,7 +107,7 @@ export function createCodexWorkspaceStorage(database: WorkspaceDatabase): CodexW
       const mode = transactionMode(params.mode);
       reservations++;
       let transaction: Transaction;
-      try { transaction = await database.transaction(mode); } finally { reservations--; }
+      try { transaction = await beginCodexTransaction(database, mode); } finally { reservations--; }
       if (closed) { await rollback(transaction); throw new CodexStorageError("storage_closed"); }
       const id = randomUUID();
       const entry: OpenTransaction = { transaction, tail: Promise.resolve(), timer: undefined, finishing: false };
@@ -127,7 +128,7 @@ export function createCodexWorkspaceStorage(database: WorkspaceDatabase): CodexW
         const mode = transactionMode(params.mode);
         if (params.transactionId !== undefined && params.mode !== undefined) invalid();
         if (params.transactionId !== undefined) action = async db => (await db.batch(statements)).map(encodeResult);
-        else return (await database.batch(statements, mode)).map(encodeResult);
+        else return withCodexTransaction(database, async tx => (await tx.batch(statements)).map(encodeResult), mode);
         break;
       }
       case "executeMultiple": {
@@ -145,7 +146,7 @@ export function createCodexWorkspaceStorage(database: WorkspaceDatabase): CodexW
       default: return invalid();
     }
     if (params.transactionId !== undefined) return withTransaction(string(params.transactionId), operation, action);
-    return action(database);
+    return withCodexTransaction(database, action);
   }
 
   return {

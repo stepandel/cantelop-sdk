@@ -1,7 +1,7 @@
 {
   "name": "@cantelop/sdk",
-  "version": "0.17.0",
-  "description": "Provider-neutral API and Session runtime SDK for Cantelop applications",
+  "version": "1.0.1",
+  "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -23,14 +23,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./api": {
-      "types": "./dist/api.d.ts",
-      "import": "./dist/api.js"
-    },
-    "./edge": {
-      "types": "./dist/edge.d.ts",
-      "import": "./dist/edge.js"
     },
     "./build": {
       "types": "./dist/build.d.ts",
@@ -55,6 +47,24 @@
     "./schema": {
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
+    },
+    "./harnesses/claude": {
+      "types": "./dist/harnesses/claude.d.ts",
+      "import": "./dist/harnesses/claude.js"
+    },
+    "./harnesses/claude/Dockerfile": "./dist/harnesses/claude/Dockerfile",
+    "./harnesses/claude/protocol": {
+      "types": "./dist/harnesses/claude-protocol.d.ts",
+      "import": "./dist/harnesses/claude-protocol.js"
+    },
+    "./harnesses/codex": {
+      "types": "./dist/harnesses/codex.d.ts",
+      "import": "./dist/harnesses/codex.js"
+    },
+    "./harnesses/codex/Dockerfile": "./dist/harnesses/codex/Dockerfile",
+    "./harnesses/codex/protocol": {
+      "types": "./dist/harnesses/codex-protocol.d.ts",
+      "import": "./dist/harnesses/codex-protocol.js"
     }
   },
   "files": [
@@ -62,10 +72,10 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/build-harness-assets.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs",
-    "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs && node scripts/check-database-example.mjs",
+    "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
     "check:package": "pnpm build && node scripts/check-package.mjs",
     "prepack": "pnpm build",
     "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
@@ -75,10 +85,16 @@
     "@libsql/client": "^0.17.0",
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "0.45.2",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.6.3"
+    "@types/node": "^24.0.0"
+  },
+  "imports": {
+    "#cantelop-app-config": {
+      "node": "./dist/app-config-node.js",
+      "default": "./dist/app-config-empty.js"
+    }
   }
 }

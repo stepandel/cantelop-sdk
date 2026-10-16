@@ -47,6 +47,8 @@ export interface CodexOptions {
   readonly executable?: string | CodexExecutable;
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** False isolates the native child from host credentials; database resolution remains in the SDK. */
+  readonly inheritEnv?: boolean;
   /** Borrowed client. Omit to use the current Session's renewable workspace database. */
   readonly database?: WorkspaceDatabase;
   readonly requestTimeoutMs?: number;
@@ -59,6 +61,8 @@ export interface CodexThreadOptions {
   readonly cwd?: string;
   readonly approvalPolicy?: "never" | "on-request" | "untrusted";
   readonly config?: Readonly<Record<string, unknown>>;
+  readonly sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  readonly developerInstructions?: string;
 }
 
 export class CodexError extends Error {
@@ -124,15 +128,15 @@ export class CodexClient {
   }
 
   async startThread(options: CodexThreadOptions = {}): Promise<CodexThread> {
-    const result = await this.request<{ thread: { id: string } }>("thread/start", options as Readonly<Record<string, unknown>>);
-    return new CodexThread(this, threadId(result));
+    const result = await this.request<{ thread: { id: string; path?: string } }>("thread/start", options as Readonly<Record<string, unknown>>);
+    return new CodexThread(this, threadId(result), typeof result.thread.path === "string" ? result.thread.path : undefined);
   }
 
   async resumeThread(id: string, options: CodexThreadOptions = {}): Promise<CodexThread> {
     if (!id) throw new CodexError("invalid_thread_id");
-    const result = await this.request<{ thread: { id: string } }>("thread/resume", { ...options, threadId: id });
+    const result = await this.request<{ thread: { id: string; path?: string } }>("thread/resume", { ...options, threadId: id });
     if (threadId(result) !== id) throw new CodexError("thread_id_changed");
-    return new CodexThread(this, id);
+    return new CodexThread(this, id, typeof result.thread.path === "string" ? result.thread.path : undefined);
   }
 
   /** Subscribe synchronously so callers can listen before submitting a turn. */
@@ -155,11 +159,12 @@ export class CodexClient {
       }
       this.child.stdin.end();
       const failed = !!this.failure || !!shutdownError;
-      const term = setTimeout(() => this.child.kill("SIGTERM"), failed ? 1000 : 15_000);
-      const kill = setTimeout(() => this.child.kill("SIGKILL"), failed ? 3000 : 20_000);
+      const term = setTimeout(() => this.kill("SIGTERM"), failed ? 1000 : 15_000);
+      const kill = setTimeout(() => this.kill("SIGKILL"), failed ? 3000 : 20_000);
       try { await this.exited; await this.reader; await Promise.allSettled([...this.serverOperations]); await this.bridge.close(); }
       finally {
         clearTimeout(term); clearTimeout(kill);
+        this.kill("SIGKILL");
         if (this.ownsDatabase) this.database.close();
         this.fail(new CodexError("client_closed"));
       }
@@ -171,7 +176,7 @@ export class CodexClient {
   /** @internal */
   async initialize(): Promise<void> {
     const result = await this.request<Record<string, unknown>>("initialize", {
-      clientInfo: { name: "cantelop_sdk", title: "Cantelop SDK", version: "0.17.0" },
+      clientInfo: { name: "cantelop_sdk", title: "Cantelop SDK", version: "1.0.1" },
       capabilities: { experimentalApi: true, cantelopWorkspaceStorage: { protocolVersion: CODEX_WORKSPACE_STORAGE_PROTOCOL_VERSION } },
     });
     verifyStorageCapabilities(result.cantelopWorkspaceStorage);
@@ -288,9 +293,19 @@ export class CodexClient {
     }
     this.subscribers.clear();
     if (!this.closingRequested) {
-      this.child.kill("SIGTERM");
+      this.kill("SIGTERM");
       // Reap failed children and their bridge even when the caller forgets to close.
       queueMicrotask(() => { void this.close().catch(() => undefined); });
+    }
+  }
+
+  private kill(signal: NodeJS.Signals): void {
+    if (!this.child.pid) return;
+    try {
+      if (process.platform === "win32") this.child.kill(signal);
+      else process.kill(-this.child.pid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
   }
 }
@@ -305,7 +320,7 @@ export async function createCodex(options: CodexOptions = {}): Promise<CodexClie
   }
   const specification = options.executable ?? options.env?.CANTELOP_CODEX_PATH ?? process.env.CANTELOP_CODEX_PATH ?? "cantelop-codex";
   const executable = typeof specification === "string" ? { command: specification, args: [] } : specification;
-  const env: NodeJS.ProcessEnv = { ...process.env, ...options.env };
+  const env: NodeJS.ProcessEnv = { ...(options.inheritEnv === false ? {} : process.env), ...options.env };
   // The native process uses the bridge, never the platform credential-broker capability.
   delete env.CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN;
   delete env.CANTELOP_WORKSPACE_DATABASE_CREDENTIALS_URL;
@@ -327,7 +342,7 @@ export async function createCodex(options: CodexOptions = {}): Promise<CodexClie
   catch (error) { if (!options.database) database.close(); throw error; }
   const child = spawn(executable.command, [...executable.args ?? [], "app-server", "--listen", "stdio://"], {
     ...(options.cwd ? { cwd: options.cwd } : {}),
-    env: { ...env, CANTELOP_CODEX_STORAGE_TRANSPORT: "http-v1", CANTELOP_CODEX_STORAGE_URL: bridge.url, CANTELOP_CODEX_STORAGE_TOKEN: bridge.token }, stdio: ["pipe", "pipe", "pipe"], shell: false,
+    env: { ...env, CANTELOP_CODEX_STORAGE_TRANSPORT: "http-v1", CANTELOP_CODEX_STORAGE_URL: bridge.url, CANTELOP_CODEX_STORAGE_TOKEN: bridge.token }, stdio: ["pipe", "pipe", "pipe"], shell: false, detached: process.platform !== "win32",
   });
   const client = new CodexClient(child, database, !options.database, options, bridge);
   try { await client.initialize(); return client; }
@@ -338,7 +353,7 @@ export async function createCodex(options: CodexOptions = {}): Promise<CodexClie
 export class CodexThread {
   private active = false;
   private currentTurnId: string | undefined;
-  constructor(private readonly client: CodexClient, readonly id: string) { }
+  constructor(private readonly client: CodexClient, readonly id: string, readonly rolloutPath?: string) { }
 
   steer(prompt: string, expectedTurnId: string): Promise<unknown> {
     return this.client.request("turn/steer", { threadId: this.id, expectedTurnId, input: [{ type: "text", text: prompt }] });

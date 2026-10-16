@@ -1,42 +1,29 @@
-# Pi Session runtime example
+# Pi agent integration
 
-This example has two deployment artifacts:
+`src/cantelop.ts` creates a client and declares a named App with imported handlers from `src/agent.ts`. Application code imports the named `app` handle to select Workspaces and Sessions. `src/agent.ts` exports the provider behavior and is bundled directly for the Sandbox. The [backend compiler transform](../../docs/runtime-definitions.md) excludes provider dependencies from the backend bundle.
 
-- `src/api.ts` is Edge middleware and imports no provider SDK.
-- `src/session.ts` defines Session behaviour that runs Pi Agent Core and provider
-  integrations in a Linux-native VM.
+```ts
+import { app } from "./src/cantelop.ts";
 
-Cantelop injects the current App when it creates the API. The Edge API manages
-Workspaces and reusable Sessions without an API key; provider credentials and
-Pi configuration are supplied only to the Session runtime. The manifest defaults
-to Anthropic's `claude-sonnet-5`, requires `ANTHROPIC_API_KEY`, and exposes
-`PI_PROVIDER` and `PI_MODEL` as local defaults. If you select another provider,
-replace the credential declaration with the secret that provider requires.
-
-The API exposes `GET /health`, `GET /events`, `POST /chat`, `POST /steer`, and
-`POST /cancel`.
-Chat requires `workspaceSlug`, `keepAliveSeconds`, and `prompt`, and accepts an
-optional `sessionId`; it creates or reuses that Session. Steer requires
-`sessionId`, `workspaceSlug`, `keepAliveSeconds`, and `prompt` to reuse it. Cancel
-requires the same Session fields without a prompt. All message routes return an
-accepted message reference with HTTP status `202`.
-`GET /events` accepts `sessionId`, `workspaceSlug`, and `keepAliveSeconds` as
-query parameters and streams that Session's events over SSE or the
-`cantelop.events.v1` WebSocket subprotocol. See the [shared example
-guide](../README.md) for client and reconnect examples.
-
-The App has one Session behaviour with an explicit actor protocol. `prompt` and an
-idle `steer` start a Pi run. A prompt received while busy enters a FIFO queue,
-an active `steer` enters the Agent's native steering queue, and `cancel` aborts
-the run and clears both Cantelop and native Pi queues. The actor owns one Pi `Agent`; no per-Session
-registry is needed because the native runtime is already bound to one Session.
-The prompt lives in the Session activity so the mailbox remains available for
-new commands.
-
-`cantelop.json` targets an illustrative App with slug `pi`. Change the slug
-when deploying to a different App.
-
-```bash
-pnpm install
-pnpm check
+const workspace = app.workspace({ slug: "customer-123" });
+const session = workspace.session({
+  id: "conversation-456",
+  keepAliveSeconds: 300,
+});
+await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+for await (const event of session.stream()) {
+  if (event.data.type === "text_delta") console.log(event.data.delta);
+}
 ```
+
+The SDK discovers the App and its scoped integration credential from CLI/runtime configuration. To select another configured App, set `name: "another-agent"` on the App in `src/cantelop.ts`. Select Workspaces by ID or slug, then create any number of Session references from each Workspace. Local CLI adapters can supply the App configuration. Run and deploy it with Cantelop CLI 0.15.2 or newer. Provider configuration is declared on the App; keep provider credentials in the runtime environment.
+
+Use `session.steer({type:"prompt",prompt:"adjust the task"})` and
+`session.cancel()`. These are SDK work commands delivered through the
+same actor transport. They do not require programmable Edge handlers.
+
+Run `pnpm check:examples` from the SDK root to type-check the backend client and runtime and qualify the runtime-only build artifact.
+
+## Runtime behavior
+
+The harness factory creates one Pi Agent per runtime incarnation. The harness’s `queue` method serializes prompts, and `steer` injects native input into an active Pi operation or queues a turn when idle. `cancel()` aborts the active Agent operation and preserves waiting harness input. `PI_PROVIDER` and `PI_MODEL` select the model; the manifest defaults to Anthropic and `claude-sonnet-5`. Selecting another provider also requires changing the credential declaration.

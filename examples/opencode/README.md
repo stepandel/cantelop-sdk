@@ -1,84 +1,48 @@
-# OpenCode Session runtime example
+# Stock OpenCode CLI harness
 
-Runs the OpenCode coding harness inside a Cantelop Sandbox. The Edge API imports
-no provider code; `src/session.ts` starts a localhost-only headless server and
-controls it with `@opencode-ai/sdk/v2`. Both the SDK and the image's OpenCode binary
-are pinned to 1.18.30. Update them together.
+This example runs the published, unmodified CLI for each turn, supplies the prompt through stdin, forwards native JSON events and resumes the provider's existing conversation.
 
-## Setup
-
-From the repository root:
-
-```sh
-pnpm install
-pnpm check:examples
+```text
+opencode run --format json [--session SESSION_ID]
 ```
 
-Copy `.env.example` to `.env` in this directory and supply your Anthropic API key.
-The default model is `anthropic/claude-sonnet-4-5`; change `OPENCODE_MODEL` to a
-model available to your account. To use another provider, also change the required
-credential in `cantelop.json` and the credential check in `src/session.ts`.
-
-From this directory, use the Cantelop CLI:
-
-```sh
-cantelop deploy --dry-run
-cantelop deploy --create-app
+The `create` factory returns a session-scoped `NativeOpenCode` runner directly. Each runner implements Cantelop’s `SessionHarness` interface, `queue(message, work)`, `steer(message, work)` and `cancel()`. An existing runner implementing that interface can be returned directly too:
+```ts
+runtime: {
+  create(context) {
+    return createExistingNativeRunner(context);
+  },
+}
 ```
 
-Production requires the `ANTHROPIC_API_KEY` App secret. Change the illustrative
-`app` slug in `cantelop.json` as needed. The custom Dockerfile installs OpenCode,
-Node.js, Git, and ripgrep. Cantelop supplies Bun, the startup command, and the
-`/workspace` working directory. Add other build tools to the image if your agent
-needs them. The OpenCode executable is installed in the image, not bundled into
-the Session JavaScript.
+The app registers its factory. The runner owns queueing and implements steering by interrupting its active CLI turn and admitting priority input. `session.dispatch()` schedules FIFO input; `session.steer()` admits priority input and interrupts the active turn. Work remains in the execution slot until the CLI and its process group exit, then the steering prompt resumes the same native conversation before ordinary queued work. Steering submissions retain FIFO order within their priority. `session.cancel()` interrupts the active operation and preserves queued input; it takes no target message ID.
 
-## HTTP protocol
+Cancellation sends SIGTERM and escalates to SIGKILL after one second. Cleanup also runs on parsing/output failures and waits for the actual subprocess before returning. Process-group cleanup targets Linux/macOS Sandbox processes; tools that detach into a different group require broader Sandbox cleanup. Prompts stay out of command arguments, and stderr is never published.
 
-The routes match the [shared example guide](../README.md):
+## Native authentication and state
 
-- `GET /health`: reports the `opencode` runtime.
-- `POST /chat`: takes `workspaceSlug`, `keepAliveSeconds`, `prompt`, and an optional
-  `sessionId`. Returns the Session ID and accepted message reference (`202`).
-- `POST /steer`: takes the same fields with a required `sessionId`. When busy,
-  this queues a follow-up turn; it does not interrupt the active model/tool call.
-- `POST /cancel`: takes `sessionId`, `workspaceSlug`, and `keepAliveSeconds`.
-  Clears pending prompts, aborts the activity, calls OpenCode's abort endpoint,
-  and closes the server. Cancellation does not undo completed file edits.
-- `GET /events`: takes those three Session coordinates as query parameters and
-  streams `text_delta`, `done` (with `answer`), or `error` (with `message`) over
-  SSE or the `cantelop.events.v1` WebSocket subprotocol.
+The App declares `auth: opencodeAuth` ([src/auth.ts](src/auth.ts)), so each Workspace can store its own provider credential with OpenCode's stock login. Resolve the Workspace from your verified user identity, then hand the returned terminal to that user's browser:
 
-Open the event subscription before sending a prompt. Example request:
-
-```sh
-curl -X POST "$APP_URL/chat" \
-  -H 'Content-Type: application/json' \
-  -d '{"sessionId":"coding-1","workspaceSlug":"project-1","keepAliveSeconds":300,"prompt":"Inspect the workspace and summarize what is here."}'
+```ts
+const auth = app.workspace({ slug: verifiedUserWorkspace }).auth();
+if (!await auth.status()) {
+  const { url, protocols } = await auth.terminal();
+  // Browser: new WebSocket(url, protocols), rendered with a terminal such as xterm.js.
+}
 ```
 
-Prompts run in a managed activity so the mailbox remains available for cancel
-and follow-up requests. The adapter waits for OpenCode's event connection before
-submitting work, filters text by conversation and assistant message, and keeps
-the activity alive until completion. Each activity starts and closes its own
-server. OpenCode's local database and the in-memory conversation ID provide
-conversation continuity between turns while the same Sandbox remains alive.
+The browser shows `opencode auth login --provider <id>` in its own PTY, and the user completes OpenCode's own prompts there. `OPENCODE_LOGIN_PROVIDER` picks the provider (default `opencode`). It must appear in `OPENCODE_LOGIN_PROVIDERS` in [src/auth.ts](src/auth.ts). Anthropic is deliberately excluded: Anthropic does not allow Claude subscription sign-in through third-party tools, so use the [Claude Code example](../anthropic/README.md) instead. Before adding a provider, confirm that its terms allow hosted use, especially for subscription (OAuth) methods. `auth.status()` checks whether OpenCode's credential file has an entry for that provider, and `auth.logout()` runs `opencode auth logout <provider>`. See [native auth](../../docs/native-auth.md) for the browser snippet and lifecycle.
 
-## Lifetime and tool permissions
+The adapter does not collect tokens or inject inherited API keys. The child environment is scoped to the Workspace; the host's auth/config environment is unchanged.
 
-Workspace files persist, but conversation history is **not restored after a
-Sandbox replacement**. `keepAliveSeconds: 0` can therefore lose conversation
-continuity between requests. OpenCode data stays in the managed ephemeral home;
-the example does not relocate its live database onto the NFS-backed Workspace.
-Durable conversation restore needs a separate persistence design.
+OpenCode auth lives at `/workspace/.local/share/opencode/auth.json`, with native configuration under `/workspace/.config/opencode`. The live native SQLite database is created on local disk per runtime incarnation. Native auth files are linked into that local data directory without reading their credentials. After every known-session turn (including interruption), the adapter runs stock `opencode export` and atomically saves the native snapshot under `.cantelop/native-harness/opencode`. A replacement incarnation restores it through stock `opencode import`, then resumes the recorded session ID. The snapshot is capped at 16 MiB; export/import failures surface rather than silently discarding state.
 
-This is an unattended coding example: tools are allowed by default, with
-external-directory access, interactive questions, and doom-loop permission
-requests denied. Review the `permission` configuration for your application.
-The example forwards text and errors, not tool traces or interactive approvals.
-OpenCode loads project configuration from the working directory; use trusted
-workspaces. As with the other examples, add caller authentication and Session
-access checks before exposing the HTTP API publicly.
+The Cantelop Session-to-native-conversation mapping is saved atomically in a private file under `/workspace/.cantelop/native-harness`. Different Cantelop Sessions sharing a Workspace retain independent provider conversation IDs. These examples do not replay interrupted turns or make the example’s waiting queue durable. Application-owned pending jobs and recovery policy remain separate; see [the application queue example](../application-queue/README.md).
 
-References: [OpenCode SDK](https://opencode.ai/docs/sdk/) and
-[headless server](https://opencode.ai/docs/server/).
+## Configuration and output
+
+`OPENCODE_PATH` defaults to `/usr/local/bin/opencode`; override it for a local installation. `OPENCODE_MODEL` is optional and otherwise preserves native model configuration. Configure native tools, prompts, permissions and MCPs through the harness's own files/options. The Docker image installs the pinned stock CLI declared in `package.json` under `nativeCli`.
+
+`session.stream()` carries native JSON objects. Frames over 48 KiB are emitted as `native.fragment` objects with `eventId`, `index`, `total` and `json`; concatenate fragments in order and parse the reconstructed JSON. Subscribe before dispatching for live output or use retained replay.
+
+Run `pnpm check:examples` from the SDK root to type-check and qualify backend/Edge/native artifacts. Tests use executable CLI fixtures, including stubborn tool subprocesses; they require no real credentials or model calls.

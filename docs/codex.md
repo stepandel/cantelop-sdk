@@ -1,107 +1,178 @@
-# Native Codex in the SDK
+# Durable hosted Codex
 
-Import the Node integration from `@cantelop/sdk/codex`. It runs the real Codex
-app-server with Cantelop's native database driver. A stock OpenAI Codex binary is
-rejected before startup because it cannot replace its SQLite connections.
+The packaged integration follows the same App shape as Claude:
 
 ```ts
-import { createCodex } from "@cantelop/sdk/codex";
+import { CantelopClient } from "@cantelop/sdk";
+import { createCodexRuntime, codexAuth, codexDockerfile } from "@cantelop/sdk/harnesses/codex";
+import type { CodexSessionCommand, CodexSessionEvent, CodexSessionReply } from "@cantelop/sdk/harnesses/codex/protocol";
 
-const codex = await createCodex({
-  env: { CODEX_HOME: "/workspace/.codex" },
+export const app = new CantelopClient().app<CodexSessionCommand, CodexSessionEvent, CodexSessionReply>({
+  name: "durable-codex",
+  runtime: createCodexRuntime({ workspace: "/workspace", sandbox: "workspace-write", approvalPolicy: "never" }),
+  auth: codexAuth,
+  dockerfile: codexDockerfile,
 });
-try {
-  const thread = await codex.startThread({ cwd: "/workspace" });
-  // Save thread.id in your application's session record to resume later.
-  for await (const notification of thread.run("Inspect this repository")) {
-    console.log(notification.method, notification.params);
-  }
-} finally {
-  await codex.close();
+```
+
+See [the runnable example](../examples/codex-durable/README.md). The image builds
+an immutable revision of [the native fork](https://github.com/stepandel/cantelop-codex-native)
+and installs a pinned stock Codex CLI for sign-in. The first image build includes
+Rust compilation; no consumer files are needed by the Dockerfile. Native builds
+and SDK releases remain independent. `CANTELOP_CODEX_PATH` selects the app-server;
+`CODEX_PATH` selects the sign-in CLI. Both default to the packaged image's paths.
+
+## Durable intake and recovery
+
+`createCodexRuntime()` owns one logical store per Session in its Workspace database.
+Intake, task statuses, native thread identity and observation sequence numbers are
+committed before successful intake or publication. The runtime opts into platform
+redelivery; task IDs remain the deduplication key across incarnations.
+
+```ts
+const session = app.workspace({ slug: verifiedUserId }).session({ id: conversationId });
+await session.dispatch({ type: "queue", id: requestId, text: "Inspect the repository" });
+await session.dispatch({ type: "steer", id: nextRequestId, text: "Focus on tests" });
+await session.dispatch({ type: "cancel", id: requestId });
+const state = await session.request({ type: "snapshot" });
+```
+
+- Keep the task ID stable on retries. Reusing it for different text, mode or settings
+  fails. A completed or interrupted task is never executed again by redelivery.
+- Accepted queued tasks resume on **every activation**, including ordinary idle
+  release. Recovery does not require a new user prompt or only `onRecover`.
+- A running task becomes `interrupted` after process loss. A committed cancellation
+  or steering intent retains its corresponding terminal status after replacement.
+- Steering commits a priority follow-up, interrupts the current native turn, waits
+  for cleanup, then resumes the same native thread with the follow-up. It does not
+  rely on an ambiguous in-flight `turn/steer` request.
+- `model` and `systemPrompt` may be supplied as per-task `settings`; omitted values
+  inherit immutable App defaults. Accepted settings are snapshotted, and removed
+  from the work record after terminal status. Snapshots never expose settings.
+- An owned activity holds the Sandbox while native work and persistence settle;
+  its deadline is renewed. Queued work is drained before the runtime becomes idle.
+- Failed or ambiguous SQL commits stop that store's writer and native execution.
+  After cleanup, the runtime reopens the committed state while retaining activity
+  ownership through a database outage. Only input known not to have entered native
+  execution can restart automatically. Writes and native requests are never replayed.
+  If intake loses its commit acknowledgment before activity starts, that invocation
+  stays open until committed work is recovered and scheduled, without another message.
+
+The Session retains at most 1,000 task identities, then rejects new intake.
+Snapshots return the latest 50 statuses with text previews. Observation history
+remains in SQL for replay; application retention/deletion is a separate concern.
+
+## Codex and Pi Durable
+
+This adopts Pi's durable admission, commit-before-publication, per-Session stores,
+activation recovery, explicit ownership and committed observation principles.
+Codex does **not** expose Pi's transactional task graph or per-tool replay safety.
+Resuming a thread reopens a conversation; it does not safely resume an interrupted
+tool checkpoint. The runtime therefore never automatically resubmits a running
+prompt after a crash. Inspect the interrupted task and submit an explicit new
+continuation when appropriate. Model output and external tool effects cannot be
+committed atomically with the SDK inbox.
+
+The supported execution unit is one foreground Codex turn. Native goals, delayed
+tasks, independently running agents and detached background processes require
+their own durable ownership/wake protocol and are outside this runtime's contract.
+Do not enable them through native config and treat a foreground task's completion
+as their completion. Approval requests are rejected unless explicitly handled by
+the low-level client; the packaged runtime uses the configured native policy.
+
+Canonical JSONL rollout replay, auth and config remain Workspace files. Keep
+`CODEX_HOME` on the persistent volume. Native SQL stores use the Workspace database;
+no live SQLite files belong on the network filesystem. Database-only model replay
+would require another native ThreadStore implementation.
+
+Before committing a task's completed status, the harness waits for native shutdown,
+then synchronizes the canonical rollout file and its parent directories. A missing
+rollout path or failed synchronization fails the task; it cannot be reported as a
+durable completion. Partial-turn replay still follows Codex's interrupted-history
+behavior, not Pi tool checkpoint semantics.
+
+Opening a replacement fences the previous SDK state writer. The platform must
+also stop the previous Sandbox before replacement native execution begins: a
+database fence cannot revoke an external shell or MCP side effect. Different
+Sessions in one Workspace have isolated inboxes, statuses and event histories.
+
+## Committed observation
+
+Session SSE/WebSocket cursors remain transient transport positions. Each packaged
+Codex event additionally has a durable, Session-local SQL `seq`. Publication is
+bounded and best effort; disconnected/slow observers cannot block execution.
+
+Page the committed log to initialize, reconnect or fill a live sequence gap:
+
+```ts
+let cursor = 0;
+for (;;) {
+  const page = await session.request({ type: "events", after: cursor, limit: 50 });
+  if (page.type !== "session.events") throw new Error("Unexpected reply");
+  for (const event of page.events) applyOnce(event.seq, event);
+  cursor = page.cursor;
+  if (!page.hasMore) break;
 }
 ```
 
-Omit `database` to use the Session runtime's renewable workspace credentials.
-Borrowed database clients must return integers without losing precision: use
-`intMode: "bigint"` when constructing them. The integration closes clients it
-creates and leaves borrowed clients open. Set `CANTELOP_CODEX_PATH` to the native
-executable, or pass its path through `executable`.
+Attach the live stream before fetching pages, buffer arriving live events, then
+deduplicate by `seq`. If any sequence is missing, fetch the SQL log from the last
+contiguous sequence. The SQL log is authoritative, including when live delivery
+fails. Each page fits the output frame limit; oversized native events are committed
+as consecutive `codex.fragment` records. `CodexSessionOutput` from the browser-safe
+protocol entry point reconstructs one task's native events. Persist each fragment's
+sequence, or replay from before its first fragment after reconnect. Native events
+larger than 4 MiB fail the task explicitly rather than exhausting observer memory.
 
-## Select a native executable
+## Workspace sign-in
 
-Native source, upstream updates, builds, and binary releases live in
-[`stepandel/cantelop-codex-native`](https://github.com/stepandel/cantelop-codex-native).
-The native repository has its own version and release cycle. Updating upstream
-Codex does not require an SDK release unless the storage protocol or TypeScript
-API changes.
-
-Use a verified executable from that repository's CI artifacts or tagged releases,
-or build it from its checkout:
-
-```sh
-git clone --branch cantelop git@github.com:stepandel/cantelop-codex-native.git
-cd cantelop-codex-native
-rustup toolchain install "$(node cantelop/scripts/toolchain.mjs)" --profile minimal
-npm --prefix cantelop run build
-export CANTELOP_CODEX_PATH="$PWD/cantelop/bin/cantelop-codex"
+```ts
+const workspace = app.workspace({ slug: verifiedUserId });
+const login = await workspace.auth().login();
+if (!login.authenticated) {
+  showDeviceLogin(login.url, login.userCode);
+  // Poll workspace.auth().status() until authenticated.
+}
 ```
 
-Build for the target Session platform; a macOS executable does not run in a Linux
-Sandbox. The SDK does not automatically download native binaries or bundle them
-in its npm tarball. The native repository is a public GitHub fork of OpenAI Codex. Its default
-`cantelop` branch contains the workspace integration; `main` retains upstream
-source.
+The stock CLI prints the allowed OpenAI URL and one-time device code. The SDK
+returns only those structured fields; native diagnostics remain private and are
+never journaled. The user enters the code on OpenAI's page. There is no pasted
+code to submit through `auth.submitCode()`. The native process completes sign-in
+and releases its idle hold. Cancellation and expiry stop unfinished attempts.
+Device sign-in must be enabled for the user's ChatGPT account/workspace.
 
-The executable must advertise storage protocol **1**, backend `workspace`,
-`localSqlite: false`, and every required storage domain. The SDK validates its
-preflight probe and initialization response. Native release metadata records
-these capabilities, its pinned upstream revision, and the tested SDK revision;
-select a compatible native release independently of the SDK version. The native
-repository documents the wire contract and upstream merge process in
-`cantelop/README.md` and verifies compatibility in CI.
+## Lower-level execution
 
-## Storage coverage
+`createCodexHarness(context, options)` implements `queue`, `steer` and `cancel`, like
+the Claude harness. It owns native process cleanup and conversation resumption;
+its direct input queue is incarnation-local. Use `createCodexRuntime` for durable
+intake and observations. `@cantelop/sdk/codex` retains the raw app-server client,
+explicit approval handler, and renewable workspace SQL bridge.
 
-Every Codex-owned SQL store uses the workspace connection: state and thread
-metadata, projects, sections, attachments, agent relationships, goals, memory
-versions, queued submissions, diagnostic logs, remote-control enrollment,
-configuration imports, paginated history, and agent message boards. Logical
-stores have separate migration ledgers and `cantelop_codex_<store>_` table prefixes.
-The native SQLx driver does not load a local SQLite engine. Physical integrity,
-vacuum and checkpoint maintenance belong to the hosted database.
-
-This replaces SQLite persistence. Codex's canonical JSONL rollout files, config,
-auth and other ordinary workspace files still use Codex's filesystem paths.
-Keep the Codex home on the persistent workspace volume when resuming threads.
-The paginated SQL history does not replace canonical model replay files.
-Moving all canonical history into the DB requires a separate ThreadStore
-implementation; this integration does not claim database-only replay.
-
-The SDK starts an authenticated loopback bridge before native initialization.
-The native child receives that process-scoped capability, not the workspace
-credential-broker token. The native process owns migrations and SQL semantics;
-the SDK provides the renewable database connection. SQL writes and timed-out
-requests are never retried automatically. A transport failure can leave a
-write's outcome unknown.
-
-Unhandled native server requests, including approvals, are rejected. Supply
-`onRequest` to implement the approval flow explicitly. Early iterator return or
-an aborted `run` interrupts the active turn. `close()` waits for native thread
-and log persistence before shutting down the bridge; shutdown failures are
-reported to the caller.
+The native executable must advertise storage protocol 1, backend `workspace`,
+`localSqlite: false` and all required storage domains. Stock/partial executables
+are rejected before starting an app-server or opening the database. The child
+gets a private loopback capability instead of the platform credential-broker token.
+Harness children do not inherit host provider credentials. Completion waits for
+native persistence, shutdown and process-group cleanup.
 
 ## Verification
 
 ```sh
 pnpm test
+pnpm check:examples
 pnpm check:package
-# Requires a compatible native executable from the separate repository:
 CANTELOP_CODEX_PATH=/path/to/cantelop-codex pnpm check:codex-harness
 ```
 
-The SDK owns protocol fixture tests, package import checks, and the real native
-lifecycle smoke test. The native repository owns Rust driver checks, every
-pinned upstream migration, compilation, and executable release artifacts. Its
-CI runs the SDK's real lifecycle test against a pinned SDK checkout and a mocked
-provider. Native test infrastructure uses a temporary local libSQL database;
-production connections use the workspace client.
+Tests cover process kill after an unsafe effect, queued-work recovery, idempotent
+intake, writer fencing, ambiguous commits, cancellation/steering, Session isolation,
+observer disconnect and fragmented event replay. The real native qualification
+uses a mocked model provider with no paid API calls or user credentials. It covers
+native migrations/storage, completed turns, replacement-process resume, concurrent
+shutdown, the packaged runtime and redelivery without another model call.
+
+Sources: [Pi assessment](pi-durable-support.md),
+[native fork contract](https://github.com/stepandel/cantelop-codex-native/blob/cantelop/cantelop/README.md),
+[official Codex app-server protocol](https://learn.chatgpt.com/docs/app-server).

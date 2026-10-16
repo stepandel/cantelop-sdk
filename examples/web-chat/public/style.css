@@ -1,0 +1,25 @@
+:root { font-family: ui-sans-serif, system-ui, sans-serif; color: #25332d; background: #f5f6f1; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 850px; margin: 64px auto; padding: 0 24px; }
+header, .actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .18em; color: #56755e; }
+h1 { font-size: clamp(28px, 5vw, 42px); letter-spacing: -.04em; margin: 12px 0; }
+.intro { color: #68746b; margin: 0 0 32px; }
+#messages { min-height: 250px; display: flex; flex-direction: column; gap: 18px; padding: 24px 0; }
+#empty { margin: auto; color: #7b867d; }
+.message { padding: 18px 22px; border-radius: 16px; max-width: 90%; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.message.user { background: #e4ebdd; align-self: flex-end; }
+.message.agent { background: white; border: 1px solid #e2e7dc; align-self: flex-start; }
+.message strong { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: #6d7d6d; margin-bottom: 8px; }
+form { background: white; padding: 22px; border: 1px solid #dce3d6; border-radius: 18px; }
+label { font-size: 13px; font-weight: 600; }
+textarea { display: block; width: 100%; resize: vertical; border: none; background: transparent; font: inherit; padding: 12px 0; line-height: 1.6; color: inherit; }
+textarea:focus { outline: none; }
+form:focus-within { outline: 2px solid #8eaa77; outline-offset: 3px; }
+button { border: 1px solid #d7dfcf; border-radius: 9px; padding: 11px 16px; font: inherit; font-size: 13px; background: transparent; color: inherit; cursor: pointer; }
+button[type=submit] { background: #35593e; color: white; border-color: #35593e; }
+button:disabled { opacity: .5; cursor: default; }
+#status { font-size: 12px; color: #6d7d6d; flex: 1; }
+[hidden] { display: none !important; }
+@media (max-width: 550px) { main { margin: 28px auto; } header { align-items: flex-start; } .actions { flex-wrap: wrap; } #status { flex-basis: 100%; } .message { max-width: 100%; } }

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/stepandel/cantelop-sdk/main/schemas/app-v3.json",
+  "title": "Cantelop App",
+  "description": "Project build settings for named Apps declared in code. Requires CLI build protocol 6.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "definition"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 3
+    },
+    "definition": {
+      "$ref": "#/$defs/projectFile"
+    }
+  },
+  "$defs": {
+    "projectFile": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path relative to cantelop.json. It must stay inside the project and name a regular file."
+    }
+  },
+  "examples": [
+    {
+      "schema_version": 3,
+      "definition": "src/cantelop.ts"
+    }
+  ]
+}
