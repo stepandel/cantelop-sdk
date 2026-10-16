@@ -169,9 +169,9 @@ test('reset explicitly starts a fresh native conversation and preserves observed
 test('structured auth failure and missing native checkpoint remain visible in the durable view',async t=>{
   const {native,h}=await fixture(t);await h.send({type:'input',id:'auth',text:'Auth'});await until(()=>native.runs[0]?.inputs.length===1);
   native.runs[0].reject(new ClaudeAuthenticationRequired());await h.idle();
-  assert.equal(h.views.at(-1).run.error,'authentication_required');assert.ok(h.events.some(e=>e.type==='auth.required'));
+  assert.equal(h.views.at(-1).run.error,'authentication_required');assert.equal(h.views.at(-1).inputs[0].status,'failed');assert.ok(h.events.some(e=>e.type==='auth.required'));
   await h.send({type:'input',id:'missing',text:'Continue'});await until(()=>native.runs[1]?.inputs.length===1);
-  native.runs[1].reject(new Error('native_resume_unavailable'));await h.idle();assert.equal(h.views.at(-1).run.error,'native_resume_unavailable');
+  native.runs[1].reject(new Error('native_resume_unavailable'));await h.idle();assert.equal(h.views.at(-1).run.error,'native_resume_unavailable');assert.equal(h.views.at(-1).inputs.at(-1).status,'failed');
 });
 test('validation and finishing backpressure reject input before durable admission',async t=>{
   const {root,native,h}=await fixture(t);

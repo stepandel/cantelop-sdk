@@ -203,7 +203,8 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
             if (errorCode) state.run.error = errorCode
           }
           for (const m of state.messages) if (m.runId === run.id && (pending(m) || m.status === 'accepted')) {
-            m.status = outcome === 'cancelled' ? 'cancelled' : 'interrupted'
+            m.status = outcome === 'cancelled' ? 'cancelled'
+              : errorCode === 'authentication_required' || errorCode === 'native_resume_unavailable' ? 'failed' : 'interrupted'
             m.reason = errorCode ?? 'native_outcome_unknown'
             delete m.settings
           }
