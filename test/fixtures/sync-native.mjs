@@ -18,13 +18,13 @@ const app=new CantelopClient().app({name:'native-sync-test',runtime:{receive(){}
   return worker.fetch(new Request(request,{headers}),{CANTELOP_INTEGRATION_TOKEN:'fixture-token'});
 }}});
 await writeFile(path.join(local,'binary'),Buffer.from([0,255,0,42]));
-let sync=await app.workspace({id}).sync({localDirectory:local,pollIntervalMs:60000});
+let sync=await app.workspace({id}).sync({localDirectory:local,remoteDirectory:"my-project",pollIntervalMs:60000});
 try{
   await sync.ready();assert.deepEqual(await readFile(path.join(remote,'binary')),Buffer.from([0,255,0,42]));
   await writeFile(path.join(remote,'agent.sh'),'remote edit',{mode:0o755});await sync.flush();assert.equal(await readFile(path.join(local,'agent.sh'),'utf8'),'remote edit');
   await writeFile(path.join(local,'binary'),'local edit');await sync.flush();assert.equal(await readFile(path.join(remote,'binary'),'utf8'),'local edit');
   await sync.stop();await writeFile(path.join(local,'binary'),'offline local');await writeFile(path.join(remote,'binary'),'offline remote');
-  sync=await app.workspace({id}).sync({localDirectory:local,pollIntervalMs:60000});await assert.rejects(sync.ready(),{code:'sync_conflict'});
+  sync=await app.workspace({id}).sync({localDirectory:local,remoteDirectory:"my-project",pollIntervalMs:60000});await assert.rejects(sync.ready(),{code:'sync_conflict'});
   assert.equal(await readFile(path.join(local,'binary'),'utf8'),'offline local');assert.equal(await readFile(path.join(remote,'binary'),'utf8'),'offline remote');
   await writeFile(path.join(local,'binary'),'offline remote');await sync.flush();
   await unlink(path.join(local,'binary'));await sync.flush();await assert.rejects(readFile(path.join(remote,'binary')),{code:'ENOENT'});

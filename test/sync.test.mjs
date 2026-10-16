@@ -27,7 +27,8 @@ async function fixture(t) {
     if(!online) throw new Error('offline');
     assert.equal(url.pathname,`/__cantelop/integration/v2/workspaces/${workspaceId}/sync`);
     const op=url.searchParams.get('op'),name=url.searchParams.get('path'),base=url.searchParams.get('base'),previous=files.get(name);
-    if(op==='scan')return Response.json({protocolVersion:1,root:'project',writes,entries:[...files].map(([name,f])=>item(name,f.data,f.executable))});
+    const rootName=url.searchParams.get("root") ?? "project";
+    if(op==='scan')return Response.json({protocolVersion:1,root:rootName,writes,entries:[...files].map(([name,f])=>item(name,f.data,f.executable))});
     if((previous?.version??'missing')!==base)return fail('sync_conflict');
     if(op==='read')return new Response(corrupt?Buffer.from('corrupt'):previous.data);
     if(op==='write'){
@@ -44,7 +45,7 @@ async function fixture(t) {
   const workspace=app.workspace({id:workspaceId});
   const start=async(options={})=>{const handle=await workspace.sync({localDirectory:root,pollIntervalMs:60000,...options});t.after(()=>handle.stop());return handle;};
   const put=(name,data,executable=false)=>{data=Buffer.from(data);files.set(name,{...item(name,data,executable),data});};
-  return {root,files,calls,start,put,setOnline:v=>online=v,setWrites:v=>writes=v,setCorrupt:v=>corrupt=v};
+  return {root,state,files,calls,start,put,setOnline:v=>online=v,setWrites:v=>writes=v,setCorrupt:v=>corrupt=v};
 }
 
 test('one capability reconciles binary files, executable bits, creates and deletes both ways',async t=>{
@@ -57,6 +58,44 @@ test('one capability reconciles binary files, executable bits, creates and delet
   assert.equal(f.files.get('src/local.bin').data.toString(),'local edit');assert.equal(await readFile(path.join(f.root,'remote.sh'),'utf8'),'remote edit');
   await unlink(path.join(f.root,'src/local.bin'));f.files.delete('remote.sh');await sync.flush();
   assert.equal(f.files.size,0);await assert.rejects(readFile(path.join(f.root,'remote.sh')),{code:'ENOENT'});
+});
+test('relative directories scope every operation and retain their baseline across restart',async t=>{
+  const f=await fixture(t);await writeFile(path.join(f.root,'README.md'),'local');f.put('remote','download');
+  let sync=await f.start({remoteDirectory:'src/my project'});await sync.ready();
+  assert.equal(sync.remoteDirectory,'/workspace/src/my project');assert.equal(f.files.get('README.md').data.toString(),'local');
+  await unlink(path.join(f.root,'remote'));await sync.flush();
+  const transfers=f.calls.filter(request=>new URL(request.url).pathname.endsWith('/sync'));
+  assert.deepEqual(new Set(transfers.map(request=>new URL(request.url).searchParams.get('op'))),new Set(['scan','read','write','remove']));
+  for(const request of transfers)assert.equal(new URL(request.url).searchParams.get('root'),'src/my project');
+  await sync.stop();sync=await f.start({remoteDirectory:'src/my project'});await sync.ready();await sync.stop();
+  await assert.rejects(f.start({remoteDirectory:'other'}),{code:'sync_invalid_state'});
+  const metadata=(await readdir(f.state,{recursive:true})).find(name=>name.endsWith(workspaceId+'.json'));
+  assert.equal(JSON.parse(await readFile(path.join(f.state,metadata),'utf8')).protocolVersion,2);
+});
+test('legacy baselines remain compatible and new roots cannot be reopened by the legacy SDK',async t=>{
+  const f=await fixture(t);let sync=await f.start();await sync.ready();await sync.stop();
+  const files=await readdir(f.state,{recursive:true});const filename=files.find(name=>name.endsWith(workspaceId+'.json'));
+  assert.ok(filename);const stateFile=path.join(f.state,filename);const state=JSON.parse(await readFile(stateFile,'utf8'));
+  assert.equal(state.protocolVersion,1);delete state.remoteDirectory;await writeFile(stateFile,JSON.stringify(state));
+  sync=await f.start();await sync.ready();assert.equal(sync.remoteDirectory,'/workspace/project');
+  const scan=f.calls.find(request=>new URL(request.url).searchParams.get('op')==='scan');assert.equal(new URL(scan.url).searchParams.has('root'),false);
+});
+test('explicit empty directory selects the whole Workspace without changing legacy defaults',async t=>{
+  const f=await fixture(t);const sync=await f.start({remoteDirectory:''});await sync.ready();
+  assert.equal(sync.remoteDirectory,'/workspace');assert.equal(sync.status().writable,true);
+  const scan=f.calls.find(request=>new URL(request.url).searchParams.get('op')==='scan');
+  assert.equal(new URL(scan.url).searchParams.get('root'),'');
+  await sync.stop();await assert.rejects(f.start(),{code:'sync_invalid_state'});
+});
+test('relative roots use the generic path grammar and reject ambiguous requests',async t=>{
+  const f=await fixture(t);
+  for(const name of ['../outside','/absolute','a//b','.git','.ENV','NODE_MODULES','a\\b','a/']) {
+    await assert.rejects(f.start({remoteDirectory:name}));
+    assert.equal(validSyncRequest('GET',new URLSearchParams({op:'scan',root:name})),false);
+  }
+  for(const root of ['', 'src/my project', '.claude'])assert.equal(validSyncRequest('GET',new URLSearchParams({op:'scan',root})),true);
+  assert.equal(validSyncRequest('POST',new URLSearchParams({op:'bind',directory:'my-project'})),false);
+  assert.equal(validSyncRequest('GET',new URLSearchParams('op=scan&root=a&root=b')),false);
 });
 test('divergent edits and delete/edit conflicts preserve both sides and persist their common base',async t=>{
   const f=await fixture(t);await writeFile(path.join(f.root,'a'),'base');let sync=await f.start();await sync.ready();await sync.stop();

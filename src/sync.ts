@@ -1,6 +1,8 @@
 /** The single public file capability; transfer operations are internal. */
 export interface WorkspaceSyncOptions {
   readonly localDirectory: string;
+  /** Relative directory inside the Workspace; empty selects the whole Workspace. Omitted retains the v1 project/ default. */
+  readonly remoteDirectory?: string;
   /** Additional relative paths or directory prefixes to exclude on both sides. */
   readonly ignore?: readonly string[];
   readonly pollIntervalMs?: number;
@@ -15,8 +17,11 @@ export interface WorkspaceSyncStatus {
   readonly state: "syncing" | "synced" | "offline" | "conflict" | "error" | "stopped";
   readonly conflicts: readonly SyncConflict[];
   readonly error?: string;
+  /** Hosted mutation capability from the most recent manifest. */
+  readonly writable?: boolean;
 }
 export interface WorkspaceSync {
+  readonly remoteDirectory: string;
   /** Reconcile both sides; rejects on unresolved conflicts or transfer errors. */
   ready(): Promise<void>;
   /** Perform a fresh reconciliation, including local changes made since ready(). */
@@ -41,12 +46,14 @@ export function validSyncPath(path: string, allowExcluded = false): boolean {
   if (typeof path!=="string" || !path || new TextEncoder().encode(path).length > 1024 || path.startsWith("/") || /[\\\x00\r\n]/.test(path)) return false;
   const parts = path.split("/");
   return parts.length <= 32 && parts.every(part => part !== "" && part !== "." && part !== ".." &&
-    (allowExcluded || !part.startsWith(SYNC_TEMP_PREFIX) && ![".git", ".cantelop", "node_modules", ".env"].includes(part) && !part.startsWith(".env.")));
+    (allowExcluded || !part.toLowerCase().startsWith(SYNC_TEMP_PREFIX) && ![".git", ".cantelop", "node_modules", ".env"].includes(part.toLowerCase()) && !part.toLowerCase().startsWith(".env.")));
 }
 export function validSyncRequest(method: string, query: URLSearchParams): boolean {
-  for (const key of query.keys()) if (!["op", "path", "base", "executable"].includes(key) || query.getAll(key).length !== 1) return false;
+  for (const key of query.keys()) if (!["op", "path", "base", "executable", "root"].includes(key) || query.getAll(key).length !== 1) return false;
   const op = query.get("op");
-  if (op === "scan") return method === "GET" && [...query.keys()].length === 1;
+  const root = query.get("root");
+  if (root !== null && root !== "" && !validSyncPath(root)) return false;
+  if (op === "scan") return method === "GET" && [...query.keys()].length === (query.has("root") ? 2 : 1);
   if (!validSyncPath(query.get("path") ?? "") || !/^(missing|[0-9a-f]{64})$/.test(query.get("base") ?? "")) return false;
   if (query.has("executable") && (op !== "write" || !/^[01]$/.test(query.get("executable") ?? ""))) return false;
   return op === "read" && method === "GET" || op === "write" && method === "PUT" || op === "remove" && method === "DELETE";
