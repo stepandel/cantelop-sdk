@@ -65,7 +65,7 @@ function decode(value: any): DurableClaudeState {
 export class DurableClaudeStore {
   private operations: Promise<unknown> = Promise.resolve()
   private current?: DurableClaudeState
-  private opening?: Promise<void>
+  private opening?: Promise<void> | undefined
   readonly path: string
   constructor(private readonly workspace: string, sessionId: string) {
     this.path = `${workspace}/.cantelop/${createHash('sha256').update(sessionId).digest('hex')}.json`
@@ -73,6 +73,16 @@ export class DurableClaudeStore {
   get state(): DurableClaudeState {
     if (!this.current) throw new Error('Claude store is not open')
     return structuredClone(this.current)
+  }
+  /** Uncopied committed state for reads. Commits replace it rather than mutating it, so callers must not mutate. */
+  get snapshot(): Readonly<DurableClaudeState> {
+    if (!this.current) throw new Error('Claude store is not open')
+    return this.current
+  }
+  /** Copy for a transaction; publications are immutable once queued, so the outbox is shared shallowly. */
+  private draft(): DurableClaudeState {
+    const { outbox, ...rest } = this.snapshot
+    return { ...structuredClone(rest), outbox: [...outbox] }
   }
   async open(): Promise<void> {
     return this.opening ??= (async () => {
@@ -86,11 +96,11 @@ export class DurableClaudeStore {
         this.current = { version: 2, revision: 0, conversationId: randomUUID(), nativeStarted: false,
           messages: [], run: null, entries: [], truncated: false, outbox: [], controls: [] }
       }
-    })()
+    })().catch(error => { this.opening = undefined; throw error })
   }
   commit(mutate: (state: DurableClaudeState) => void, events: ClaudeSessionEvent[] = []): Promise<void> {
     return this.serialize(async () => {
-      const state = this.state
+      const state = this.draft()
       mutate(state)
       state.revision++
       if (!Number.isSafeInteger(state.revision)) throw new Error('Claude revision exhausted')
@@ -102,7 +112,7 @@ export class DurableClaudeStore {
   }
   acknowledge(revision: number): Promise<void> {
     return this.serialize(async () => {
-      const state = this.state
+      const state = this.draft()
       state.outbox = state.outbox.filter(p => p.revision > revision)
       await writeDurableJson(this.path, state)
       this.current = state

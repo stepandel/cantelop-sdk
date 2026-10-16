@@ -8,6 +8,10 @@ import type { ClaudeHarnessFactoryOptions, ClaudeHarnessOptions } from './claude
 import { ClaudeAuthenticationRequired } from './claude.js'
 import { nativeEnvironment, runJsonProcess, type NativeEvent } from './cli.js'
 
+/** The run stopped accepting input before this input was written to Claude. */
+export class ClaudeStreamClosed extends Error {
+  constructor() { super('Claude run is finishing') }
+}
 export interface ClaudeStream {
   readonly accepting: boolean
   readonly done: Promise<void>
@@ -58,11 +62,11 @@ export class NativeClaudeStream implements ClaudeStream {
   }
   get accepting() { return this.open && !this.controller.signal.aborted }
   async send(id: string, text: string): Promise<void> {
-    if (!this.accepting) throw new Error('Claude run is finishing')
+    if (!this.accepting) throw new ClaudeStreamClosed()
     if (!/^[0-9a-f-]{36}$/i.test(id) || Buffer.byteLength(text) > 32 * 1024) throw new TypeError('Invalid Claude input')
     this.pending.add(id)
     await this.ready
-    if (!this.accepting) throw new Error('Claude run is finishing')
+    if (!this.accepting) { this.pending.delete(id); throw new ClaudeStreamClosed() }
     await this.write!(JSON.stringify({ type: 'user', uuid: id, session_id: '', parent_tool_use_id: null,
       message: { role: 'user', content: text } }) + '\n')
   }
@@ -71,8 +75,9 @@ export class NativeClaudeStream implements ClaudeStream {
   private async run(signal: AbortSignal): Promise<void> {
     const options = this.options
     const conversation = options.conversation ?? { id: randomUUID(), resumable: false }
-    if (conversation.resumable && !await hasClaudeTranscript(options.workspace, conversation.id))
-      throw new Error('native_resume_unavailable')
+    // A transcript may exist even when its input was never confirmed (crash before echo); resume it then.
+    const transcript = await hasClaudeTranscript(options.workspace, conversation.id)
+    if (conversation.resumable && !transcript) throw new Error('native_resume_unavailable')
     const env = nativeEnvironment(options.workspace)
     await mkdir(env.CLAUDE_CONFIG_DIR!, { recursive: true, mode: 0o700 })
     let directory: string | undefined
@@ -93,7 +98,7 @@ export class NativeClaudeStream implements ClaudeStream {
           ...(options.maxTurns !== undefined ? ['--max-turns', String(options.maxTurns)] : []),
           ...(options.mcps ? ['--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers: options.mcps })] : []),
           ...(directory ? ['--system-prompt-file', join(directory, 'system.txt')] : []),
-          conversation.resumable ? '--resume' : '--session-id', conversation.id],
+          transcript ? '--resume' : '--session-id', conversation.id],
         input: (write, end) => { this.write = write; this.end = end; this.readyResolve() },
         turn: { text: '', signal, emit: async event => {
           if (event.type === 'user' && typeof event.uuid === 'string' && this.pending.has(event.uuid))

@@ -17,8 +17,6 @@ export type ClaudeSessionCommand =
   | { type: 'sync' }
   | { type: 'input' | 'steer'; id: string; text: string; settings?: ClaudeSessionSettings }
   | { type: 'cancel'; id?: string }
-export type ClaudeSessionStatus = ClaudeInputStatus
-export type ClaudeSessionMessage = ClaudeViewInput
 export type ClaudeSessionReply =
   | { type: 'session.state'; state: ClaudeSessionView }
   | { type: 'input.status'; id: string; runId: string; status: ClaudeInputStatus }
@@ -29,7 +27,6 @@ export type ClaudeSessionEvent =
   | ClaudeSessionChange
   | { type: 'auth.required'; id: string }
   | { type: 'session.ready'; sessionId: string }
-  | { type: 'message.status'; id: string; status: ClaudeInputStatus }
   | { type: 'claude'; id: string; event: unknown; revision?: number }
   | { type: 'claude.fragment'; id: string; eventId: string; index: number; total: number; json: string; revision?: number }
   | { type: 'error'; code: string }

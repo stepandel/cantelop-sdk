@@ -44,8 +44,15 @@ export function observeClaude(state: DurableClaudeState, event: NativeEvent): vo
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i]
       if (!block || typeof block !== 'object') continue
-      if (block.type === 'text' && typeof block.text === 'string')
-        put({ id: `${prefix}:${i}`, runId, role: 'assistant', text: block.text, status: 'completed' })
+      if (block.type === 'text' && typeof block.text === 'string') {
+        // Claude may emit one block per event, so the array index is not the block index.
+        // Reuse the streamed entry holding this text, else the first free slot for this message.
+        const ids = new Set(state.entries.filter(e => e.runId === runId && e.id.startsWith(`${prefix}:`)).map(e => e.id))
+        const match = state.entries.find(e => e.runId === runId && e.role === 'assistant' && ids.has(e.id) && e.text === clip(block.text, 8 * 1024))
+        let index = i
+        while (!match && ids.has(`${prefix}:${index}`)) index++
+        put({ id: match?.id ?? `${prefix}:${index}`, runId, role: 'assistant', text: block.text, status: 'completed' })
+      }
       if (block.type === 'tool_use' && typeof block.id === 'string')
         put({ id: block.id, runId, role: 'tool', text: JSON.stringify(block.input ?? {}), toolName: String(block.name ?? 'tool'), status: 'streaming' })
       if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {

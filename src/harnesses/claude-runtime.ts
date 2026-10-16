@@ -4,8 +4,8 @@ import { isDeepStrictEqual } from 'node:util'
 import type { SessionBehaviour, SessionContext, SessionActivationContext, SessionActivityContext, SessionHarnessContext } from '../session.js'
 import { ClaudeAuthenticationRequired, type ClaudeHarnessFactoryOptions } from './claude.js'
 import { ConversationStore, type NativeEvent } from './cli.js'
-import { createClaudeStream, type ClaudeStream, type ClaudeStreamFactory } from './claude-stream.js'
-import { DurableClaudeStore, type DurableClaudeInput } from './claude-durable-state.js'
+import { ClaudeStreamClosed, createClaudeStream, type ClaudeStream, type ClaudeStreamFactory } from './claude-stream.js'
+import { DurableClaudeStore, type DurableClaudeInput, type DurableClaudeState } from './claude-durable-state.js'
 import { claudeView, observeClaude, clip } from './claude-view.js'
 import { validateClaudeSessionConfig, validateClaudeSessionSettings } from './claude-config.js'
 import type { ClaudeSessionCommand as Command, ClaudeSessionEvent as Event, ClaudeSessionReply as Reply,
@@ -20,6 +20,10 @@ interface ActiveRun {
   stream?: ClaudeStream
   cancelRequested?: boolean
   ready: Promise<ClaudeStream>
+  /** Text deltas awaiting a coalesced commit; superseded by complete assistant events. */
+  buffered: NativeEvent[]
+  committedAt: number
+  timer?: ReturnType<typeof setTimeout> | undefined
   resolve(stream: ClaudeStream): void
   reject(error: unknown): void
 }
@@ -29,6 +33,12 @@ function fingerprint(text: string, settings: Settings): string {
   return createHash('sha256').update(JSON.stringify([text, canonical(settings)])).digest('hex')
 }
 const pending = (m: DurableClaudeInput) => m.status === 'delivering' || m.status === 'running'
+const terminal = (m: DurableClaudeInput) => !pending(m) && m.status !== 'accepted'
+/** Control receipts are bounded; the oldest is evicted so cancel and reset always remain available. */
+function pushControl(state: DurableClaudeState, control: DurableClaudeState['controls'][number]): void {
+  if (state.controls.length >= 1000) state.controls.shift()
+  state.controls.push(control)
+}
 
 /** Durable observation and input delivery around stock Claude; busy input steers the live run. */
 export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, factory: ClaudeStreamFactory = createClaudeStream): SessionBehaviour<Command, Event, Reply, View> {
@@ -50,7 +60,7 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       await store.open()
       // Migrate the older runner's authoritative native ID once. New state,
       // including explicit reset, no longer depends on that legacy mapping.
-      const seed = store.state.revision === 0 ? await new ConversationStore(workspace, 'claude', sessionId).load() : undefined
+      const seed = store.snapshot.revision === 0 ? await new ConversationStore(workspace, 'claude', sessionId).load() : undefined
       await store.commit(state => {
         if (state.revision === 0) {
           const conversation = seed?.id ? { id: seed.id, resumable: seed.resumable } : defaults.conversation
@@ -80,19 +90,22 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
         }
         delete state.runSettings
       })
-    })()
+    })().catch(error => { initialization = undefined; throw error })
   }
 
   // Publish in adapter revision order. A crash anywhere before acknowledgment
   // retains the same logical revision and payload for deduplicated retry.
   function flush(context: PublicationContext): Promise<void> {
     const result = publishing.catch(() => undefined).then(async () => {
-      while (store.state.outbox.length) {
-        const publication = store.state.outbox[0]!
-        for (const event of publication.events) await context.output.send(event)
-        await context.output.send({ type: 'session.changed', revision: publication.revision, state: publication.view })
-        await context.view.commit(publication.view)
-        await store.acknowledge(publication.revision)
+      while (store.snapshot.outbox.length) {
+        const outbox = store.snapshot.outbox
+        for (const publication of outbox) {
+          for (const event of publication.events) await context.output.send(event)
+          await context.output.send({ type: 'session.changed', revision: publication.revision, state: publication.view })
+          await context.view.commit(publication.view)
+        }
+        // Retried publications are deduplicated by revision, so one durable acknowledgment covers the batch.
+        await store.acknowledge(outbox[outbox.length - 1]!.revision)
       }
     })
     publishing = result
@@ -106,74 +119,115 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
   const replyInput = (context: Context, m: DurableClaudeInput) => context.reply({ type: 'input.status', id: m.id, runId: m.runId, status: m.status })
 
   async function observe(run: ActiveRun, event: NativeEvent, context: PublicationContext): Promise<void> {
+    // Coalesce partial text deltas so streaming does not fsync per token; any
+    // other event (including the block stop that follows deltas) commits them.
+    run.buffered.push(event)
+    const delta = event.type === 'stream_event' && (event as Record<string, any>).event?.type === 'content_block_delta'
+    const wait = 250 - (Date.now() - run.committedAt)
+    if (delta && wait > 0) {
+      run.timer ??= setTimeout(() => {
+        run.timer = undefined
+        void commitObserved(run, context).catch(error => { run.controller.abort(error); run.stream?.cancel() })
+      }, wait)
+      return
+    }
+    await commitObserved(run, context)
+  }
+
+  async function commitObserved(run: ActiveRun, context: PublicationContext): Promise<void> {
+    if (run.timer) { clearTimeout(run.timer); run.timer = undefined }
+    const batch = run.buffered
+    if (!batch.length) return
+    run.buffered = []; run.committedAt = Date.now()
     // Large native events retain the existing fragment protocol. Persist the
     // complete publication (including stable fragment IDs) before any delivery.
-    const json = JSON.stringify(event), events: Event[] = []
-    if (Buffer.byteLength(json) <= 48_000) events.push({ type: 'claude', id: run.id, event })
-    else {
-      const eventId = randomUUID(), total = Math.ceil(json.length / 8000)
-      for (let index = 0; index < total; index++) events.push({ type: 'claude.fragment', id: run.id, eventId, index, total, json: json.slice(index * 8000, (index + 1) * 8000) })
+    const events: Event[] = []
+    for (const event of batch) {
+      const json = JSON.stringify(event)
+      if (Buffer.byteLength(json) <= 48_000) events.push({ type: 'claude', id: run.id, event })
+      else {
+        const eventId = randomUUID(), total = Math.ceil(json.length / 8000)
+        for (let index = 0; index < total; index++) events.push({ type: 'claude.fragment', id: run.id, eventId, index, total, json: json.slice(index * 8000, (index + 1) * 8000) })
+      }
     }
     await store.commit(state => {
-      if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
-        if (event.session_id !== state.conversationId) throw new Error('Claude conversation identity changed')
-      }
-      if (event.type === 'user' && typeof event.uuid === 'string') {
-        const m = state.messages.find(m => m.runId === run.id && m.nativeId === event.uuid)
-        if (m && m.status === 'delivering') m.status = 'running'
-      }
-      if (event.type === 'result') {
-        for (const m of state.messages) if (m.runId === run.id && m.status === 'running') {
-          m.status = event.is_error ? 'failed' : 'completed'; delete m.settings
+      for (const event of batch) {
+        if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
+          if (event.session_id !== state.conversationId) throw new Error('Claude conversation identity changed')
         }
-        if (!run.stream!.accepting && state.run?.status === 'running') state.run.status = 'finishing'
+        if (event.type === 'user' && typeof event.uuid === 'string') {
+          const m = state.messages.find(m => m.runId === run.id && m.nativeId === event.uuid)
+          if (m && m.status === 'delivering') m.status = 'running'
+          // Claude has recorded input in its transcript, so later runs must resume it.
+          if (m) state.nativeStarted = true
+        }
+        if (event.type === 'result') {
+          for (const m of state.messages) if (m.runId === run.id && m.status === 'running') {
+            m.status = event.is_error ? 'failed' : 'completed'; delete m.settings
+          }
+          if (!run.stream!.accepting && state.run?.status === 'running') state.run.status = 'finishing'
+        }
+        observeClaude(state, event)
       }
-      observeClaude(state, event)
     }, events)
     await flush(context)
   }
 
-  async function deliver(run: ActiveRun, id: string, context: PublicationContext): Promise<void> {
+  /** Returns false when the run closed before the input was written; the input is then retained for a later run. */
+  async function deliver(run: ActiveRun, id: string, context: PublicationContext): Promise<boolean> {
     const stream = await run.ready
-    const m = store.state.messages.find(m => m.id === id)!
-    if (m.status !== 'accepted') return
+    const m = store.snapshot.messages.find(m => m.id === id)!
+    if (m.status !== 'accepted') return true
     let attempted = false
     await store.commit(state => {
       const message = state.messages.find(m => m.id === id)!
       if (message.status !== 'accepted') return
       attempted = true
       message.status = 'delivering'; delete message.settings
-      state.nativeStarted = true
     })
-    if (!attempted) return
+    if (!attempted) return true
     try { await stream.send(m.nativeId, m.text) }
     catch (error) {
-      run.controller.abort(error); stream.cancel()
-      throw error
+      if (!(error instanceof ClaudeStreamClosed) || run.controller.signal.aborted) {
+        run.controller.abort(error); stream.cancel()
+        throw error
+      }
+      // Nothing was written: detach the input from the finishing run so it stays deliverable.
+      const runId = randomUUID()
+      await store.commit(state => {
+        const message = state.messages.find(m => m.id === id)!
+        message.status = 'accepted'; message.runId = runId
+        message.settings = structuredClone(run.settings)
+        if (state.run?.id === run.id) state.run.inputIds = state.run.inputIds.filter(input => input !== id)
+        const entry = state.entries.find(e => e.id === id && e.role === 'user')
+        if (entry) entry.runId = runId
+      })
+      await flush(context)
+      return false
     }
     await flush(context)
+    return true
   }
 
   function start(context: SessionActivationContext<Command, Event, View>): void {
     if (active || context.activity.active) return
-    const first = store.state.messages.find(m => m.status === 'accepted')
+    const first = store.snapshot.messages.find(m => m.status === 'accepted')
     if (!first) return
     let resolve!: ActiveRun['resolve'], reject!: ActiveRun['reject']
     const ready = new Promise<ClaudeStream>((yes, no) => { resolve = yes; reject = no })
     void ready.catch(() => undefined)
-    const run: ActiveRun = { id: first.runId, settings: structuredClone(first.settings ?? appSettings), controller: new AbortController(), ready, resolve, reject }
+    const run: ActiveRun = { id: first.runId, settings: structuredClone(first.settings ?? appSettings), controller: new AbortController(), ready, resolve, reject, buffered: [], committedAt: 0 }
     active = run
     context.activity.start(async activity => {
       let outcome: 'completed' | 'failed' | 'cancelled' | 'interrupted' = 'completed'
       let errorCode: string | undefined
       try {
         run.controller.signal.throwIfAborted()
-        const before = store.state
+        const before = store.snapshot
         // Record the first attempted delivery before constructing a process.
         await store.commit(state => {
           const m = state.messages.find(m => m.id === first.id)!
           m.status = 'delivering'; delete m.settings
-          state.nativeStarted = true
           state.run = { id: run.id, inputIds: state.messages.filter(m => m.runId === run.id && (pending(m) || m.status === 'accepted')).map(m => m.id), status: 'running' }
           state.runSettings = run.settings
         })
@@ -185,17 +239,18 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
         run.resolve(run.stream)
         await run.stream.send(first.nativeId, first.text)
         // Only never-attempted input is eligible for recovery delivery.
-        for (const m of store.state.messages.filter(m => m.runId === run.id && m.status === 'accepted')) await deliver(run, m.id, activity)
+        for (const m of store.snapshot.messages.filter(m => m.runId === run.id && m.status === 'accepted')) await deliver(run, m.id, activity)
         await run.stream.done
       } catch (error) {
         run.reject(error)
         run.stream?.cancel()
         await run.stream?.done.catch(() => undefined)
-        outcome = run.cancelRequested || store.state.run?.status === 'cancelling' ? 'cancelled'
+        outcome = run.cancelRequested || store.snapshot.run?.status === 'cancelling' ? 'cancelled'
           : activity.signal.aborted || resources.signal.aborted || run.controller.signal.aborted ? 'interrupted' : 'failed'
         errorCode = error instanceof Error && error.message === 'native_resume_unavailable' ? 'native_resume_unavailable'
           : error instanceof ClaudeAuthenticationRequired ? 'authentication_required' : outcome === 'interrupted' ? 'native_outcome_unknown' : 'native_execution_failed'
       } finally {
+        if (run.timer) { clearTimeout(run.timer); run.timer = undefined }
         const events: Event[] = errorCode === 'authentication_required' ? [{ type: 'auth.required', id: first.id }] : []
         await store.commit(state => {
           if (state.run?.id === run.id) {
@@ -235,10 +290,10 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       await initialize(context.session.id)
       const command = context.message.payload
       if (command.type === 'sync') { await flush(context); return }
-      if (command.type === 'snapshot') { await flush(context); context.reply({ type: 'session.state', state: claudeView(store.state) }); return }
+      if (command.type === 'snapshot') { await flush(context); context.reply({ type: 'session.state', state: claudeView(store.snapshot) }); return }
       if (command.type === 'reset' || command.type === 'cancel') {
         const key = JSON.stringify([command.type, command.type === 'cancel' ? command.id ?? null : null])
-        const previous = store.state.controls.find(r => r.id === context.message.id)
+        const previous = store.snapshot.controls.find(r => r.id === context.message.id)
         if (previous) {
           if (previous.fingerprint !== key) { await fail(context, 'message_id_conflict'); return }
           if (previous.runId && active?.id === previous.runId) {
@@ -246,26 +301,33 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
           }
           await flush(context); context.reply(previous.reply); return
         }
-        if (store.state.controls.length >= 1000) { await fail(context, 'control_capacity'); return }
         if (command.type === 'reset') {
           if (active || context.activity.active) { await fail(context, 'run_busy'); return }
           const conversationId = randomUUID()
           const reply: Reply = { type: 'session.reset', conversationId }
           await store.commit(state => {
             state.conversationId = conversationId; state.nativeStarted = false; state.run = null
-            state.controls.push({ id: context.message.id, fingerprint: key, reply })
+            // Observed history stays visible, but never-delivered input from the old conversation must not run in the new one.
+            for (const m of state.messages) if (m.status === 'accepted') { m.status = 'cancelled'; m.reason = 'session_reset'; delete m.settings }
+            pushControl(state, { id: context.message.id, fingerprint: key, reply })
           })
           await flush(context); context.reply(reply); return
         }
-        if (command.id && !store.state.messages.some(m => m.id === command.id)) { await fail(context, 'message_not_found'); return }
-        const selected = command.id ? store.state.messages.find(m => m.id === command.id) : undefined
+        if (command.id && !store.snapshot.messages.some(m => m.id === command.id)) { await fail(context, 'message_not_found'); return }
+        const selected = command.id ? store.snapshot.messages.find(m => m.id === command.id) : undefined
         const target = active
         const requested = !!target && (!selected || selected.runId === target.id && (pending(selected) || selected.status === 'accepted'))
-        const reply: Reply = { type: 'cancel.accepted', requested }
+        // Input whose run has not started is cancelled directly rather than left to execute later.
+        const dormant = !requested && selected?.status === 'accepted'
+        const reply: Reply = { type: 'cancel.accepted', requested: requested || dormant }
         if (requested) target!.cancelRequested = true
         await store.commit(state => {
           if (requested && state.run?.id === target!.id) state.run.status = 'cancelling'
-          state.controls.push({ id: context.message.id, fingerprint: key, reply, ...(requested ? { runId: target!.id } : {}) })
+          if (dormant) {
+            const m = state.messages.find(m => m.id === selected!.id)!
+            m.status = 'cancelled'; m.reason = 'cancelled_before_start'; delete m.settings
+          }
+          pushControl(state, { id: context.message.id, fingerprint: key, reply, ...(requested ? { runId: target!.id } : {}) })
         })
         if (requested) { target!.controller.abort(); target!.stream?.cancel() }
         await flush(context); context.reply(reply); return
@@ -278,15 +340,16 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       }
       const overrides = command.settings === undefined ? {} : validateClaudeSessionSettings(command.settings)
       const hash = fingerprint(command.text, overrides)
-      const existing = store.state.messages.find(m => m.id === command.id)
+      const existing = store.snapshot.messages.find(m => m.id === command.id)
       if (existing) {
         if (existing.fingerprint !== hash) { await fail(context, 'message_id_conflict'); return }
         await flush(context)
         if (existing.status === 'accepted') {
-          if (active) await deliver(active, existing.id, context)
-          else start(context)
+          if (active && active.id === existing.runId) {
+            if (!await deliver(active, existing.id, context)) { await fail(context, 'run_finishing'); return }
+          } else if (!active) start(context)
         }
-        replyInput(context, store.state.messages.find(m => m.id === existing.id)!); return
+        replyInput(context, store.snapshot.messages.find(m => m.id === existing.id)!); return
       }
       if (active && ((active.stream && !active.stream.accepting) || active.controller.signal.aborted) || !active && context.activity.active) {
         await fail(context, 'run_finishing'); return
@@ -294,10 +357,12 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       const target = active
       const settings = target ? structuredClone({ ...target.settings, ...overrides }) : structuredClone({ ...appSettings, ...overrides })
       if (target && !isDeepStrictEqual(settings, target.settings)) { await fail(context, 'active_settings_conflict'); return }
-      if (store.state.messages.length >= 1000) { await fail(context, 'session_full'); return }
-      if (active && store.state.messages.filter(m => m.runId === active!.id).length >= 32) { await fail(context, 'run_input_capacity'); return }
+      if (store.snapshot.messages.length >= 1000 && !store.snapshot.messages.some(terminal)) { await fail(context, 'session_full'); return }
+      if (active && store.snapshot.messages.filter(m => m.runId === active!.id).length >= 32) { await fail(context, 'run_input_capacity'); return }
       const runId = target?.id ?? randomUUID()
       await store.commit(state => {
+        // Retained identities are bounded: evict the oldest finished input to make room.
+        if (state.messages.length >= 1000) state.messages.splice(state.messages.findIndex(terminal), 1)
         state.messages.push({ id: command.id, text: command.text, nativeId: randomUUID(), runId,
           status: 'accepted', settings, fingerprint: hash })
         if (state.run?.id === runId) state.run.inputIds.push(command.id)
@@ -307,9 +372,9 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
         if (state.entries.length > 256) { state.entries.shift(); state.truncated = true }
       })
       await flush(context)
-      if (target) await deliver(target, command.id, context)
+      if (target) { if (!await deliver(target, command.id, context)) { await fail(context, 'run_finishing'); return } }
       else start(context)
-      replyInput(context, store.state.messages.find(m => m.id === command.id)!)
+      replyInput(context, store.snapshot.messages.find(m => m.id === command.id)!)
     },
     async onRecover(context) { await initialize(context.session.id); await flush(context); start(context) },
   }
