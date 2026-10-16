@@ -21,6 +21,8 @@ export interface CodexState {
   cursor: number;
   messages: CodexWorkMessage[];
   queue: string[];
+  /** IDs of pruned finished tasks, kept so a late redelivery is not executed again. */
+  retired?: { id: string; fingerprint: string }[];
 }
 const schema = `
 CREATE TABLE IF NOT EXISTS cantelop_codex_sessions (
@@ -124,7 +126,8 @@ export class CodexStateStore {
         !Number.isSafeInteger(state.cursor) ||
         state.cursor < 0 ||
         !Array.isArray(state.messages) ||
-        !Array.isArray(state.queue)
+        !Array.isArray(state.queue) ||
+        (state.retired !== undefined && !Array.isArray(state.retired))
       )
         throw new Error("Invalid Codex Session state");
       return state;

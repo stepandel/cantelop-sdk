@@ -161,6 +161,9 @@ export class NativeCodex implements SessionHarness<CodexMessage, CodexEvent> {
         settings = { ...settings, model };
       }
       const id = this.options.conversation?.id ?? conversation.id;
+      // Like the model, resume would otherwise keep a previous task's instructions.
+      if (id && settings.developerInstructions === undefined)
+        settings = { ...settings, developerInstructions: "" };
       const thread = id
         ? await client.resumeThread(id, settings)
         : await client.startThread(settings);

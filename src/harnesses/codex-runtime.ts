@@ -45,6 +45,34 @@ export interface CodexRuntimeOptions
   /** Renewed while a native turn is running. */
   readonly activityTimeoutMs?: number;
 }
+const MAX_MESSAGES = 1000;
+const MAX_RETIRED = 1000;
+const TERMINAL: readonly Status[] = ["completed", "failed", "cancelled", "steered", "interrupted"];
+/** Make room by dropping the oldest finished tasks; their IDs still deduplicate redelivery. */
+function retireFinished(state: CodexState) {
+  while (state.messages.length >= MAX_MESSAGES) {
+    const index = state.messages.findIndex(
+      (message) => TERMINAL.includes(message.status) && !message.outcome,
+    );
+    if (index < 0) return;
+    const [{ id, fingerprint }] = state.messages.splice(index, 1) as [CodexWorkMessage];
+    (state.retired ??= []).push({ id, fingerprint });
+    if (state.retired.length > MAX_RETIRED) state.retired.shift();
+  }
+}
+const UNOWNED_FEATURES = ["multi_agent", "multi_agent_v2", "goals"] as const;
+/** Disable unowned features in both dotted and nested form, whichever the native merge applies last. */
+function withoutUnownedFeatures(config: Readonly<Record<string, unknown>> = {}) {
+  const result: Record<string, unknown> = { ...config };
+  const features = result.features;
+  if (features && typeof features === "object" && !Array.isArray(features))
+    result.features = {
+      ...features,
+      ...Object.fromEntries(UNOWNED_FEATURES.map((name) => [name, false])),
+    };
+  for (const name of UNOWNED_FEATURES) result[`features.${name}`] = false;
+  return result;
+}
 const messageStatus = (message: CodexWorkMessage): Update => ({
   type: "message.status",
   id: message.id,
@@ -213,12 +241,7 @@ export function createCodexRuntime(
               ...defaults,
               ...message.settings,
               // Native goals and child agents have no independent durable wake/ownership contract here.
-              config: {
-                ...defaults.config,
-                "features.multi_agent": false,
-                "features.multi_agent_v2": false,
-                "features.goals": false,
-              },
+              config: withoutUnownedFeatures(defaults.config),
               ...(store!.state.threadId === undefined
                 ? {}
                 : { conversation: { id: store!.state.threadId } }),
@@ -442,9 +465,9 @@ export function createCodexRuntime(
             }),
           )
           .digest("hex");
-        const existing = store!.state.messages.find(
-          (message) => message.id === command.id,
-        );
+        const existing =
+          store!.state.messages.find((message) => message.id === command.id) ??
+          store!.state.retired?.find((message) => message.id === command.id);
         if (existing) {
           if (existing.fingerprint !== fingerprint)
             throw new Error("Codex message ID conflict");
@@ -454,7 +477,8 @@ export function createCodexRuntime(
         }
         const steered = command.type === "steer" ? active : undefined;
         const events = await store!.update((state) => {
-          if (state.messages.length >= 1000)
+          retireFinished(state);
+          if (state.messages.length >= MAX_MESSAGES)
             throw new Error("Codex Session full");
           const message: CodexWorkMessage = {
             id: command.id,

@@ -38,7 +38,8 @@ export class CodexStorageError extends Error {
 
 export interface CodexWorkspaceStorage {
   /** Handles the native build's server-initiated database requests. Never replays writes. */
-  handle(params: unknown): Promise<unknown>;
+  /** An aborted `signal` means the caller can no longer receive the reply; a late `begin` is rolled back. */
+  handle(params: unknown, options?: { readonly signal?: AbortSignal }): Promise<unknown>;
   /** Drains admitted operations and rolls back open transactions; does not close the borrowed DB. */
   close(): Promise<void>;
 }
@@ -98,7 +99,7 @@ export function createCodexWorkspaceStorage(database: WorkspaceDatabase): CodexW
     });
   }
 
-  async function dispatch(input: unknown): Promise<unknown> {
+  async function dispatch(input: unknown, signal?: AbortSignal): Promise<unknown> {
     const params = record(input);
     const operation = string(params.operation);
     if (operation === "begin") {
@@ -109,6 +110,8 @@ export function createCodexWorkspaceStorage(database: WorkspaceDatabase): CodexW
       let transaction: Transaction;
       try { transaction = await beginCodexTransaction(database, mode); } finally { reservations--; }
       if (closed) { await rollback(transaction); throw new CodexStorageError("storage_closed"); }
+      // Nobody can learn this ID, so it would hold the write lock until the idle rollback.
+      if (signal?.aborted) { await rollback(transaction); throw new CodexStorageError("database_operation_failed"); }
       const id = randomUUID();
       const entry: OpenTransaction = { transaction, tail: Promise.resolve(), timer: undefined, finishing: false };
       transactions.set(id, entry);
@@ -150,9 +153,9 @@ export function createCodexWorkspaceStorage(database: WorkspaceDatabase): CodexW
   }
 
   return {
-    handle(params) {
+    handle(params, options = {}) {
       if (closed) return Promise.reject(new CodexStorageError("storage_closed"));
-      const operation = dispatch(params).catch(error => {
+      const operation = dispatch(params, options.signal).catch(error => {
         // Native error replies must never expose SQL arguments or database credentials.
         if (error instanceof CodexStorageError) throw error;
         throw new CodexStorageError("database_operation_failed");
@@ -227,11 +230,12 @@ function decodeValue(value: unknown): null | bigint | number | string | Uint8Arr
     default: return invalid();
   }
 }
-function encodeValue(value: unknown): CodexDatabaseValue {
+function encodeValue(value: unknown, real = false): CodexDatabaseValue {
   if (value === null) return { type: "null" };
   if (typeof value === "bigint") return { type: "integer", value: value.toString() };
   if (typeof value === "number" && Number.isFinite(value)) {
-    if (Number.isInteger(value)) {
+    // A REAL column keeps its type when the stored value is integral (1.0 reads back as 1).
+    if (Number.isInteger(value) && !real) {
       if (!Number.isSafeInteger(value)) throw new CodexStorageError("database_operation_failed");
       return { type: "integer", value: value.toString() };
     }
@@ -242,11 +246,16 @@ function encodeValue(value: unknown): CodexDatabaseValue {
   if (value instanceof Uint8Array) return { type: "blob", base64: Buffer.from(value).toString("base64") };
   throw new CodexStorageError("database_operation_failed");
 }
+/** SQLite type affinity rules for declared REAL columns (excluding INT, which takes precedence). */
+function realAffinity(declared: string | undefined): boolean {
+  const type = declared?.toUpperCase() ?? "";
+  return !type.includes("INT") && !/CHAR|CLOB|TEXT|BLOB/.test(type) && /REAL|FLOA|DOUB/.test(type);
+}
 function encodeResult(result: ResultSet): CodexDatabaseResult {
   return {
     columns: result.columns,
     columnTypes: result.columnTypes,
-    rows: result.rows.map(row => result.columns.map((_, index) => encodeValue(row[index]))),
+    rows: result.rows.map(row => result.columns.map((_, index) => encodeValue(row[index], realAffinity(result.columnTypes[index])))),
     rowsAffected: result.rowsAffected,
     lastInsertRowid: result.lastInsertRowid?.toString() ?? null,
   };
@@ -267,6 +276,8 @@ export async function startCodexWorkspaceStorage(database: WorkspaceDatabase): P
     if (request.method !== "POST" || request.url !== "/storage" || auth.length !== expected.length || !timingSafeEqual(auth, expected)) {
       response.writeHead(403); response.end(); request.resume(); return;
     }
+    const abandoned = new AbortController();
+    response.once("close", () => { if (!response.writableFinished) abandoned.abort(); });
     let size = 0;
     const chunks: Buffer[] = [];
     try {
@@ -275,7 +286,7 @@ export async function startCodexWorkspaceStorage(database: WorkspaceDatabase): P
         if (size > 16 * 1024 * 1024) { response.writeHead(413); response.end(); request.destroy(); return; }
         chunks.push(bytes);
       }
-      const result = await storage.handle(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      const result = await storage.handle(JSON.parse(Buffer.concat(chunks).toString("utf8")), { signal: abandoned.signal });
       const body = JSON.stringify(result);
       if (Buffer.byteLength(body) > 16 * 1024 * 1024) throw new CodexStorageError("database_operation_failed");
       response.writeHead(200, { "content-type": "application/json" }); response.end(body);

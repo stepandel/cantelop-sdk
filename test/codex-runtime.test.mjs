@@ -948,3 +948,79 @@ test("real runtime commits views, keeps work owned, and serves cold view reads",
   assert.equal(parked.state.cursor, (await state()).cursor);
   assert.equal(activations, 1, "View reads must not activate a Sandbox");
 });
+
+test("nested App feature config cannot re-enable unowned goals or agents", async (t) => {
+  const { db } = await database(t),
+    native = fake();
+  const app = await runtime(t, db, native.create, {
+    config: { features: { goals: true, multi_agent: true, web_search: true } },
+  });
+  await app.send({ type: "queue", id: "nested", text: "Inspect" });
+  await until(() => native.runs.length === 1);
+  assert.deepEqual(native.runs[0].options.config, {
+    features: { goals: false, multi_agent: false, multi_agent_v2: false, web_search: true },
+    "features.multi_agent": false,
+    "features.multi_agent_v2": false,
+    "features.goals": false,
+  });
+  native.runs[0].resolve();
+});
+
+test("finished tasks are retired so a long-lived Session keeps accepting work", async (t) => {
+  const { db } = await database(t),
+    native = fake();
+  const messages = Array.from({ length: 1000 }, (_, index) => ({
+    id: `old-${index}`, text: "Done", fingerprint: "f", status: "completed",
+  }));
+  const seeded = await CodexStateStore.open(db, "session-a");
+  await seeded.update((state) => { state.messages = messages; return []; });
+  const app = await runtime(t, db, native.create);
+  await app.send({ type: "queue", id: "next", text: "Continue" });
+  await until(() => native.runs.length === 1);
+  const snapshot = await app.snapshot();
+  assert.equal(snapshot.messages.at(-1).id, "next");
+  // A late redelivery of a retired task is still deduplicated.
+  await assert.rejects(app.send({ type: "queue", id: "old-0", text: "Different" }), /conflict/);
+  native.runs[0].resolve();
+});
+
+test("a resumed task without a system prompt clears the previous task's instructions", async (t) => {
+  const { db, root } = await database(t);
+  const executable = {
+    command: process.execPath,
+    args: [new URL("./fixtures/codex-app-server.mjs", import.meta.url).pathname],
+  };
+  const threads = [];
+  const connect = async (options) => {
+    const client = await createCodex({ ...options, executable, database: db });
+    const request = client.request.bind(client);
+    client.request = (method, params, ...rest) => {
+      if (method === "thread/start" || method === "thread/resume")
+        threads.push({ method, developerInstructions: params.developerInstructions });
+      return request(method, params, ...rest);
+    };
+    return client;
+  };
+  const work = {
+    signal: new AbortController().signal,
+    output: { send: async () => {} },
+    view: { commit: async () => {} },
+    send() {},
+    message: { id: "m", sequence: 1 },
+    session: { id: "native" },
+    env: {},
+    database: async () => db,
+  };
+  for (const systemPrompt of ["private rules", undefined]) {
+    const native = new NativeCodex(
+      { workspace: root, sessionId: "native", ...(systemPrompt ? { systemPrompt } : {}) },
+      undefined,
+      connect,
+    );
+    await native.queue({ type: "prompt", prompt: "work" }, work);
+  }
+  assert.deepEqual(threads, [
+    { method: "thread/start", developerInstructions: "private rules" },
+    { method: "thread/resume", developerInstructions: "" },
+  ]);
+});

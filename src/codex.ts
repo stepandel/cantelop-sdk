@@ -262,9 +262,10 @@ export class CodexClient {
   private async respond(request: CodexServerRequest) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onExit: (() => void) | undefined;
+    const abandoned = new AbortController();
     try {
       const response = request.method === CODEX_WORKSPACE_STORAGE_METHOD
-        ? this.bridge.storage.handle(request.params)
+        ? this.bridge.storage.handle(request.params, { signal: abandoned.signal })
         : this.options.onRequest ? this.options.onRequest(request) : Promise.reject(new CodexError("unhandled_server_request"));
       const storage = request.method === CODEX_WORKSPACE_STORAGE_METHOD;
       const result = await Promise.race([
@@ -282,6 +283,8 @@ export class CodexClient {
       ]);
       await this.write({ id: request.id, result: result ?? null });
     } catch (error) {
+      // A timed-out or orphaned storage reply must not leave a late transaction open.
+      abandoned.abort();
       await this.write({ id: request.id, error: { code: -32000, message: error instanceof CodexStorageError ? error.message : "Codex server request rejected" } });
     } finally {
       clearTimeout(timer);
@@ -310,8 +313,8 @@ export class CodexClient {
     try {
       if (process.platform === "win32") this.child.kill(signal);
       else process.kill(-this.child.pid, signal);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    } catch {
+      // Runs from timers and failure paths; an unreapable child (ESRCH, EPERM) must not crash the host.
     }
   }
 }

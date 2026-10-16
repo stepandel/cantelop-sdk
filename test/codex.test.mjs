@@ -219,3 +219,25 @@ test("isolated children receive no host credentials and close reaps tool descend
   }
   assert.fail("A native tool process survived close");
 });
+
+test("database bridge keeps REAL type for integral values", async t => {
+  const db = database(); t.after(() => db.close());
+  const storage = createCodexWorkspaceStorage(db); t.after(() => storage.close());
+  await storage.handle({ operation: "execute", statement: { sql: "CREATE TABLE measures (amount REAL, count INTEGER)" } });
+  await storage.handle({ operation: "execute", statement: { sql: "INSERT INTO measures VALUES (2.0, 3)" } });
+  const result = await storage.handle({ operation: "execute", statement: { sql: "SELECT amount, count FROM measures" } });
+  assert.deepEqual(result.rows[0], [{ type: "float", value: 2 }, { type: "integer", value: "3" }]);
+});
+
+test("a begin whose caller gave up is rolled back instead of holding the write lock", async t => {
+  const db = database(); t.after(() => db.close());
+  const storage = createCodexWorkspaceStorage(db); t.after(() => storage.close());
+  await storage.handle({ operation: "execute", statement: { sql: "CREATE TABLE sample (value TEXT)" } });
+  const abandoned = new AbortController();
+  const begin = storage.handle({ operation: "begin" }, { signal: abandoned.signal });
+  abandoned.abort();
+  await assert.rejects(begin, /database_operation_failed/);
+  // Without the rollback this write would wait on the orphaned transaction until it timed out.
+  await storage.handle({ operation: "execute", statement: { sql: "INSERT INTO sample VALUES ('written')" } });
+  assert.deepEqual((await db.execute("SELECT value FROM sample")).rows.map(r => r.value), ["written"]);
+});
