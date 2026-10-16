@@ -7,6 +7,7 @@ import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
 import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
 import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
+import { MAX_SYNC_FILE_BYTES, SYNC_PUBLIC_ROUTE, validSyncRequest } from "./sync.js";
 
 const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/auth\/workspaces\/(wsp_[0-9a-f]{32})\/terminals\/(trm_[0-9a-f]{32})$/;
 /** Only the WebSocket handshake crosses to the Sandbox; cookies and caller credentials never do. */
@@ -158,6 +159,26 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
   return Object.freeze({
     async fetch(request: Request, bindings: Readonly<Record<string, unknown>> = {}): Promise<Response> {
       const path = new URL(request.url).pathname;
+      const sync = SYNC_PUBLIC_ROUTE.exec(path);
+      if (sync) {
+        try {
+          await authenticate(request, bindings);
+          const incoming = new URL(request.url);
+          if (!validSyncRequest(request.method, incoming.searchParams)) throw new EdgeFailure("invalid_sync_request", 400);
+          const headers = new Headers({ "Content-Type": "application/octet-stream" });
+          const length = request.headers.get("Content-Length");
+          if (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_SYNC_FILE_BYTES)) throw new EdgeFailure("sync_file_too_large", 413);
+          // No caller credentials, custom routing headers, or user-controlled private path cross this boundary.
+          const target = new URL(`/__cantelop/integration/v2/workspaces/${sync[1]}/sync`, origin);
+          target.search = incoming.search;
+          const body = request.body === null ? undefined : boundedSyncBody(request.body);
+          return await runtimeFetch(new Request(target, { method: request.method, headers, signal: request.signal,
+            redirect: "manual", ...(body === undefined ? {} : { body, duplex: "half" } as RequestInit) }));
+        } catch (error) {
+          if (request.signal.aborted) throw request.signal.reason;
+          return error instanceof EdgeFailure ? failure(error.code, error.status) : failure("sync_unavailable", 503);
+        }
+      }
       const terminal = AUTH_TERMINAL_ROUTE.exec(path);
       if (terminal) {
         if (!options.auth) return failure("not_found", 404);
@@ -200,6 +221,17 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
       return commands(request, bindings);
     },
   });
+}
+
+function boundedSyncBody(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  let bytes = 0;
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      bytes += chunk.byteLength;
+      if (bytes > MAX_SYNC_FILE_BYTES) throw new EdgeFailure("sync_file_too_large", 413);
+      controller.enqueue(chunk);
+    },
+  }));
 }
 /** Snapshot declared values only; deployment secrets use the same access as ordinary variables. */
 function requestEnvironment(declarations: Readonly<Record<string, AppEnvironmentDeclaration>>, bindings: Readonly<Record<string, unknown>>): Readonly<Record<string, string | undefined>> {

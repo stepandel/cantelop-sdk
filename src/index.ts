@@ -15,6 +15,8 @@ export type {
 export type { AppAuth, NativeCodeLogin, AuthCommand, AuthContext, AuthResult, AuthTerminalProcess } from "./native-auth.js";
 export { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";
 export { AppConfigurationError } from "./app-config.js";
+export type { WorkspaceSync, WorkspaceSyncOptions, WorkspaceSyncStatus, SyncConflict } from "./sync.js";
+export { WorkspaceSyncError } from "./sync.js";
 
 export type { SessionRuntime } from "./session-runtime-contract.js";
 
