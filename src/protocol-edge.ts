@@ -161,6 +161,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
       const path = new URL(request.url).pathname;
       const sync = SYNC_PUBLIC_ROUTE.exec(path);
       if (sync) {
+        const limit = { exceeded: false };
         try {
           await authenticate(request, bindings);
           const incoming = new URL(request.url);
@@ -171,11 +172,13 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           // No caller credentials, custom routing headers, or user-controlled private path cross this boundary.
           const target = new URL(`/__cantelop/integration/v2/workspaces/${sync[1]}/sync`, origin);
           target.search = incoming.search;
-          const body = request.body === null ? undefined : boundedSyncBody(request.body);
+          const body = request.body === null ? undefined : boundedSyncBody(request.body, limit);
           return await runtimeFetch(new Request(target, { method: request.method, headers, signal: request.signal,
             redirect: "manual", ...(body === undefined ? {} : { body, duplex: "half" } as RequestInit) }));
         } catch (error) {
           if (request.signal.aborted) throw request.signal.reason;
+          // A body-stream EdgeFailure reaches here wrapped in the fetch rejection.
+          if (limit.exceeded) return failure("sync_file_too_large", 413);
           return error instanceof EdgeFailure ? failure(error.code, error.status) : failure("sync_unavailable", 503);
         }
       }
@@ -223,12 +226,12 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
   });
 }
 
-function boundedSyncBody(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+function boundedSyncBody(body: ReadableStream<Uint8Array>, limit: { exceeded: boolean }): ReadableStream<Uint8Array> {
   let bytes = 0;
   return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       bytes += chunk.byteLength;
-      if (bytes > MAX_SYNC_FILE_BYTES) throw new EdgeFailure("sync_file_too_large", 413);
+      if (bytes > MAX_SYNC_FILE_BYTES) { limit.exceeded = true; throw new EdgeFailure("sync_file_too_large", 413); }
       controller.enqueue(chunk);
     },
   }));
