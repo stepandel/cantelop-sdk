@@ -8,6 +8,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { createCodex, createCodexWorkspaceStorage, CodexError } from "../dist/codex.js";
 import { startCodexWorkspaceStorage } from "../dist/codex-storage.js";
+import { build } from "esbuild";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 function database() {
   // Local SQLite is test infrastructure only; production uses the WorkspaceDatabase client.
@@ -142,9 +145,22 @@ test("abort interrupts native work even while the generator is suspended at a yi
   const controller = new AbortController();
   const events = thread.run("Work", { signal: controller.signal });
   await events.next(); controller.abort(new Error("cancelled"));
-  for (let i = 0; i < 100; i++) { if (await access(interrupted).then(() => true, () => false)) break; await delay(10); }
+  for (let i = 0; i < 100; i++) { if (await readFile(interrupted, "utf8").catch(() => "") === "turn-1") break; await delay(10); }
   assert.equal(await readFile(interrupted, "utf8"), "turn-1");
   await assert.rejects(events.next(), /cancelled/);
+});
+
+test("the hosted Codex module loads when bundled away from the SDK package files", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "cantelop-codex-bundle-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const output = join(directory, "runtime.mjs");
+  await build({
+    stdin: { contents: 'import {createCodexRuntime} from "./dist/harnesses/codex.js"; console.log(typeof createCodexRuntime);', resolveDir: process.cwd() },
+    bundle: true, platform: "node", format: "esm", outfile: output,
+    banner: { js: 'import {createRequire as nodeRequire} from "node:module"; const require = nodeRequire(import.meta.url);' },
+  });
+  const result = await promisify(execFile)(process.execPath, [output]);
+  assert.equal(result.stdout.trim(), "function");
 });
 
 test("native failure and transport loss do not masquerade as a successful turn", async t => {

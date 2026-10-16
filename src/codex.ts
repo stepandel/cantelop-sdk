@@ -3,7 +3,7 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
 import { setMaxListeners } from "node:events";
-import { createRequire } from "node:module";
+import packageMetadata from "../package.json" with { type: "json" };
 import { createSessionDatabase } from "./session-database.js";
 import type { WorkspaceDatabase } from "./database.js";
 import {
@@ -19,7 +19,7 @@ export type {
 } from "./codex-storage.js";
 
 const exec = promisify(execFile);
-const { version: SDK_VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
+const SDK_VERSION = packageMetadata.version;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_PENDING_REQUESTS = 128;
 const MAX_SERVER_REQUESTS = 128;
