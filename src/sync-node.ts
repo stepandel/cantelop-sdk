@@ -83,7 +83,7 @@ export async function startSync(options: WorkspaceSyncOptions, workspaceId: stri
   if (process.platform !== "linux" && process.platform !== "darwin") throw new WorkspaceSyncError("sync_platform_unsupported");
   options.signal?.throwIfAborted();
   const ignores = options.ignore ?? [];
-  if (!Array.isArray(ignores) || ignores.some(name => !validSyncPath(name))) throw new TypeError("Sync ignores must be relative paths or prefixes");
+  if (!Array.isArray(ignores) || ignores.some(name => !validSyncPath(name,true))) throw new TypeError("Sync ignores must be relative paths or prefixes");
   const excluded = (name: string) => !validSyncPath(name) || ignores.some(ignore => name === ignore || name.startsWith(ignore + "/"));
   const agent = await localAgent(options.localDirectory, workspaceId);
   const directory = agent.directory;

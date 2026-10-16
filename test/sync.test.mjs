@@ -42,7 +42,7 @@ async function fixture(t) {
   const connection={fetch(request){const headers=new Headers(request.headers);headers.set('Authorization','Bearer app-token');headers.set('X-Untrusted','not-forwarded');return worker.fetch(new Request(request,{headers}),{CANTELOP_INTEGRATION_TOKEN:'app-token'});}};
   const app=new CantelopClient().app({name:'sync-test',runtime:{receive(){}},connection});
   const workspace=app.workspace({id:workspaceId});
-  const start=async()=>{const handle=await workspace.sync({localDirectory:root,pollIntervalMs:60000});t.after(()=>handle.stop());return handle;};
+  const start=async(options={})=>{const handle=await workspace.sync({localDirectory:root,pollIntervalMs:60000,...options});t.after(()=>handle.stop());return handle;};
   const put=(name,data,executable=false)=>{data=Buffer.from(data);files.set(name,{...item(name,data,executable),data});};
   return {root,files,calls,start,put,setOnline:v=>online=v,setWrites:v=>writes=v,setCorrupt:v=>corrupt=v};
 }
@@ -79,7 +79,7 @@ test('offline changes reconcile after reconnect; a disabled write gate cannot re
 });
 test('reserved state, credentials and dependency directories never transfer',async t=>{
   const f=await fixture(t);for(const directory of ['node_modules','.git','.cantelop']){await mkdir(path.join(f.root,directory));await writeFile(path.join(f.root,directory,'secret'),'private');}
-  await writeFile(path.join(f.root,'.env'),'secret');await writeFile(path.join(f.root,'ok'),'ok');const sync=await f.start();await sync.ready();assert.deepEqual([...f.files.keys()],['ok']);
+  await writeFile(path.join(f.root,'.env'),'secret');await writeFile(path.join(f.root,'ok'),'ok');const sync=await f.start({ignore:['.git','node_modules','.env']});await sync.ready();assert.deepEqual([...f.files.keys()],['ok']);
 });
 test('local links fail closed and hostile remote paths cannot escape the local directory',async t=>{
   const f=await fixture(t);const outside=await mkdtemp(path.join(tmpdir(),'sync-outside-'));t.after(()=>rm(outside,{recursive:true,force:true}));await writeFile(path.join(outside,'secret'),'private');

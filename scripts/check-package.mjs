@@ -83,6 +83,7 @@ try {
     'assert.equal(typeof build.createCantelopCompilerPlugin, "function");',
     'const compiledClient = (await import(new URL(backend.mainModule, `file://${process.cwd()}/`))).cantelop;',
     'assert.equal(compiledClient.name, "first-agent");',
+    'assert.equal(typeof compiledClient.workspace({slug:"project"}).sync, "function");',
     'assert.throws(() => compiledClient.runtime.receive(), /Sandbox/);',
     'assert.equal(native.manifest.dockerfile, "node_modules/@cantelop/sdk/dist/harnesses/claude/Dockerfile");',
     'const { readFile } = await import("node:fs/promises");',
@@ -92,6 +93,7 @@ try {
   await writeFile(path.join(consumer, "integration.ts"), [
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type AppCommandEnvelope, type SessionEventCursor } from "@cantelop/sdk";',
     'const runtime = { receive() {} };',
+    'async function syncProject(workspace: import("@cantelop/sdk").WorkspaceRef<unknown>) { const sync: import("@cantelop/sdk").WorkspaceSync = await workspace.sync({localDirectory:".",ignore:["dist"]}); await sync.ready(); await sync.flush(); const status: import("@cantelop/sdk").WorkspaceSyncStatus = sync.status(); await sync.stop(); return status; }',
     'import { createClaudeHarness, createClaudeRuntime, claudeAuth, claudeDockerfile, NativeClaude, type ClaudeMessage, type ClaudeEvent, type ClaudeHarnessOptions, type ClaudeHarnessFactoryOptions } from "@cantelop/sdk/harnesses/claude";',
     'const claudeApp = new CantelopClient().app<ClaudeMessage, ClaudeEvent>({name:"claude-agent",runtime:{create:createClaudeHarness},auth:claudeAuth,dockerfile:claudeDockerfile});',
     'import { ClaudeSessionOutput, validateClaudeSessionConfig, type ClaudeSessionCommand, type ClaudeSessionEvent, type ClaudeSessionReply } from "@cantelop/sdk/harnesses/claude/protocol";',
