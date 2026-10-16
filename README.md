@@ -39,21 +39,22 @@ Add `src/cantelop.ts`:
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
 import {
-  createClaudeHarness, claudeAuth, claudeDockerfile,
-  type ClaudeMessage, type ClaudeEvent,
+  createClaudeRuntime, claudeAuth, claudeDockerfile,
+  type ClaudeSessionCommand, type ClaudeSessionEvent,
+  type ClaudeSessionReply, type ClaudeSessionView,
 } from "@cantelop/sdk/harnesses/claude";
 
 const cantelop = new CantelopClient();
 
-export const agent = cantelop.app<ClaudeMessage, ClaudeEvent>({
+export const agent = cantelop.app<ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply, ClaudeSessionView>({
   name: "hello",
-  runtime: { create: createClaudeHarness },
+  runtime: createClaudeRuntime(),
   auth: claudeAuth,
   dockerfile: claudeDockerfile,
 });
 ```
 
-That is the whole App. `createClaudeHarness` runs the stock Claude Code CLI in each Session's Sandbox and resumes the same conversation on every turn. `claudeAuth` lets each Workspace sign in with its user's own Claude subscription. `claudeDockerfile` is the SDK-maintained Sandbox image with the CLI installed. `name` is the App's deployment slug.
+That is the whole App. `createClaudeRuntime` runs the stock Claude Code CLI, delivers new input into ongoing work, and maintains a durable conversation view. When idle, new input resumes the saved native conversation if its checkpoint is available. `claudeAuth` lets each Workspace sign in with its user's own Claude subscription. `claudeDockerfile` is the SDK-maintained Sandbox image with the CLI installed. `name` is the App's deployment slug.
 
 ### 2. Run it locally
 
@@ -78,6 +79,7 @@ Save this backend script as `try.mjs`:
 ```js
 import { createInterface } from "node:readline/promises";
 import { agent } from "./.cantelop/client/client.mjs";
+import { applyClaudeSessionChange } from "@cantelop/sdk/harnesses/claude/protocol";
 
 const workspace = agent.workspace({ slug: "ada" });
 
@@ -93,10 +95,20 @@ if (!login.authenticated) {
 }
 
 const session = workspace.session();
-await session.dispatch({ type: "prompt", prompt: "Write hello.txt containing a haiku" });
-for await (const event of session.stream()) {
-  console.log(event.data); // Claude Code's stream-json events
-  if (event.data.type === "result") break;
+const id = crypto.randomUUID();
+const reply = await session.request({ type: "input", id, text: "Summarize the files in this directory" });
+if (reply.type === "error") throw new Error(reply.code);
+
+const snapshot = await session.view();
+let state = snapshot.state;
+console.log(state);
+const finished = () => state.inputs.some(input => input.id === id &&
+  ["completed", "failed", "cancelled", "interrupted"].includes(input.status));
+if (!finished()) for await (const event of session.stream({ after: snapshot.cursor })) {
+  if (event.data.type !== "session.changed") continue;
+  state = applyClaudeSessionChange(state, event.data);
+  console.log(state);
+  if (finished()) break;
 }
 ```
 
@@ -129,7 +141,7 @@ const workspace = agent.workspace({ slug: "customer-123" });
 // Or: agent.workspace({ id: canonicalWorkspaceId });
 const session = workspace.session({ id: "conversation-456" });
 
-const message = await session.dispatch({ type: "prompt", prompt: "Investigate this issue" });
+const message = await session.dispatch({ type: "input", id: "issue-123", text: "Investigate this issue" });
 const status = await message.status();
 ```
 
@@ -146,16 +158,16 @@ Acceptance means durable message admission, not agent completion. Runtimes that 
 ## Steer, cancel and stop
 
 ```ts
-await session.steer({ type: "prompt", prompt: "Focus on the authentication module" });
+await session.steer({ type: "steer", id: "focus-auth", text: "Focus on the authentication module" });
 await session.cancel(); // { state: "requested" | "idle" }
 await session.stop();   // release the Sandbox; the Session identity stays reusable
 ```
 
-Dispatch and steer accept the same message type and return an ID/status reference. Dispatch invokes the harness’s `queue` method; steer invokes its `steer` method. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default. The Claude harness queues dispatched prompts in order. A steer interrupts the active turn, waits for the CLI's process group to exit, then resumes the same conversation with the new prompt ahead of queued work.
+Dispatch and steer accept the same message type and return an ID/status reference. Both accept optional `{ id, keepAliveSeconds, signal }`. Keep-alive falls back from method options to the Session reference to the configured App default. The durable Claude runtime starts input while idle and steers ongoing work while busy. Factory runtimes delegate dispatch to the harness's `queue` method and steer to its `steer` method; those harnesses define their own input policy.
 
-`session.cancel({ id?, signal? })` takes no target message ID. It invokes the harness’s `cancel()` method, which selects and signals its active operation. `requested` acknowledges interruption, not completed cleanup; the harness keeps ownership of the operation until cleanup settles. Queued input is preserved; cancellation while idle does not affect later input. Retrying the same command ID reuses its result and cannot interrupt a subsequent run.
+`session.cancel({ id?, signal? })` takes no target message ID. It signals the active managed activity or delegates to a factory harness's `cancel()` method. `requested` acknowledges interruption, not completed cleanup; execution remains owned until cleanup settles. Cancellation while idle does not affect later input. Retrying the same platform command ID reuses its result and cannot interrupt a subsequent run.
 
-Submission IDs serve receipts, retries and output correlation. Message status describes intake, so a queued run can outlive its message's `handled` status.
+Submission IDs serve receipts, retries and output correlation. Message status describes intake, so active work can outlive its message's `handled` status.
 
 `stop()` releases the current Sandbox and closes streams, potentially interrupting work. The next message activates the same Session on a new Sandbox. Workspaces keep durable files and databases; Session memory, harness memory and temporary files belong to one Sandbox incarnation. Multiple Sessions may share a Workspace, so the application owns coordination of shared state.
 
@@ -204,7 +216,7 @@ export const agent = cantelop.app<ClaudeMessage, ClaudeEvent>({
 
 Options also cover `tools`, `settingSources`, `mcps` and a `conversation` seed. They are snapshotted when the factory runs; the SDK context supplies the canonical Session identity. Without options, the harness keeps the CLI's native configuration, with `CLAUDE_MODEL` and `CLAUDE_PATH` read from the App's declared environment.
 
-`createClaudeRuntime(options)` packages a durable Session lifecycle on top of the harness: App-declared defaults, a persistent queue, targeted cancellation, snapshots, recovery, `auth.required` events and per-task settings in queue/steer payloads. Its protocol types are in `@cantelop/sdk/harnesses/claude/protocol`. The [Claude Code example](examples/anthropic/README.md) covers both, plus custom images and `NativeClaude` for custom construction.
+`createClaudeRuntime(options)` provides native streaming input and durable observations. `{type:"input",id,text}` starts a run while idle and steers the same run while busy; `{type:"steer",...}` has the same native behavior. Accepted inputs, attempted delivery, native observations and outcomes are persisted before publication. `session.view()` returns the committed projection; `applyClaudeSessionChange` applies subsequent `session.changed` events idempotently. There is no follow-up queue. Settings can change between runs; incompatible changes during a run return `active_settings_conflict`. Its protocol types are in `@cantelop/sdk/harnesses/claude/protocol`. The [Claude Code example](examples/anthropic/README.md) covers both, plus custom images and `NativeClaude` for custom construction.
 
 ## Other runtimes
 
@@ -235,7 +247,7 @@ Runtimes that don't need a custom image can run locally without `--container`: p
 
 ## Durable Session views
 
-Hosted Cantelop does not store Session views yet, so deployed Apps can't commit or read them.
+The SDK commits projections through the platform's durable view service. Reading the last committed view does not activate a Sandbox.
 
 The runtime explicitly commits the application's read model:
 
