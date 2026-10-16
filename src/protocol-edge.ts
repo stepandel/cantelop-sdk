@@ -169,7 +169,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           const headers = new Headers({ "Content-Type": "application/octet-stream" });
           const length = request.headers.get("Content-Length");
           if (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_SYNC_FILE_BYTES)) throw new EdgeFailure("sync_file_too_large", 413);
-          // No caller credentials, custom routing headers, or user-controlled private path cross this boundary.
+          // No caller credentials or custom routing headers cross this boundary; the validated relative root is scoped by the platform to this Workspace.
           const target = new URL(`/__cantelop/integration/v2/workspaces/${sync[1]}/sync`, origin);
           target.search = incoming.search;
           const body = request.body === null ? undefined : boundedSyncBody(request.body, limit);

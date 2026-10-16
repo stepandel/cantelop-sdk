@@ -1,6 +1,6 @@
 {
   "name": "@cantelop/sdk",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
@@ -65,7 +65,8 @@
     "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
     "check:package": "pnpm build && node scripts/check-package.mjs",
     "prepack": "pnpm build",
-    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs"
+    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",
