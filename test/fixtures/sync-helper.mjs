@@ -31,7 +31,7 @@ const server=createServer(async(request,response)=>{
     }
     const op=url.searchParams.get('op'),name=url.searchParams.get('path'),base=url.searchParams.get('base');
     if(op==='scan'){
-      const entries=[];const scan=async prefix=>{for(const child of await readdir(path.join(root,prefix),{withFileTypes:true})){const name=prefix+child.name;if(!validSyncPath(name))continue;if(child.isSymbolicLink())throw new Error('sync_unsupported_file');if(child.isDirectory())await scan(name+'/');else {const {data,...entry}=await file(name);entries.push(entry);}}};
+      const entries=[];const scan=async prefix=>{for(const child of await readdir(path.join(root,prefix),{withFileTypes:true})){const name=prefix+child.name;if(!validSyncPath(name))continue;if(child.isDirectory())await scan(name+'/');else if(child.isFile()){const {data,...entry}=await file(name);entries.push(entry);}}};
       await scan('');response.end(JSON.stringify({protocolVersion:1,root:'project',writes:true,entries}));return;
     }
     const previous=await file(name);if((previous?.version??'missing')!==base){fail('sync_conflict');return;}
