@@ -241,3 +241,17 @@ test("a begin whose caller gave up is rolled back instead of holding the write l
   await storage.handle({ operation: "execute", statement: { sql: "INSERT INTO sample VALUES ('written')" } });
   assert.deepEqual((await db.execute("SELECT value FROM sample")).rows.map(r => r.value), ["written"]);
 });
+
+test("standalone native reads do not wait behind an open write transaction", async t => {
+  const db = database(); t.after(() => db.close());
+  await db.execute("CREATE TABLE readable (id TEXT)");
+  const owner = await db.transaction("write");
+  await owner.execute("INSERT INTO readable VALUES ('pending')");
+  t.after(() => owner.close());
+  const storage = createCodexWorkspaceStorage(db); t.after(() => storage.close());
+  const started = Date.now();
+  const result = await storage.handle({ operation: "execute", statement: { sql: "SELECT COUNT(*) AS count FROM readable" } });
+  assert.deepEqual(result.rows[0], [{ type: "integer", value: "0" }]);
+  assert.ok(Date.now() - started < 1000, "a read must not wait for the write lock");
+  await owner.rollback();
+});

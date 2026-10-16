@@ -73,6 +73,13 @@ function withoutUnownedFeatures(config: Readonly<Record<string, unknown>> = {}) 
   for (const name of UNOWNED_FEATURES) result[`features.${name}`] = false;
   return result;
 }
+/** A finished task keeps only what the view shows, so per-event state rewrites stay small.
+ * One extra character keeps the view's `truncated` flag accurate.
+ */
+function settle(message: CodexWorkMessage) {
+  delete message.settings;
+  if (message.text.length > 129) message.text = message.text.slice(0, 129);
+}
 const messageStatus = (message: CodexWorkMessage): Update => ({
   type: "message.status",
   id: message.id,
@@ -131,7 +138,7 @@ export function createCodexRuntime(
         if (!state.queue.includes(message.id)) state.queue.unshift(message.id);
       } else {
         state.queue = state.queue.filter((id) => id !== message.id);
-        delete message.settings;
+        settle(message);
       }
       return [messageStatus(message)];
     });
@@ -315,7 +322,7 @@ export function createCodexRuntime(
                     message.outcome ??
                     current.outcome ??
                     (controller.signal.aborted ? "interrupted" : outcome);
-                  delete message.settings;
+                  settle(message);
                   delete message.outcome;
                   return [messageStatus(message)];
                 });
@@ -441,7 +448,7 @@ export function createCodexRuntime(
               );
               if (!message || message.status !== "queued") return [];
               message.status = "cancelled";
-              delete message.settings;
+              settle(message);
               state.queue = state.queue.filter((id) => id !== message.id);
               return [messageStatus(message)];
             });

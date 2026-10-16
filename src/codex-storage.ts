@@ -118,10 +118,12 @@ export function createCodexWorkspaceStorage(database: WorkspaceDatabase): CodexW
       arm(id, entry);
       return { transactionId: id };
     }
+    let readOnly = false;
     let action: (db: Pick<WorkspaceDatabase, "execute" | "batch" | "executeMultiple"> | Transaction) => Promise<unknown>;
     switch (operation) {
       case "execute": {
         const inputStatement = statement(params.statement);
+        readOnly = /^\s*SELECT\b[^;]*;?\s*$/i.test(record(params.statement).sql as string);
         action = async db => encodeResult(await db.execute(inputStatement));
         break;
       }
@@ -149,7 +151,8 @@ export function createCodexWorkspaceStorage(database: WorkspaceDatabase): CodexW
       default: return invalid();
     }
     if (params.transactionId !== undefined) return withTransaction(string(params.transactionId), operation, action);
-    return withCodexTransaction(database, action);
+    // A lone SELECT cannot write, so it skips the write lock; anything else waits for write admission.
+    return withCodexTransaction(database, action, readOnly ? "read" : "write");
   }
 
   return {
