@@ -44,3 +44,9 @@ test("aborted login never sends a command; invalid force and code options stay l
   await assert.rejects(auth.login({signal:controller.signal}),/stopped/);
   await assert.rejects(auth.login({force:"yes"}),TypeError);assert.equal(commands.length,0);
 });
+test("device login carries its browser code and rejects malformed codes", async () => {
+  const good = fixture(() => ({ ...login(), userCode: "ABCD-EFGH" }));
+  assert.equal((await good.auth.login()).userCode, "ABCD-EFGH");
+  for (const userCode of ["private\noutput", "x".repeat(40), 42])
+    await assert.rejects(fixture(() => ({ ...login(), userCode })).auth.login(), RemoteAppError);
+});

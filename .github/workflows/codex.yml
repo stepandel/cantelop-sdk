@@ -1,0 +1,49 @@
+name: Verify durable Codex
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/codex.yml'
+      - 'src/codex*.ts'
+      - 'src/harnesses/**'
+      - 'src/*auth*.ts'
+      - 'src/database.ts'
+      - 'src/session-database.ts'
+      - 'src/session.ts'
+      - 'assets/codex/**'
+      - 'examples/codex-durable/**'
+      - 'test/codex*.mjs'
+      - 'test/fixtures/codex*.mjs'
+      - 'scripts/check-codex-harness.mjs'
+      - 'scripts/codex-test-database.mjs'
+      - 'scripts/build-harness-assets.mjs'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm check:examples
+      - run: pnpm check:package
+      - name: Build packaged Linux image from pinned native source
+        run: docker build --platform linux/amd64 -f dist/harnesses/codex/Dockerfile -t cantelop-codex-check .
+      - name: Verify real native persistence and durable runtime with a mocked provider
+        run: >-
+          docker run --rm --platform linux/amd64
+          --mount type=bind,source="${{ github.workspace }}",target=/sdk,readonly
+          --workdir /sdk cantelop-codex-check
+          node scripts/check-codex-harness.mjs /usr/local/bin/cantelop-codex

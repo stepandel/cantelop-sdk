@@ -39,7 +39,7 @@ export function borrowWorkspaceDatabase(owner: WorkspaceDatabase): WorkspaceData
 /** Renewable client; operations are never automatically replayed. */
 export function createWorkspaceDatabase(
   resolveCredentials: () => Promise<DatabaseCredentials>,
-  options: { now?: () => number; client?: typeof createClient; localDatabaseOrigin?: string | undefined } = {},
+  options: { now?: () => number; client?: typeof createClient; localDatabaseOrigin?: string | undefined; intMode?: "number" | "bigint" | "string" } = {},
 ): WorkspaceDatabase {
   const now = options.now ?? Date.now;
   const factory = options.client ?? createClient;
@@ -58,7 +58,7 @@ export function createWorkspaceDatabase(
       pending = (async () => {
         const credentials = validateDatabaseCredentials(await resolveCredentials(), now(), options.localDatabaseOrigin);
         if (closed) throw new DatabaseAccessError("client_closed");
-        const value: Connection = { client: factory({ url: credentials.url.replace(/^libsql:/, "https:"), authToken: credentials.authToken }), credentials, users: 0, retired: false };
+        const value: Connection = { client: factory({ url: credentials.url.replace(/^libsql:/, "https:"), authToken: credentials.authToken, ...(options.intMode ? { intMode: options.intMode } : {}) }), credentials, users: 0, retired: false };
         if (current) retire(current);
         current = value; connections.add(value); return value;
       })().finally(() => { pending = undefined; });

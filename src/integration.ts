@@ -67,7 +67,7 @@ export interface WorkspaceAuthLoginOptions {
 }
 export type WorkspaceAuthLogin =
   | { readonly authenticated: true }
-  | { readonly authenticated: false; readonly attemptId: string; readonly url: string; readonly expiresAt: Date };
+  | { readonly authenticated: false; readonly attemptId: string; readonly url: string; readonly expiresAt: Date; readonly userCode?: string };
 
 export interface WorkspaceAuthRef {
   /** Reuse a signed-in Workspace or open native login; force requires confirmed logout. */

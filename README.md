@@ -208,7 +208,7 @@ Options also cover `tools`, `settingSources`, `mcps` and a `conversation` seed. 
 
 ## Other runtimes
 
-Stock CLI harnesses for [Codex](examples/codex/README.md) and [OpenCode](examples/opencode/README.md) follow the same pattern as the Claude harness, as examples rather than packaged exports. [Pi](examples/pi/README.md) and [OpenAI Agents](examples/openai/README.md) show framework integrations.
+The packaged [durable Codex runtime](docs/codex.md) follows the same App shape as Claude, with a committed inbox, replayable observations and conservative recovery of interrupted native work. A [runnable example](examples/codex-durable/README.md) includes native workspace SQL storage and device-code sign-in. Stock CLI harness examples for [Codex](examples/codex/README.md) and [OpenCode](examples/opencode/README.md) remain available. [Pi](examples/pi/README.md) and [OpenAI Agents](examples/openai/README.md) show framework integrations.
 
 To write your own, return a harness from `runtime.create`:
 

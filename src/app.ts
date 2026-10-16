@@ -110,7 +110,8 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
             if (value.type !== "login" || !LOGIN_ID_PATTERN.test(value.attemptId) || typeof value.url !== "string" || !Number.isFinite(Date.parse(value.expiresAt))) throw new RemoteAppError("invalid_auth_response",0);
             const url = new URL(value.url);
             if (url.protocol !== "https:" || url.username || url.password) throw new RemoteAppError("invalid_auth_response",0);
-            return Object.freeze({authenticated:false,attemptId:value.attemptId,url:url.href,expiresAt:new Date(value.expiresAt)});
+            if (value.userCode !== undefined && (typeof value.userCode !== "string" || !/^[A-Z0-9-]{1,32}$/.test(value.userCode))) throw new RemoteAppError("invalid_auth_response",0);
+            return Object.freeze({authenticated:false,attemptId:value.attemptId,url:url.href,expiresAt:new Date(value.expiresAt),...(value.userCode === undefined ? {} : {userCode:value.userCode})});
           },
           async submitCode(options: {readonly attemptId:string;readonly code:string;readonly signal?:AbortSignal}) {
             return status(await requestAuth({type:"code",attemptId:options.attemptId,code:options.code}, options.signal ? {signal:options.signal} : {}));

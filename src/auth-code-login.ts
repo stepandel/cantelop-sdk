@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { AppAuth, AuthContext, AuthResult, AuthTerminalProcess, NativeCodeLogin } from "./native-auth.js";
 
 interface Attempt {
-  id: string; process: AuthTerminalProcess; text: string; url?: string | undefined;
+  id: string; process: AuthTerminalProcess; text: string; url?: string | undefined; userCode?: string | undefined;
   ended: boolean; failed: boolean; expiresAt: number; closed: Promise<void>;
   timer: ReturnType<typeof setTimeout>; notify: Set<() => void>;
 }
@@ -46,21 +46,29 @@ export class AuthCodeLogin {
         current.text += String(chunk);
         if (Buffer.byteLength(current.text)>64*1024) {failed();return;}
         current.url ??= this.adapter.link(current.text);
+        current.userCode ??= this.adapter.userCode?.(current.text);
         notify();
       });
       process.once("close", () => {
         current.ended=true; current.text=""; notify(); close(); this.changed();
+        // Device login completes on the provider's page. Nothing remains to submit.
+        if (this.adapter.userCode && this.#attempt === current) {
+          clearTimeout(current.timer); this.#attempt=undefined; this.changed();
+        }
       });
       this.changed();
       if (this.context.signal.aborted) await this.stop();
     }
-    await this.wait(attempt, () => !!attempt.url && this.adapter.promptCount(attempt.text)>0 || attempt.ended || attempt.failed);
-    if (this.#attempt === attempt && attempt.url && this.adapter.promptCount(attempt.text)>0 && !attempt.failed && !attempt.ended)
-      return {type:"login",attemptId:attempt.id,url:attempt.url,expiresAt:new Date(attempt.expiresAt).toISOString()};
+    const ready = () => !!attempt.url && (this.adapter.userCode ? !!attempt.userCode : this.adapter.promptCount(attempt.text)>0);
+    await this.wait(attempt, () => ready() || attempt.ended || attempt.failed);
+    if (this.adapter.userCode && attempt.ended && !attempt.failed && await this.status()) return {type:"status",authenticated:true};
+    if (this.#attempt === attempt && attempt.url && ready() && !attempt.failed && !attempt.ended)
+      return {type:"login",attemptId:attempt.id,url:attempt.url,expiresAt:new Date(attempt.expiresAt).toISOString(),...(attempt.userCode ? {userCode:attempt.userCode} : {})};
     await this.stop();
     return {type:"error",code:"login_failed"};
   }
   async code(id: string, code: string): Promise<AuthResult> {
+    if (this.adapter.userCode) return {type:"error",code:"device_login_requires_browser"};
     const attempt = this.#attempt;
     if (!attempt || attempt.id !== id || !attempt.url || attempt.failed || Date.now() >= attempt.expiresAt)
       return {type:"error",code:"login_not_active"};

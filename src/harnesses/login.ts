@@ -8,8 +8,7 @@ import { nativeEnvironment } from "./cli.js";
 const exec = promisify(execFile);
 
 /** The Workspace and stock binary every native auth command runs against. */
-export function nativeAuth(context: AuthContext, binaryVariable: string, defaultBinary: string) {
-  const workspace = process.cwd();
+export function nativeAuth(context: AuthContext, binaryVariable: string, defaultBinary: string, workspace = process.cwd()) {
   return { workspace, binary: context.env[binaryVariable] ?? defaultBinary, env: nativeEnvironment(workspace) };
 }
 

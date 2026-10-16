@@ -8,7 +8,7 @@ Start with [Claude Code](anthropic/README.md). It uses the Claude Code harness p
 
 All three implement `steer` by admitting priority input and interrupting the current turn; app constructors register `runtime: { create }`. Steering will prioritize the new prompt, interrupt the active operation, wait for process-group cleanup, then resume the native conversation. Provider tools, prompts, permissions and agent loops remain native.
 
-[OpenAI Agents](openai/README.md), [Pi](pi/README.md), and the web chat example show additional integrations. OpenAI Agents is a separate framework example; it is not the Codex harness.
+[Durable Codex](codex-durable/README.md) uses the packaged native app-server integration with committed intake, recovery and observation replay. [OpenAI Agents](openai/README.md), [Pi](pi/README.md), and the web chat example show additional integrations. OpenAI Agents is a separate framework example; it is not the Codex harness.
 
 The examples define runtime factories and ordinary application backend clients:
 

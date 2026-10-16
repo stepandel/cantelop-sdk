@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuthCodeLogin } from "../dist/auth-code-login.js";
 import { claudeAuth } from "../dist/harnesses/claude.js";
+import { codexAuth } from "../dist/harnesses/codex.js";
 import { AuthTerminals } from "../dist/auth-terminal.js";
 async function fixture(t,source,wait=500,lifetime=5_000){
   const workspace=await mkdtemp(join(tmpdir(),"sdk-code-login-"));t.after(()=>rm(workspace,{recursive:true,force:true}));
@@ -66,4 +67,26 @@ test("auth stays non-quiescent through the pre-attach window and an exited-but-u
   const terminals=new AuthTerminals({status:auth.status,logout:auth.logout,terminal:auth.terminal},{},context.signal,()=>{});
   const opened=await terminals.handle({type:"terminal"},context.session);assert.equal(opened.type,"terminal");assert.equal(terminals.active,true);
   await terminals.handle({type:"close",terminalId:opened.terminalId},context.session);assert.equal(terminals.active,false);
+});
+
+test("Codex device login exposes its code, completes in the browser and releases its idle hold", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-device-login-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, "authenticated");
+  const context = { signal: new AbortController().signal, session: { id: "auth" }, env: {} };
+  const auth = { ...codexAuth, status: () => existsSync(file), logout: () => rm(file, { force: true }), terminal() {
+    return spawn(process.execPath, ["-e", `console.log('private native diagnostics');console.log('https://auth.openai.com/codex/device');console.log('  \\x1b[34mABCD-EFGH\\x1b[0m');setInterval(()=>{if(require('fs').existsSync(process.argv[1]))process.exit(0)},5);`, file], { stdio: ["pipe", "pipe", "ignore"] });
+  } };
+  const login = new AuthCodeLogin(auth, codexAuth.codeLogin, context, () => {}, 1000);
+  t.after(() => login.stop());
+  const started = await login.login();
+  assert.equal(started.type, "login"); assert.equal(started.userCode, "ABCD-EFGH");
+  assert.equal(started.url, "https://auth.openai.com/codex/device");
+  assert.doesNotMatch(JSON.stringify(started), /diagnostics/);
+  assert.deepEqual(await login.code(started.attemptId, "ignored"), { type: "error", code: "device_login_requires_browser" });
+  assert.equal(login.active, true); await writeFile(file, "signed-in");
+  for (let i = 0; i < 100 && login.active; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(login.active, false);
+  assert.deepEqual(await login.login(), { type: "status", authenticated: true });
+  for (const bad of ["https://auth.openai.com.evil.test/codex/device\n", "https://user:pass@auth.openai.com/codex/device\n", "https://auth.openai.com/codex/device?injected=1\n"]) assert.equal(codexAuth.codeLogin.link(bad), undefined);
 });

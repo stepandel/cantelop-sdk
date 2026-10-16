@@ -2,7 +2,7 @@
 import { createWorkspaceDatabase, DatabaseAccessError, validateLocalDatabaseOrigin, type WorkspaceDatabase } from "./database.js";
 import type { SessionEnvironment } from "./session.js";
 /** Works before the first message and can supply credentials to native clients. */
-export function createSessionDatabase(environment: SessionEnvironment = process.env, request: typeof fetch = fetch): WorkspaceDatabase {
+export function createSessionDatabase(environment: SessionEnvironment = process.env, request: typeof fetch = fetch, options: { intMode?: "number" | "bigint" | "string" } = {}): WorkspaceDatabase {
   const localDatabaseOrigin = environment.CANTELOP_LOCAL_DATABASE_ORIGIN;
   return createWorkspaceDatabase(async () => {
     const endpoint = environment.CANTELOP_WORKSPACE_DATABASE_CREDENTIALS_URL;
@@ -21,5 +21,5 @@ export function createSessionDatabase(environment: SessionEnvironment = process.
       if (document.length > 32768) throw new Error();
       return JSON.parse(document);
     } catch { throw new DatabaseAccessError("invalid_credentials"); }
-  }, { localDatabaseOrigin });
+  }, { localDatabaseOrigin, ...options });
 }

@@ -17,7 +17,7 @@ export type AuthCommand =
   | { readonly type: "close"; readonly terminalId: string };
 
 export type AuthResult =
-  | { readonly type: "login"; readonly attemptId: string; readonly url: string; readonly expiresAt: string }
+  | { readonly type: "login"; readonly attemptId: string; readonly url: string; readonly expiresAt: string; readonly userCode?: string }
   | { readonly type: "cancelled"; readonly attemptId: string }
   | { readonly type: "error"; readonly code: string }
   | { readonly type: "status"; readonly authenticated: boolean }
@@ -72,6 +72,8 @@ export interface AuthTerminalProcess {
 /** Declared with `auth` on `cantelop.app({...})`; runs only in the Workspace auth Sandbox. */
 export interface NativeCodeLogin {
   link(output: string): string | undefined;
+  /** Device flow: display this code on the provider's page; no terminal input is accepted. */
+  userCode?(output: string): string | undefined;
   promptCount(output: string): number;
   input(code: string): string;
 }
@@ -91,5 +93,6 @@ export function isAppAuth(value: unknown): value is AppAuth {
   if (!["status", "logout", "terminal"].every(key => typeof auth[key] === "function")) return false;
   if (auth.codeLogin === undefined) return true;
   const adapter = auth.codeLogin as Record<string, unknown> | null;
-  return !!adapter && typeof adapter === "object" && ["link","promptCount","input"].every(key => typeof adapter[key] === "function");
+  return !!adapter && typeof adapter === "object" && ["link","promptCount","input"].every(key => typeof adapter[key] === "function") &&
+    (adapter.userCode === undefined || typeof adapter.userCode === "function");
 }
