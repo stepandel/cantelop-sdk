@@ -92,7 +92,8 @@ export async function startSync(options: WorkspaceSyncOptions, workspaceId: stri
   const rootName = remoteDirectory ?? "project";
   // Nonlegacy baselines must fail closed if opened by an older SDK.
   const stateVersion = rootName === "project" ? 1 : 2;
-  if (typeof rootName !== "string" || rootName !== "" && !validSyncPath(rootName)) throw new TypeError("Invalid sync directory name");
+  // Root components are matched against exclusions case-insensitively; transfer paths keep 1.1.0 rules.
+  if (rootName !== "" && !validSyncPath(rootName.toLowerCase())) throw new TypeError("Invalid sync directory name");
   if (process.platform !== "linux" && process.platform !== "darwin") throw new WorkspaceSyncError("sync_platform_unsupported");
   options.signal?.throwIfAborted();
   const ignores = options.ignore ?? [];
@@ -133,7 +134,7 @@ export async function startSync(options: WorkspaceSyncOptions, workspaceId: stri
     let tail:Promise<void>=Promise.resolve();
     const save=async()=>{await agent.send("/state","PUT",signal(),new TextEncoder().encode(JSON.stringify({protocolVersion:stateVersion,workspaceId,directory,remoteDirectory:rootName,base})));};
     const request=async(op:string,name?:string,version?:string,data?:Uint8Array,executable?:boolean)=>{
-      const url=new URL(`${SYNC_PUBLIC_PREFIX}${workspaceId}`,"https://edge.cantelop.internal");syncQuery(url.searchParams,op,name,version,executable);if(remoteDirectory!==undefined)url.searchParams.set("root",rootName);
+      const url=new URL(`${SYNC_PUBLIC_PREFIX}${workspaceId}`,"https://edge.cantelop.internal");syncQuery(url.searchParams,op,name,version,executable);if(rootName!=="project")url.searchParams.set("root",rootName);
       const response=await fetch(new Request(url,{method:syncMethod(op),signal:signal(),...(data===undefined?{}:{body:data as BodyInit,headers:{"Content-Type":"application/octet-stream"}})}));
       if(!response.ok){let code=response.status===409?"sync_conflict":"sync_unavailable";
         try {const failure=JSON.parse(new TextDecoder().decode(await responseBytes(response,8192))) as {error?:{code?:string}};if(typeof failure.error?.code==="string")code=failure.error.code;}catch{}
@@ -194,6 +195,7 @@ export async function startSync(options: WorkspaceSyncOptions, workspaceId: stri
     };
     const cycle = async () => {
       if (stopped) throw new WorkspaceSyncError("sync_stopped");
+      writable = undefined;
       status = Object.freeze({ state: "syncing", conflicts: status.conflicts });
       try {
         if (agent.closed()) {
@@ -204,12 +206,12 @@ export async function startSync(options: WorkspaceSyncOptions, workspaceId: stri
         let result = await pass();
         for (let attempt = 1; result.changed && attempt < 3; attempt++) result = await pass();
         const { conflicts, failure, changed } = result;
-        status = Object.freeze({ state: conflicts.length ? "conflict" : "synced", conflicts: Object.freeze(conflicts) });
+        status = Object.freeze({ state: conflicts.length ? "conflict" : "synced", conflicts: Object.freeze(conflicts), ...(writable===undefined?{}:{writable}) });
         if (conflicts.length) throw new WorkspaceSyncError("sync_conflict");
         if (failure) throw failure;
         if (changed) throw new WorkspaceSyncError("sync_busy");
       } catch (error) {
-        if (!stopped && status.state !== "conflict") status = Object.freeze({ state: error instanceof WorkspaceSyncError && !["sync_unavailable", "sync_busy"].includes(error.code) ? "error" : "offline", conflicts: [], error: error instanceof WorkspaceSyncError ? error.code : "sync_unavailable" });
+        if (!stopped && status.state !== "conflict") status = Object.freeze({ state: error instanceof WorkspaceSyncError && !["sync_unavailable", "sync_busy"].includes(error.code) ? "error" : "offline", conflicts: [], error: error instanceof WorkspaceSyncError ? error.code : "sync_unavailable", ...(writable===undefined?{}:{writable}) });
         throw error;
       }
     };
@@ -224,6 +226,6 @@ export async function startSync(options: WorkspaceSyncOptions, workspaceId: stri
     if(options.signal?.aborted){await stop();throw options.signal.reason;}
     let initial:Promise<void>|undefined;
     void(async()=>{while(!stopped){const next=flush();initial??=next;await next.catch(()=>{});try{await delay(options.pollIntervalMs ?? 1000,undefined,{signal:controller.signal});}catch{break;}}})();
-    return Object.freeze({remoteDirectory:"/workspace"+(rootName?"/"+rootName:""),ready:()=>initial ?? flush(),flush,status:()=>Object.freeze({...status,...(writable===undefined?{}:{writable})}),stop});
+    return Object.freeze({remoteDirectory:"/workspace"+(rootName?"/"+rootName:""),ready:()=>initial ?? flush(),flush,status:()=>status,stop});
   } catch(error){controller.abort();await agent.stop();throw error;}
 }

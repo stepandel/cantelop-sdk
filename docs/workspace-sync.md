@@ -28,7 +28,12 @@ whole `/workspace`; omitting the option retains `/workspace/project` for
 compatibility with SDK 1.1.0. `sync.remoteDirectory` reports the absolute remote
 path. The selected root is recorded with local baseline hashes; reusing the same
 local directory and Workspace with a different root rejects with
-`sync_invalid_state`, rather than reinterpreting prior deletions.
+`sync_invalid_state`, rather than reinterpreting prior deletions. To change roots,
+use a different local directory, or stop the handle and delete that
+Workspace's baseline `<workspace-id>.json` under the sync state directory
+(`$CANTELOP_SYNC_STATE_HOME`, else `~/Library/Application Support/cantelop/sync`
+on macOS or `$XDG_STATE_HOME/cantelop/sync` on Linux); the next start then
+reconciles without prior deletions.
 
 ## Requirements and lifetime
 

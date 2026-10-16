@@ -18,7 +18,7 @@ async function fixture(t) {
   const root=await mkdtemp(path.join(tmpdir(),'cantelop-sync-'));t.after(()=>rm(root,{recursive:true,force:true}));
   const state=await mkdtemp(path.join(tmpdir(),'cantelop-sync-state-'));t.after(()=>rm(state,{recursive:true,force:true}));
   process.env.CANTELOP_SYNC_STATE_HOME=state;
-  const files=new Map(), calls=[];let online=true,writes=true,corrupt=false;
+  const files=new Map(), calls=[];let online=true,writes=true,corrupt=false,manifestRoot;
   const platform=async request=>{
     calls.push(request.clone());
     const url=new URL(request.url);
@@ -27,7 +27,7 @@ async function fixture(t) {
     if(!online) throw new Error('offline');
     assert.equal(url.pathname,`/__cantelop/integration/v2/workspaces/${workspaceId}/sync`);
     const op=url.searchParams.get('op'),name=url.searchParams.get('path'),base=url.searchParams.get('base'),previous=files.get(name);
-    const rootName=url.searchParams.get("root") ?? "project";
+    const rootName=manifestRoot ?? url.searchParams.get("root") ?? "project";
     if(op==='scan')return Response.json({protocolVersion:1,root:rootName,writes,entries:[...files].map(([name,f])=>item(name,f.data,f.executable))});
     if((previous?.version??'missing')!==base)return fail('sync_conflict');
     if(op==='read')return new Response(corrupt?Buffer.from('corrupt'):previous.data);
@@ -45,7 +45,7 @@ async function fixture(t) {
   const workspace=app.workspace({id:workspaceId});
   const start=async(options={})=>{const handle=await workspace.sync({localDirectory:root,pollIntervalMs:60000,...options});t.after(()=>handle.stop());return handle;};
   const put=(name,data,executable=false)=>{data=Buffer.from(data);files.set(name,{...item(name,data,executable),data});};
-  return {root,state,files,calls,start,put,setOnline:v=>online=v,setWrites:v=>writes=v,setCorrupt:v=>corrupt=v};
+  return {root,state,files,calls,start,put,setOnline:v=>online=v,setWrites:v=>writes=v,setCorrupt:v=>corrupt=v,setManifestRoot:v=>manifestRoot=v};
 }
 
 test('one capability reconciles binary files, executable bits, creates and deletes both ways',async t=>{
@@ -96,6 +96,16 @@ test('relative roots use the generic path grammar and reject ambiguous requests'
   for(const root of ['', 'src/my project', '.claude'])assert.equal(validSyncRequest('GET',new URLSearchParams({op:'scan',root})),true);
   assert.equal(validSyncRequest('POST',new URLSearchParams({op:'bind',directory:'my-project'})),false);
   assert.equal(validSyncRequest('GET',new URLSearchParams('op=scan&root=a&root=b')),false);
+});
+test('writable status follows the manifest and mismatched roots are rejected',async t=>{
+  const f=await fixture(t);f.setWrites(false);await writeFile(path.join(f.root,'a'),'local');
+  const sync=await f.start({remoteDirectory:'project'});await assert.rejects(sync.ready(),{code:'sync_writes_not_enabled'});
+  assert.equal(sync.status().writable,false);assert.equal(sync.status(),sync.status());
+  for(const request of f.calls)assert.equal(new URL(request.url).searchParams.has('root'),false);
+  f.setWrites(true);f.setManifestRoot('other');await assert.rejects(sync.flush(),{code:'sync_invalid_manifest'});
+  assert.equal(sync.status().writable,undefined);
+  await sync.stop();assert.equal(sync.status().writable,undefined);
+  assert.equal(validSyncPath('Node_Modules/pkg.json'),true);assert.equal(validSyncPath('.ENV'),true);
 });
 test('divergent edits and delete/edit conflicts preserve both sides and persist their common base',async t=>{
   const f=await fixture(t);await writeFile(path.join(f.root,'a'),'base');let sync=await f.start();await sync.ready();await sync.stop();
