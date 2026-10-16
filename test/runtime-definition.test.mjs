@@ -97,9 +97,10 @@ export const login: AppAuth = { status: () => false, logout() {}, terminal: () =
   assert.match(await readFile(native.mainModule, 'utf8'), /login-provider-marker/);
   const edge = await buildEdgeApi({ definition, outdir: path.join(directory, 'edge') });
   assert.equal(edge.manifest.auth, true);
-  assert.doesNotMatch(await readFile(edge.mainModule, 'utf8'), /login-provider-marker/);
+  assert.doesNotMatch(await readFile(edge.mainModule, 'utf8'), /login-provider-marker|node:child_process|CANTELOP_SYNC_HELPER/);
   const backend = await buildBackendClient({ definition, outdir: path.join(directory, 'backend') });
-  assert.doesNotMatch(await readFile(backend.mainModule, 'utf8'), /login-provider-marker|node:child_process/);
+  // Backend sync may lazily launch the trusted local CLI helper. The App login provider still belongs only in the Sandbox.
+  assert.doesNotMatch(await readFile(backend.mainModule, 'utf8'), /login-provider-marker/);
   const evaluated = await import('data:text/javascript,' + encodeURIComponent(compiled.backendSource.replace(JSON.stringify(clientModule), JSON.stringify(new URL('../dist/client.js', import.meta.url).href))));
   assert.equal(typeof evaluated.cantelop.workspace({ slug: 'customer' }).auth().terminal, 'function');
   await writeFile(path.join(directory, 'login.ts'), `import { spawn } from "node:child_process"; import type { AppAuth } from ${JSON.stringify(sessionModule)};

@@ -4,6 +4,7 @@ import type { SessionRuntime } from "./session-runtime-contract.js";
 import type { WorkspaceDatabase } from "./database.js";
 import type { AppAuth, AuthCommand } from "./native-auth.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
+import type { WorkspaceSync, WorkspaceSyncOptions } from "./sync.js";
 
 /** Exactly one canonical ID or App-scoped slug. */
 export type WorkspaceSelector =
@@ -53,6 +54,8 @@ export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = 
   /** Resolves/provisions a slug, or retrieves an existing canonical ID. */
   resolve(): Promise<Workspace>;
   database(): Promise<WorkspaceDatabase>;
+  /** Node.js: continuously reconcile a local directory with this Workspace's project/ directory. */
+  sync(options: WorkspaceSyncOptions): Promise<WorkspaceSync>;
   /** Native CLI authentication shared by Sessions in this Workspace. Requires `auth` on the App. */
   auth(): WorkspaceAuthRef;
   /** A lazy reference; omitting id generates a fresh App-scoped identity. */

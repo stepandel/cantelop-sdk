@@ -78,6 +78,10 @@
     "@types/node": "^24.0.0"
   },
   "imports": {
+    "#cantelop-sync": {
+      "node": "./dist/sync-node.js",
+      "default": "./dist/sync-unavailable.js"
+    },
     "#cantelop-app-config": {
       "node": "./dist/app-config-node.js",
       "default": "./dist/app-config-empty.js"

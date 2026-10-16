@@ -7,6 +7,7 @@ import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.j
 import { AUTH_KEEP_ALIVE_SECONDS, AUTH_SESSION_ID, isReservedAuthSessionID, AUTH_TERMINAL_PROTOCOL, LOGIN_ID_PATTERN, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
+import type { WorkspaceSyncOptions } from "./sync.js";
 import { MAX_COMMAND_BYTES, appCommandPath, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
 
 /** A named App with a typed runtime and its own Workspace namespace. */
@@ -68,6 +69,11 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
     return Object.freeze({
       selector, resolve,
       async database() { return (await resolve()).database(); },
+      async sync(options: WorkspaceSyncOptions) {
+        const workspace = await resolve();
+        const { startSync } = await import("#cantelop-sync");
+        return startSync(options, workspace.id, edgeFetch);
+      },
       auth() {
         if (!authDeclared) throw new TypeError("App does not declare auth");
         const requestAuth = async (auth: AuthCommand, options: SessionCommandOptions = {}): Promise<AuthResult> => {
