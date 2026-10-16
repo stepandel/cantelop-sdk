@@ -165,7 +165,14 @@ async function runtime(
 test("intake commits once, snapshots hide settings, and retries never rerun work", async (t) => {
   const { db } = await database(t),
     native = fake();
-  const app = await runtime(t, db, native.create, { model: "default-model" });
+  const app = await runtime(t, db, native.create, {
+    model: "default-model",
+    config: {
+      "features.multi_agent": true,
+      "features.multi_agent_v2": true,
+      "features.goals": true,
+    },
+  });
   const command = {
     type: "queue",
     id: "first",
@@ -178,6 +185,11 @@ test("intake commits once, snapshots hide settings, and retries never rerun work
   await assert.rejects(app.send({ ...command, text: "Changed" }), /conflict/);
   assert.equal(native.runs.length, 1);
   assert.equal(native.runs[0].options.model, "default-model");
+  assert.deepEqual(native.runs[0].options.config, {
+    "features.multi_agent": false,
+    "features.multi_agent_v2": false,
+    "features.goals": false,
+  });
   assert.doesNotMatch(
     JSON.stringify(await app.snapshot()),
     /private rules|settings|fingerprint/,

@@ -205,11 +205,12 @@ export function createCodexRuntime(
           const native = factory(resources!, {
             ...defaults,
             ...message.settings,
-            // Native child agents have no independent durable wake/ownership contract here.
+            // Native goals and child agents have no independent durable wake/ownership contract here.
             config: {
               ...defaults.config,
               "features.multi_agent": false,
               "features.multi_agent_v2": false,
+              "features.goals": false,
             },
             ...(store!.state.threadId === undefined
               ? {}

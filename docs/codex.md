@@ -73,11 +73,12 @@ prompt after a crash. Inspect the interrupted task and submit an explicit new
 continuation when appropriate. Model output and external tool effects cannot be
 committed atomically with the SDK inbox.
 
-The supported execution unit is one foreground Codex turn. Native goals, delayed
-tasks, independently running agents and detached background processes require
+The supported execution unit is one foreground Codex turn. Native goals and
+subagents are disabled by the runtime, including overrides in native config.
+Delayed tasks, independently running agents and detached background processes require
 their own durable ownership/wake protocol and are outside this runtime's contract.
-Do not enable them through native config and treat a foreground task's completion
-as their completion. Approval requests are rejected unless explicitly handled by
+Do not treat a foreground task's completion as their completion.
+Approval requests are rejected unless explicitly handled by
 the low-level client; the packaged runtime uses the configured native policy.
 
 Canonical JSONL rollout replay, auth and config remain Workspace files. Keep

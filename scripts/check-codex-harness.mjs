@@ -18,11 +18,15 @@ const db = createCodexTestDatabase(`file:${join(directory, "test.sqlite")}`);
 db.credentials = async () => ({ url: "libsql://native-fixture.turso.io", authToken: "unused", expiresAt: new Date(Date.now() + 900000).toISOString() });
 let modelCalls = 0;
 const models = [];
+const modelTools = [];
 const model = createServer(async (request, response) => {
   if (request.method !== "POST" || !request.url.endsWith("/responses")) { request.resume(); response.writeHead(404); response.end(); return; }
   let body = ""; for await (const chunk of request) body += chunk;
-  assert.equal(typeof JSON.parse(body).model, "string");
-  models.push(JSON.parse(body).model);
+  const input = JSON.parse(body);
+  assert.equal(typeof input.model, "string");
+  models.push(input.model);
+  const names = tools => tools.flatMap(tool => [tool.name, ...(tool.tools ? names(tool.tools) : [])]).filter(Boolean);
+  modelTools.push(names(input.tools ?? []));
   modelCalls++;
   const message = { id: `message-${modelCalls}`, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "Native workspace storage verified.", annotations: [] }] };
   const events = [
@@ -119,6 +123,10 @@ try {
   assert.equal(before.threadId, after.threadId);
   assert.equal(modelCalls, 4);
   assert.deepEqual(models.slice(-2), ["gpt-5.1-codex", "gpt-5.1"]);
+  for (const names of modelTools.slice(-2)) {
+    assert.ok(names.length, "Native tools must remain available");
+    assert.equal(names.some(name => /^(create_goal|get_goal|update_goal|spawn_agent)$/.test(name)), false, "Unowned native goals and agents must be disabled");
+  }
   await send({ type: "events", after: 0, limit: 100 });
   assert.ok(reply.events.some(event => event.type === "message.status" && event.status === "completed"));
   assert.ok(reply.events.some(event => event.type === "codex"));
