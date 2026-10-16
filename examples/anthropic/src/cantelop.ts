@@ -1,12 +1,12 @@
-import { createClaudeHarness, claudeAuth, claudeDockerfile } from "@cantelop/sdk/harnesses/claude";
+import { createClaudeRuntime, claudeAuth, claudeDockerfile } from "@cantelop/sdk/harnesses/claude";
 import { CantelopClient } from "@cantelop/sdk";
-import type { ClaudeMessage, ClaudeEvent } from "@cantelop/sdk/harnesses/claude";
+import type { ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply, ClaudeSessionView } from "@cantelop/sdk/harnesses/claude";
 
 const cantelop = new CantelopClient();
 
-export const app = cantelop.app<ClaudeMessage, ClaudeEvent>({
+export const app = cantelop.app<ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply, ClaudeSessionView>({
   name: "anthropic",
-  runtime: { create: createClaudeHarness },
+  runtime: createClaudeRuntime(),
   auth: claudeAuth,
   environment: {
     CLAUDE_PATH: { default: "/usr/local/bin/claude" },
