@@ -1,6 +1,6 @@
 // Invoked by the platform's TestWorkspaceSyncSDK against its actual Go service.
 import assert from 'node:assert/strict';
-import { writeFile, readFile, unlink } from 'node:fs/promises';
+import { writeFile, readFile, unlink, mkdir, stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { CantelopClient } from '../../dist/index.js';
 import { createProtocolWorker } from '../../dist/protocol-edge.js';
@@ -17,6 +17,11 @@ const app=new CantelopClient().app({name:'native-sync-test',runtime:{receive(){}
   const headers=new Headers(request.headers);headers.set('Authorization','Bearer fixture-token');
   return worker.fetch(new Request(request,{headers}),{CANTELOP_INTEGRATION_TOKEN:'fixture-token'});
 }}});
+// An empty project must be usable as agent cwd even when every parent is new.
+const emptyLocal=path.join(local,'empty-fixture');await mkdir(emptyLocal);
+const empty=await app.workspace({id}).sync({localDirectory:emptyLocal,remoteDirectory:'src/empty',pollIntervalMs:60000});
+try { await empty.ready();assert.equal(empty.status().state,'synced');assert.ok((await stat(path.join(path.dirname(remote),'src/empty'))).isDirectory()); }
+finally { await empty.stop();await rm(emptyLocal,{recursive:true,force:true}); }
 await writeFile(path.join(local,'binary'),Buffer.from([0,255,0,42]));
 let sync=await app.workspace({id}).sync({localDirectory:local,remoteDirectory:"my-project",pollIntervalMs:60000});
 try{

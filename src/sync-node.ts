@@ -92,8 +92,8 @@ export async function startSync(options: WorkspaceSyncOptions, workspaceId: stri
   const rootName = remoteDirectory ?? "project";
   // Nonlegacy baselines must fail closed if opened by an older SDK.
   const stateVersion = rootName === "project" ? 1 : 2;
-  // Root components are matched against exclusions case-insensitively; transfer paths keep 1.1.0 rules.
-  if (rootName !== "" && !validSyncPath(rootName.toLowerCase())) throw new TypeError("Invalid sync directory name");
+  // Match the native adapter and platform exclusion grammar.
+  if (rootName !== "" && !validSyncPath(rootName)) throw new TypeError("Invalid sync directory name");
   if (process.platform !== "linux" && process.platform !== "darwin") throw new WorkspaceSyncError("sync_platform_unsupported");
   options.signal?.throwIfAborted();
   const ignores = options.ignore ?? [];

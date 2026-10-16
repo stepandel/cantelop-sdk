@@ -46,13 +46,13 @@ export function validSyncPath(path: string, allowExcluded = false): boolean {
   if (typeof path!=="string" || !path || new TextEncoder().encode(path).length > 1024 || path.startsWith("/") || /[\\\x00\r\n]/.test(path)) return false;
   const parts = path.split("/");
   return parts.length <= 32 && parts.every(part => part !== "" && part !== "." && part !== ".." &&
-    (allowExcluded || !part.startsWith(SYNC_TEMP_PREFIX) && ![".git", ".cantelop", "node_modules", ".env"].includes(part) && !part.startsWith(".env.")));
+    (allowExcluded || !part.toLowerCase().startsWith(SYNC_TEMP_PREFIX) && ![".git", ".cantelop", "node_modules", ".env"].includes(part.toLowerCase()) && !part.toLowerCase().startsWith(".env.")));
 }
 export function validSyncRequest(method: string, query: URLSearchParams): boolean {
   for (const key of query.keys()) if (!["op", "path", "base", "executable", "root"].includes(key) || query.getAll(key).length !== 1) return false;
   const op = query.get("op");
   const root = query.get("root");
-  if (root !== null && root !== "" && !validSyncPath(root.toLowerCase())) return false;
+  if (root !== null && root !== "" && !validSyncPath(root)) return false;
   if (op === "scan") return method === "GET" && [...query.keys()].length === (query.has("root") ? 2 : 1);
   if (!validSyncPath(query.get("path") ?? "") || !/^(missing|[0-9a-f]{64})$/.test(query.get("base") ?? "")) return false;
   if (query.has("executable") && (op !== "write" || !/^[01]$/.test(query.get("executable") ?? ""))) return false;

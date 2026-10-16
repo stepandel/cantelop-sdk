@@ -105,7 +105,7 @@ test('writable status follows the manifest and mismatched roots are rejected',as
   f.setWrites(true);f.setManifestRoot('other');await assert.rejects(sync.flush(),{code:'sync_invalid_manifest'});
   assert.equal(sync.status().writable,undefined);
   await sync.stop();assert.equal(sync.status().writable,undefined);
-  assert.equal(validSyncPath('Node_Modules/pkg.json'),true);assert.equal(validSyncPath('.ENV'),true);
+  assert.equal(validSyncPath('Node_Modules/pkg.json'),false);assert.equal(validSyncPath('.ENV'),false);
 });
 test('divergent edits and delete/edit conflicts preserve both sides and persist their common base',async t=>{
   const f=await fixture(t);await writeFile(path.join(f.root,'a'),'base');let sync=await f.start();await sync.ready();await sync.stop();
