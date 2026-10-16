@@ -16,6 +16,8 @@ const item=(name,data,executable=false)=>({path:name,version:hash(data,executabl
 const fail=(code,status=409)=>Response.json({error:{code}},{status});
 async function fixture(t) {
   const root=await mkdtemp(path.join(tmpdir(),'cantelop-sync-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const state=await mkdtemp(path.join(tmpdir(),'cantelop-sync-state-'));t.after(()=>rm(state,{recursive:true,force:true}));
+  process.env.CANTELOP_SYNC_STATE_HOME=state;
   const files=new Map(), calls=[];let online=true,writes=true,corrupt=false;
   const platform=async request=>{
     calls.push(request.clone());

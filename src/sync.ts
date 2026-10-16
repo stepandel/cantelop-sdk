@@ -38,7 +38,7 @@ export const SYNC_PUBLIC_PREFIX = "/__cantelop/sync/workspaces/";
 export const SYNC_PUBLIC_ROUTE = /^\/__cantelop\/sync\/workspaces\/(wsp_[0-9a-f]{32})$/;
 export interface SyncEntry { readonly path: string; readonly version: string; readonly size: number; readonly executable: boolean }
 export function validSyncPath(path: string): boolean {
-  if (!path || path.length > 1024 || path.startsWith("/") || /[\\\x00\r\n]/.test(path)) return false;
+  if (typeof path!=="string" || !path || new TextEncoder().encode(path).length > 1024 || path.startsWith("/") || /[\\\x00\r\n]/.test(path)) return false;
   const parts = path.split("/");
   return parts.length <= 32 && parts.every(part => part !== "" && part !== "." && part !== ".." &&
     !part.startsWith(SYNC_TEMP_PREFIX) && ![".git", ".cantelop", "node_modules", ".env"].includes(part) && !part.startsWith(".env."));

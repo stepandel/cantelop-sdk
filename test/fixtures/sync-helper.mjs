@@ -8,9 +8,10 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { validSyncPath } from '../../dist/sync.js';
 
 const args=process.argv.slice(2),root=await realpath(args[args.indexOf('--directory')+1]),workspace=args[args.indexOf('--workspace')+1];
-const lock=path.join(root,'.cantelop-sync-lock');let owned=false;
+const stateDirectory=path.join(args[args.indexOf('--state-directory')+1],createHash('sha256').update(root).digest('hex'));await mkdir(stateDirectory,{recursive:true,mode:0o700});
+const lock=path.join(stateDirectory,'lock');let owned=false;
 try{await writeFile(lock,String(process.pid),{flag:'wx',mode:0o600});owned=true;}catch{process.stderr.write('sync_locked\n');process.exit(1);}
-const token=randomBytes(32).toString('hex'),state=path.join(root,`.cantelop-sync-${workspace}.json`);
+const token=randomBytes(32).toString('hex'),state=path.join(stateDirectory,`${workspace}.json`);
 const version=(data,executable)=>createHash('sha256').update(Buffer.from([executable?1:0])).update(data).digest('hex');
 const file=async name=>{
   if(!validSyncPath(name))throw new Error('sync_invalid_path');

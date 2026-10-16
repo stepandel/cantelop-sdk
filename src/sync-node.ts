@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import { createHash } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -14,7 +15,8 @@ const hash = (data: Uint8Array, executable: boolean) => createHash("sha256").upd
 const versionPattern = /^[0-9a-f]{64}$/;
 
 async function localAgent(directory: string, workspaceId: string) {
-  const child = spawn(process.env.CANTELOP_SYNC_HELPER ?? "cantelop", ["internal-sync-files", "--directory", path.resolve(directory), "--workspace", workspaceId], {
+  const stateDirectory=process.env.CANTELOP_SYNC_STATE_HOME ?? (process.platform==="darwin" ? path.join(os.homedir(),"Library","Application Support","cantelop","sync") : path.join(process.env.XDG_STATE_HOME ?? path.join(os.homedir(),".local","state"),"cantelop","sync"));
+  const child = spawn(process.env.CANTELOP_SYNC_HELPER ?? "cantelop", ["internal-sync-files", "--directory", path.resolve(directory), "--workspace", workspaceId,"--state-directory",path.resolve(stateDirectory)], {
     stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH ?? "" },
   });
   let diagnostic = "";
@@ -39,10 +41,11 @@ async function localAgent(directory: string, workspaceId: string) {
       };
       child.stdout.on("data", data);
       child.once("error", () => { finished(); reject(new WorkspaceSyncError("sync_cli_upgrade_required")); });
-      child.once("exit", () => { finished(); reject(new WorkspaceSyncError(diagnostic.includes("sync_locked") ? "sync_locked" : "sync_cli_upgrade_required")); });
+      child.once("exit", () => { finished(); reject(new WorkspaceSyncError(diagnostic.includes("sync_locked") ? "sync_locked" : diagnostic.includes("unknown command") ? "sync_cli_upgrade_required" : "sync_local_setup_failed")); });
     });
     child.stdout.resume();
-    const hello = JSON.parse(line) as { protocolVersion: number; origin: string; token: string; directory: string };
+    let hello: { protocolVersion: number; origin: string; token: string; directory: string };
+    try { hello=JSON.parse(line) as typeof hello; }catch {throw new WorkspaceSyncError("sync_cli_upgrade_required");}
     const origin = new URL(hello.origin);
     if (hello.protocolVersion !== 1 || origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.pathname !== "/" || origin.search || origin.hash || origin.username || origin.password || !/^[0-9a-f]{64}$/.test(hello.token) || !path.isAbsolute(hello.directory)) throw new WorkspaceSyncError("sync_invalid_helper");
     const send = async (pathname: string, method: string, signal: AbortSignal, data?: Uint8Array) => {
@@ -76,7 +79,7 @@ function entry(value: unknown): SyncEntry {
 }
 
 export async function startSync(options: WorkspaceSyncOptions, workspaceId: string, fetch: Fetch): Promise<WorkspaceSync> {
-  if (!options || typeof options.localDirectory !== "string" || !options.localDirectory || options.pollIntervalMs !== undefined && (!Number.isInteger(options.pollIntervalMs) || options.pollIntervalMs < 100 || options.pollIntervalMs > 60_000)) throw new TypeError("Invalid sync options");
+  if (!options || Object.keys(options).some(key=>!["localDirectory","ignore","pollIntervalMs","signal"].includes(key)) || typeof options.localDirectory !== "string" || !options.localDirectory || options.pollIntervalMs !== undefined && (!Number.isInteger(options.pollIntervalMs) || options.pollIntervalMs < 100 || options.pollIntervalMs > 60_000)) throw new TypeError("Invalid sync options");
   if (process.platform !== "linux" && process.platform !== "darwin") throw new WorkspaceSyncError("sync_platform_unsupported");
   options.signal?.throwIfAborted();
   const ignores = options.ignore ?? [];
@@ -85,7 +88,7 @@ export async function startSync(options: WorkspaceSyncOptions, workspaceId: stri
   const agent = await localAgent(options.localDirectory, workspaceId);
   const directory = agent.directory;
   const controller = new AbortController();
-  const signal = () => AbortSignal.any([controller.signal,AbortSignal.timeout(30_000)]);
+  const signal = () => AbortSignal.any([controller.signal,AbortSignal.timeout(30_000),...(options.signal ? [options.signal] : [])]);
   const localRequest = (op:string,name?:string,version?:string,data?:Uint8Array,executable?:boolean) => {
     const query=new URLSearchParams({op});
     if(name!==undefined){query.set("path",name);query.set("base",version ?? "missing");}
