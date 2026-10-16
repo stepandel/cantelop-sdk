@@ -27,7 +27,8 @@ export interface CodexHarnessFactoryOptions {
   readonly executable?: string | CodexExecutable;
   readonly model?: string;
   readonly systemPrompt?: string;
-  readonly approvalPolicy?: CodexThreadOptions["approvalPolicy"];
+  /** Hosted turns have no approval handler; gated policies would deny every request. */
+  readonly approvalPolicy?: "never";
   readonly sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   /** Native application configuration; these fields cannot be supplied by task messages. */
   readonly config?: Readonly<Record<string, unknown>>;
@@ -80,6 +81,8 @@ export class NativeCodex implements SessionHarness<CodexMessage, CodexEvent> {
     lifetime?: AbortSignal,
     private readonly connect: CodexClientFactory = createCodex,
   ) {
+    if (options.approvalPolicy !== undefined && options.approvalPolicy !== "never")
+      throw new TypeError("Hosted Codex supports only approvalPolicy \"never\"");
     this.store = new ConversationStore(
       options.workspace ?? process.cwd(),
       "codex",
@@ -215,55 +218,64 @@ const plain = (text: string) =>
   text
     .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-export const codexAuth = {
-  codeLogin: {
-    link(output: string) {
-      return plain(output).match(
-        /https:\/\/auth\.openai\.com\/codex\/device(?=\s|$)/,
-      )?.[0];
+/** Sign-in for the Workspace the runtime uses; pass the same `workspace` as createCodexRuntime(). */
+export function createCodexAuth(
+  config: { readonly workspace?: string } = {},
+) {
+  return {
+    codeLogin: {
+      link(output: string) {
+        return plain(output).match(
+          /https:\/\/auth\.openai\.com\/codex\/device(?=\s|$)/,
+        )?.[0];
+      },
+      userCode(output: string) {
+        return plain(output).match(
+          /(?:^|\n)\s*([A-Z0-9]{4}-[A-Z0-9]{4,5})\s*(?:\n|$)/,
+        )?.[1];
+      },
+      promptCount() {
+        return 0;
+      },
+      input() {
+        throw new Error("Enter the Codex device code on OpenAI's sign-in page");
+      },
     },
-    userCode(output: string) {
-      return plain(output).match(
-        /(?:^|\n)\s*([A-Z0-9]{4}-[A-Z0-9]{4,5})\s*(?:\n|$)/,
-      )?.[1];
+    async status(context) {
+      const { binary, ...options } = nativeAuth(
+        context,
+        "CODEX_PATH",
+        "/usr/local/bin/codex",
+        config.workspace,
+      );
+      const { code } = await runAuthCommand(binary, ["login", "status"], options);
+      if (code > 1) throw new Error("Codex login status unavailable");
+      return code === 0;
     },
-    promptCount() {
-      return 0;
+    async logout(context) {
+      const { binary, ...options } = nativeAuth(
+        context,
+        "CODEX_PATH",
+        "/usr/local/bin/codex",
+        config.workspace,
+      );
+      await runAuthCommand(binary, ["logout"], options);
     },
-    input() {
-      throw new Error("Enter the Codex device code on OpenAI's sign-in page");
+    terminal(context) {
+      const { binary, ...options } = nativeAuth(
+        context,
+        "CODEX_PATH",
+        "/usr/local/bin/codex",
+        config.workspace,
+      );
+      return loginTerminal(context, binary, ["login", "--device-auth"], {
+        ...options,
+        directories: [options.env.CODEX_HOME!],
+      });
     },
-  },
-  async status(context) {
-    const { binary, ...options } = nativeAuth(
-      context,
-      "CODEX_PATH",
-      "/usr/local/bin/codex",
-    );
-    const { code } = await runAuthCommand(binary, ["login", "status"], options);
-    if (code > 1) throw new Error("Codex login status unavailable");
-    return code === 0;
-  },
-  async logout(context) {
-    const { binary, ...options } = nativeAuth(
-      context,
-      "CODEX_PATH",
-      "/usr/local/bin/codex",
-    );
-    await runAuthCommand(binary, ["logout"], options);
-  },
-  terminal(context) {
-    const { binary, ...options } = nativeAuth(
-      context,
-      "CODEX_PATH",
-      "/usr/local/bin/codex",
-    );
-    return loginTerminal(context, binary, ["login", "--device-auth"], {
-      ...options,
-      directories: [options.env.CODEX_HOME!],
-    });
-  },
-} satisfies AppAuth;
+  } satisfies AppAuth;
+}
+export const codexAuth = createCodexAuth();
 
 export { createCodexRuntime } from "./codex-runtime.js";
 export type * from "./codex-protocol.js";

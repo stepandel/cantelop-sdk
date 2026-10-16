@@ -1,7 +1,7 @@
 import { CantelopClient } from "@cantelop/sdk";
 import {
   createCodexRuntime,
-  codexAuth,
+  createCodexAuth,
   codexDockerfile,
 } from "@cantelop/sdk/harnesses/codex";
 import type {
@@ -21,6 +21,6 @@ export const app = new CantelopClient().app<
     sandbox: "workspace-write",
     approvalPolicy: "never",
   }),
-  auth: codexAuth,
+  auth: createCodexAuth({ workspace: "/workspace" }),
   dockerfile: codexDockerfile,
 });

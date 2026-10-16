@@ -3,6 +3,7 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
 import { setMaxListeners } from "node:events";
+import { createRequire } from "node:module";
 import { createSessionDatabase } from "./session-database.js";
 import type { WorkspaceDatabase } from "./database.js";
 import {
@@ -18,6 +19,7 @@ export type {
 } from "./codex-storage.js";
 
 const exec = promisify(execFile);
+const { version: SDK_VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_PENDING_REQUESTS = 128;
 const MAX_SERVER_REQUESTS = 128;
@@ -176,7 +178,7 @@ export class CodexClient {
   /** @internal */
   async initialize(): Promise<void> {
     const result = await this.request<Record<string, unknown>>("initialize", {
-      clientInfo: { name: "cantelop_sdk", title: "Cantelop SDK", version: "1.0.1" },
+      clientInfo: { name: "cantelop_sdk", title: "Cantelop SDK", version: SDK_VERSION },
       capabilities: { experimentalApi: true, cantelopWorkspaceStorage: { protocolVersion: CODEX_WORKSPACE_STORAGE_PROTOCOL_VERSION } },
     });
     verifyStorageCapabilities(result.cantelopWorkspaceStorage);
@@ -242,6 +244,8 @@ export class CodexClient {
       }
       return;
     }
+    // An error for a frame the server could not identify has no request to settle.
+    if (message.id === null && message.error !== undefined) return;
     if (typeof message.id !== "number") throw new CodexError("invalid_frame");
     const pending = this.pending.get(message.id);
     if (!pending) return; // A timed-out request can still produce a late reply.
@@ -262,6 +266,7 @@ export class CodexClient {
       const response = request.method === CODEX_WORKSPACE_STORAGE_METHOD
         ? this.bridge.storage.handle(request.params)
         : this.options.onRequest ? this.options.onRequest(request) : Promise.reject(new CodexError("unhandled_server_request"));
+      const storage = request.method === CODEX_WORKSPACE_STORAGE_METHOD;
       const result = await Promise.race([
         response,
         new Promise<never>((_, reject) => {
@@ -269,10 +274,11 @@ export class CodexClient {
           if (this.exitSignal.signal.aborted) onExit();
           else this.exitSignal.signal.addEventListener("abort", onExit, { once: true });
         }),
-        new Promise<never>((_, reject) => {
+        // Approval handlers may wait on a person; only storage requests share the request deadline.
+        ...(storage ? [new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new CodexError("request_timeout")), this.options.requestTimeoutMs ?? 30_000);
           timer.unref();
-        }),
+        })] : []),
       ]);
       await this.write({ id: request.id, result: result ?? null });
     } catch (error) {

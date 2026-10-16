@@ -44,7 +44,8 @@ export async function withCodexTransaction<T>(
     await tx.commit();
     return result;
   } catch (error) {
-    if (!tx.closed) await tx.rollback();
+    // Report the operation's failure, not a secondary rollback failure.
+    if (!tx.closed) await tx.rollback().catch(() => undefined);
     throw error;
   } finally {
     tx.close();

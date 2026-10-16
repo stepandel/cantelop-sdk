@@ -150,7 +150,11 @@ export function createCodexRuntime(
         stop();
         throw context.signal.reason;
       }
-    })();
+    })().catch((error) => {
+      // A transient open failure must not wedge later activations.
+      opening = undefined;
+      throw error;
+    });
     await opening;
   }
 
@@ -166,160 +170,171 @@ export function createCodexRuntime(
     const controller = new AbortController();
     const current: ActiveTurn = { id, controller };
     active = current;
-    context.activity.start(
-      async (activity) => {
-        const abort = () => {
-          current.outcome ??= "interrupted";
-          controller.abort(activity.signal.reason);
-        };
-        activity.signal.addEventListener("abort", abort, { once: true });
-        if (activity.signal.aborted) abort();
-        const renew = setInterval(
-          () => {
-            try {
-              if (!activity.signal.aborted)
-                resources!.activity.extend(activityTimeoutMs);
-            } catch (error) {
-              controller.abort(error);
-            }
-          },
-          Math.max(1, Math.floor(activityTimeoutMs / 3)),
-        );
-        renew.unref();
-        let outcome: Status = "failed";
-        let executionStarted = false;
-        try {
-          const events = await store!.update((state) => {
-            state.queue = state.queue.filter((queued) => queued !== id);
-            const message = state.messages.find(
-              (message) => message.id === id,
-            )!;
-            message.status = "running";
-            return [messageStatus(message)];
-          });
-          publish(activity.output, events);
-          controller.signal.throwIfAborted();
-          const message = store!.state.messages.find(
-            (message) => message.id === id,
-          )!;
-          const native = factory(resources!, {
-            ...defaults,
-            ...message.settings,
-            // Native goals and child agents have no independent durable wake/ownership contract here.
-            config: {
-              ...defaults.config,
-              "features.multi_agent": false,
-              "features.multi_agent_v2": false,
-              "features.goals": false,
-            },
-            ...(store!.state.threadId === undefined
-              ? {}
-              : { conversation: { id: store!.state.threadId } }),
-          });
-          const prompt: CodexMessage = { type: "prompt", prompt: message.text };
-          executionStarted = true;
-          await native.queue(prompt, {
-            ...resources!,
-            signal: controller.signal,
-            message: { id, sequence: 0, payload: prompt },
-            view: activity.view,
-            send: (next) =>
-              activity.send({
-                type: "queue",
-                id: randomUUID(),
-                text: next.prompt,
-              }),
-            output: {
-              send: async (event) => {
-                const json = JSON.stringify(event);
-                if (Buffer.byteLength(json) > 4 * 1024 * 1024)
-                  throw new Error("Codex event exceeds 4 MiB");
-                let updates: Update[];
-                if (Buffer.byteLength(json) <= 16 * 1024)
-                  updates = [{ type: "codex", id, event }];
-                else {
-                  const eventId = randomUUID(),
-                    total = Math.ceil(json.length / 8192);
-                  updates = Array.from({ length: total }, (_, index) => ({
-                    type: "codex.fragment",
-                    id,
-                    eventId,
-                    index,
-                    total,
-                    json: json.slice(index * 8192, (index + 1) * 8192),
-                  }));
-                }
-                const committed = await store!.update((state) => {
-                  if (event.method === "thread/started") {
-                    const thread = event.params.thread as
-                      | { id?: unknown }
-                      | undefined;
-                    if (typeof thread?.id !== "string" || !thread.id)
-                      throw new Error("Invalid Codex thread binding");
-                    if (state.threadId && state.threadId !== thread.id)
-                      throw new Error("Codex thread binding changed");
-                    state.threadId = thread.id;
-                  }
-                  return updates;
-                });
-                publish(activity.output, committed);
-              },
-            },
-          });
-          outcome = "completed";
-        } catch {
-          // A native failure is a task outcome. Storage failures are resolved from
-          // committed state only after native execution and cleanup have stopped.
-          outcome = "failed";
-        } finally {
-          try {
-            try {
-              const events = await store!.update((state) => {
-                const message = state.messages.find(
-                  (message) => message.id === id,
-                )!;
-                message.status =
-                  message.outcome ??
-                  current.outcome ??
-                  (controller.signal.aborted ? "interrupted" : outcome);
-                delete message.settings;
-                delete message.outcome;
-                return [messageStatus(message)];
-              });
-              publish(activity.output, events);
-            } catch (error) {
-              if (error instanceof CodexWriterFenced) {
-                stopped = true;
-                throw error;
+    try {
+      context.activity.start(
+        async (activity) => {
+          const abort = () => {
+            current.outcome ??= "interrupted";
+            controller.abort(activity.signal.reason);
+          };
+          activity.signal.addEventListener("abort", abort, { once: true });
+          if (activity.signal.aborted) abort();
+          const renew = setInterval(
+            () => {
+              try {
+                if (!activity.signal.aborted)
+                  resources!.activity.extend(activityTimeoutMs);
+              } catch (error) {
+                controller.abort(error);
               }
-              await reopen(activity.output, executionStarted ? undefined : id);
-            }
-            active = undefined;
-            // Even cancellation drains accepted follow-ups. Lifetime shutdown does not.
-            if (!stopped) activity.send({ type: "drain" });
-          } finally {
-            clearInterval(renew);
-            activity.signal.removeEventListener("abort", abort);
-          }
-        }
-      },
-      {
-        timeoutMs: activityTimeoutMs,
-        onCancel: () => {
-          current.outcome ??= "cancelled";
-          const intent = store!.update((state) => {
-            const message = state.messages.find(
+            },
+            Math.max(1, Math.floor(activityTimeoutMs / 3)),
+          );
+          renew.unref();
+          let outcome: Status = "failed";
+          let executionStarted = false;
+          try {
+            const events = await store!.update((state) => {
+              state.queue = state.queue.filter((queued) => queued !== id);
+              const message = state.messages.find(
+                (message) => message.id === id,
+              )!;
+              message.status = "running";
+              return [messageStatus(message)];
+            });
+            publish(activity.output, events);
+            controller.signal.throwIfAborted();
+            const message = store!.state.messages.find(
               (message) => message.id === id,
             )!;
-            if (message.status === "running" || message.status === "queued")
-              message.outcome ??= "cancelled";
-            return [];
-          });
-          controller.abort();
-          return intent.then(() => {});
+            const native = factory(resources!, {
+              ...defaults,
+              ...message.settings,
+              // Native goals and child agents have no independent durable wake/ownership contract here.
+              config: {
+                ...defaults.config,
+                "features.multi_agent": false,
+                "features.multi_agent_v2": false,
+                "features.goals": false,
+              },
+              ...(store!.state.threadId === undefined
+                ? {}
+                : { conversation: { id: store!.state.threadId } }),
+            });
+            const prompt: CodexMessage = {
+              type: "prompt",
+              prompt: message.text,
+            };
+            executionStarted = true;
+            await native.queue(prompt, {
+              ...resources!,
+              signal: controller.signal,
+              message: { id, sequence: 0, payload: prompt },
+              view: activity.view,
+              send: (next) =>
+                activity.send({
+                  type: "queue",
+                  id: randomUUID(),
+                  text: next.prompt,
+                }),
+              output: {
+                send: async (event) => {
+                  const json = JSON.stringify(event);
+                  if (Buffer.byteLength(json) > 4 * 1024 * 1024)
+                    throw new Error("Codex event exceeds 4 MiB");
+                  let updates: Update[];
+                  if (Buffer.byteLength(json) <= 16 * 1024)
+                    updates = [{ type: "codex", id, event }];
+                  else {
+                    const eventId = randomUUID(),
+                      total = Math.ceil(json.length / 8192);
+                    updates = Array.from({ length: total }, (_, index) => ({
+                      type: "codex.fragment",
+                      id,
+                      eventId,
+                      index,
+                      total,
+                      json: json.slice(index * 8192, (index + 1) * 8192),
+                    }));
+                  }
+                  const committed = await store!.update((state) => {
+                    if (event.method === "thread/started") {
+                      const thread = event.params.thread as
+                        { id?: unknown } | undefined;
+                      if (typeof thread?.id !== "string" || !thread.id)
+                        throw new Error("Invalid Codex thread binding");
+                      if (state.threadId && state.threadId !== thread.id)
+                        throw new Error("Codex thread binding changed");
+                      state.threadId = thread.id;
+                    }
+                    return updates;
+                  });
+                  publish(activity.output, committed);
+                },
+              },
+            });
+            outcome = "completed";
+          } catch {
+            // A native failure is a task outcome. Storage failures are resolved from
+            // committed state only after native execution and cleanup have stopped.
+            outcome = "failed";
+          } finally {
+            try {
+              try {
+                const events = await store!.update((state) => {
+                  const message = state.messages.find(
+                    (message) => message.id === id,
+                  )!;
+                  message.status =
+                    message.outcome ??
+                    current.outcome ??
+                    (controller.signal.aborted ? "interrupted" : outcome);
+                  delete message.settings;
+                  delete message.outcome;
+                  return [messageStatus(message)];
+                });
+                publish(activity.output, events);
+              } catch (error) {
+                if (error instanceof CodexWriterFenced) {
+                  stopped = true;
+                  throw error;
+                }
+                await reopen(
+                  activity.output,
+                  executionStarted ? undefined : id,
+                );
+              }
+              active = undefined;
+              // Even cancellation drains accepted follow-ups. Lifetime shutdown does not.
+              if (!stopped) activity.send({ type: "drain" });
+            } finally {
+              clearInterval(renew);
+              activity.signal.removeEventListener("abort", abort);
+            }
+          }
         },
-      },
-    );
+        {
+          timeoutMs: activityTimeoutMs,
+          onCancel: () => {
+            current.outcome ??= "cancelled";
+            const intent = store!.update((state) => {
+              const message = state.messages.find(
+                (message) => message.id === id,
+              )!;
+              if (message.status === "running" || message.status === "queued")
+                message.outcome ??= "cancelled";
+              return [];
+            });
+            controller.abort();
+            return intent.then(() => {});
+          },
+        },
+      );
+    } catch (error) {
+      // The slot is owned elsewhere; a later drain retries this queued work.
+      if (active === current) active = undefined;
+      throw error;
+    }
   }
 
   return {
@@ -447,6 +462,7 @@ export function createCodexRuntime(
           await drain(context);
           return;
         }
+        const steered = command.type === "steer" ? active : undefined;
         const events = await store!.update((state) => {
           if (state.messages.length >= 1000)
             throw new Error("Codex Session full");
@@ -460,16 +476,16 @@ export function createCodexRuntime(
           state.messages.push(message);
           if (command.type === "steer") state.queue.unshift(message.id);
           else state.queue.push(message.id);
-          if (command.type === "steer" && active)
+          if (steered && active === steered)
             state.messages.find(
-              (message) => message.id === active!.id,
+              (message) => message.id === steered.id,
             )!.outcome = "steered";
           return [messageStatus(message)];
         });
         // Steering is durable interrupt-then-resume, avoiding an ambiguous in-flight native steer.
-        if (command.type === "steer" && active) {
-          active.outcome = "steered";
-          active.controller.abort();
+        if (steered && active === steered) {
+          steered.outcome = "steered";
+          steered.controller.abort();
         }
         publish(context.output, events);
         await drain(context);
