@@ -6,7 +6,7 @@ import { ClaudeAuthenticationRequired, type ClaudeHarnessFactoryOptions } from '
 import { ConversationStore, type NativeEvent } from './cli.js'
 import { createClaudeStream, type ClaudeStream, type ClaudeStreamFactory } from './claude-stream.js'
 import { DurableClaudeStore, type DurableClaudeInput } from './claude-durable-state.js'
-import { claudeView, observeClaude } from './claude-view.js'
+import { claudeView, observeClaude, clip } from './claude-view.js'
 import { validateClaudeSessionConfig, validateClaudeSessionSettings } from './claude-config.js'
 import type { ClaudeSessionCommand as Command, ClaudeSessionEvent as Event, ClaudeSessionReply as Reply,
   ClaudeSessionView as View, ClaudeSessionSettings as Settings } from './claude-protocol.js'
@@ -57,6 +57,7 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
           if (conversation) {
             if (!/^[0-9a-f-]{36}$/i.test(conversation.id)) throw new TypeError('Invalid Claude conversation ID')
             state.conversationId = conversation.id; state.nativeStarted = conversation.resumable
+            if (conversation.resumable && !state.entries.length) state.truncated = true
           }
         }
         const wasCancelled = state.run?.status === 'cancelling'
@@ -299,7 +300,9 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
         state.messages.push({ id: command.id, text: command.text, nativeId: randomUUID(), runId,
           status: 'accepted', settings, fingerprint: hash })
         if (state.run?.id === runId) state.run.inputIds.push(command.id)
-        state.entries.push({ id: command.id, runId, role: 'user', text: command.text, status: 'completed' })
+        const text = clip(command.text, 8 * 1024)
+        if (text !== command.text) state.truncated = true
+        state.entries.push({ id: command.id, runId, role: 'user', text, status: 'completed' })
         if (state.entries.length > 256) { state.entries.shift(); state.truncated = true }
       })
       await flush(context)
