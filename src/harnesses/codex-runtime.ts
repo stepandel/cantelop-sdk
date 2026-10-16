@@ -27,9 +27,10 @@ import {
   type CodexSessionReply as Reply,
   type CodexSessionStatus as Status,
   type CodexSessionUpdate as Update,
+  type CodexSessionView as View,
 } from "./codex-protocol.js";
 
-type Activation = SessionActivationContext<Command, Event>;
+type Activation = SessionActivationContext<Command, Event, View>;
 type Factory = (
   context: SessionHarnessContext,
   options: CodexHarnessFactoryOptions,
@@ -56,7 +57,7 @@ const messageStatus = (message: CodexWorkMessage): Update => ({
 export function createCodexRuntime(
   options: CodexRuntimeOptions = {},
   factory: Factory = createCodexHarness,
-): SessionBehaviour<Command, Event, Reply> {
+): SessionBehaviour<Command, Event, Reply, View> {
   const { activityTimeoutMs = 1_800_000, ...defaults } =
     structuredClone(options);
   if (
@@ -138,6 +139,7 @@ export function createCodexRuntime(
       store = await CodexStateStore.open(
         await context.database(),
         context.session.id,
+        (view) => resources!.view.commit(view),
       );
       const events = await store.update((state) => recoverRunning(state));
       publish(context.output, events);
@@ -260,7 +262,8 @@ export function createCodexRuntime(
                   const committed = await store!.update((state) => {
                     if (event.method === "thread/started") {
                       const thread = event.params.thread as
-                        { id?: unknown } | undefined;
+                        | { id?: unknown }
+                        | undefined;
                       if (typeof thread?.id !== "string" || !thread.id)
                         throw new Error("Invalid Codex thread binding");
                       if (state.threadId && state.threadId !== thread.id)
@@ -353,22 +356,9 @@ export function createCodexRuntime(
         if (!command || typeof command !== "object")
           throw new TypeError("Invalid Codex command");
         if (command.type === "snapshot") {
-          const state = store!.state;
           context.reply({
             type: "session.state",
-            configured: true,
-            cursor: state.cursor,
-            ...(state.threadId === undefined
-              ? {}
-              : { threadId: state.threadId }),
-            messages: state.messages.slice(-50).map(({ id, text, status }) => ({
-              id,
-              text: text.slice(0, 128),
-              status,
-            })),
-            truncated:
-              state.messages.length > 50 ||
-              state.messages.some((message) => message.text.length > 128),
+            ...store!.view,
           });
           return;
         }

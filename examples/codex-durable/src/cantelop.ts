@@ -8,12 +8,14 @@ import type {
   CodexSessionCommand,
   CodexSessionEvent,
   CodexSessionReply,
+  CodexSessionView,
 } from "@cantelop/sdk/harnesses/codex/protocol";
 
 export const app = new CantelopClient().app<
   CodexSessionCommand,
   CodexSessionEvent,
-  CodexSessionReply
+  CodexSessionReply,
+  CodexSessionView
 >({
   name: "durable-codex",
   runtime: createCodexRuntime({

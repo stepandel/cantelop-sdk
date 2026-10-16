@@ -46,15 +46,16 @@ export type CodexSessionEvent =
   | CodexCommittedEvent
   | { type: "session.ready"; sessionId: string }
   | { type: "error"; code: string };
+/** Bounded projection of committed work. Transcript events remain in the SQL log. */
+export interface CodexSessionView {
+  configured: true;
+  threadId?: string;
+  cursor: number;
+  messages: CodexSessionMessage[];
+  truncated: boolean;
+}
 export type CodexSessionReply =
-  | {
-      type: "session.state";
-      configured: true;
-      threadId?: string;
-      cursor: number;
-      messages: CodexSessionMessage[];
-      truncated: boolean;
-    }
+  | ({ type: "session.state" } & CodexSessionView)
   | {
       type: "session.events";
       events: CodexCommittedEvent[];

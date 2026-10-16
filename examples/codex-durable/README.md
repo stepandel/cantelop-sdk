@@ -20,7 +20,8 @@ if (!login.authenticated) {
 }
 const session = workspace.session({ id: conversationId });
 await session.dispatch({ type: "queue", id: requestId, text: "Inspect this repository" });
-const snapshot = await session.request({ type: "snapshot" });
+const snapshot = await session.view();
+// snapshot.state contains recent task states and the durable SQL event cursor.
 ```
 
 Keep `requestId` stable when retrying intake. Use `steer` to commit a priority
@@ -33,6 +34,13 @@ For reconnects, page `session.request({ type: "events", after: cursor })` until
 `hasMore` is false. Each committed event has a stable `seq`; deduplicate live and
 replayed delivery by that sequence. `CodexSessionOutput` from the browser-safe
 protocol entry point decodes oversized native events.
+
+`.view()` reads the last committed task summary without activating a Sandbox,
+including after stop. Before the first activation it returns `session_view_not_found`.
+Dispatch acceptance can precede that first projection; treat this error as a loading
+state and retry the read.
+The view's `state.cursor` belongs to the SQL event log; its outer `cursor` belongs
+to the platform stream. Transcript events remain in SQL rather than the bounded view.
 
 See [the durability contract](../../docs/codex.md) for storage, ownership, observation
 and Codex limitations. The [stock CLI example](../codex/README.md) remains available

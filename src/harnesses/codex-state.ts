@@ -7,6 +7,7 @@ import type {
   CodexSessionMessage,
   CodexSessionSettings,
   CodexSessionUpdate,
+  CodexSessionView,
 } from "./codex-protocol.js";
 
 export interface CodexWorkMessage extends CodexSessionMessage {
@@ -47,6 +48,7 @@ export class CodexStateStore {
   private constructor(
     private readonly database: WorkspaceDatabase,
     readonly sessionId: string,
+    private readonly commitView?: (view: CodexSessionView) => Promise<void>,
     previous?: CodexStateStore,
   ) {
     this.writer = previous?.writer ?? randomUUID();
@@ -57,15 +59,37 @@ export class CodexStateStore {
   get failed(): boolean {
     return this.failure !== undefined;
   }
+  get view(): CodexSessionView {
+    const state = this.current;
+    return {
+      configured: true,
+      cursor: state.cursor,
+      ...(state.threadId === undefined ? {} : { threadId: state.threadId }),
+      messages: state.messages.slice(-50).map(({ id, text, status }) => ({
+        id,
+        text: text.slice(0, 128),
+        status,
+      })),
+      truncated:
+        state.messages.length > 50 ||
+        state.messages.some((message) => message.text.length > 128),
+    };
+  }
 
   static async open(
     database: WorkspaceDatabase,
     sessionId: string,
+    commitView?: (view: CodexSessionView) => Promise<void>,
     previous?: CodexStateStore,
   ): Promise<CodexStateStore> {
     if (!sessionId || sessionId.length > 512)
       throw new TypeError("Invalid Codex Session identity");
-    const store = new CodexStateStore(database, sessionId, previous);
+    const store = new CodexStateStore(
+      database,
+      sessionId,
+      commitView,
+      previous,
+    );
     await database.executeMultiple(schema);
     store.current = await store.transact(async (tx) => {
       if (previous) {
@@ -110,7 +134,12 @@ export class CodexStateStore {
 
   /** Reopen this incarnation's committed state without taking ownership from a replacement. */
   reopen(database = this.database): Promise<CodexStateStore> {
-    return CodexStateStore.open(database, this.sessionId, this);
+    return CodexStateStore.open(
+      database,
+      this.sessionId,
+      this.commitView,
+      this,
+    );
   }
 
   /** State changes and their events commit atomically, before either becomes visible. */
@@ -140,6 +169,9 @@ export class CodexStateStore {
             );
         });
         this.current = next;
+        // Serialize platform projections with SQL updates. A failed handoff is
+        // recovered from committed SQL state, never by repeating the mutation.
+        await this.commitView?.(this.view);
         return events;
       } catch (error) {
         // Never replay a failed or ambiguous commit in this incarnation.

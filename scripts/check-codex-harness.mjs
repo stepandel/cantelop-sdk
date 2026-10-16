@@ -84,11 +84,11 @@ try {
       catch (error) { console.error("Native qualification task failed", error); throw error; }
     }, steer: native.steer.bind(native), cancel: native.cancel.bind(native) };
   };
-  let busy = false, mailbox = Promise.resolve(), reply;
+  let busy = false, mailbox = Promise.resolve(), reply, projection;
   const lifetime = new AbortController();
   let runtime;
   const context = { signal: lifetime.signal, session: { id: "durable-native-smoke" }, env: {}, database: async () => db,
-    output: { send: async () => { throw new Error("Observer disconnected"); } }, view: { commit: async () => {} },
+    output: { send: async () => { throw new Error("Observer disconnected"); } }, view: { commit: async state => { projection = structuredClone(state); } },
     send: async command => { void send(command); },
     activity: { get active() { return busy; }, extend() {}, start(work) {
       busy = true; const pending = [];
@@ -120,6 +120,8 @@ try {
   await send(prompt); // Redelivery must not execute another native turn.
   await send({ type: "queue", id: "request-two", text: "Continue the durable conversation." });
   const after = await completed();
+  const { type: replyType, ...snapshot } = after;
+  assert.deepEqual(projection, snapshot);
   assert.equal(before.threadId, after.threadId);
   assert.equal(modelCalls, 4);
   assert.deepEqual(models.slice(-2), ["gpt-5.1-codex", "gpt-5.1"]);

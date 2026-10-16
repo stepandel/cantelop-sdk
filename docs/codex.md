@@ -5,9 +5,9 @@ The packaged integration follows the same App shape as Claude:
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
 import { createCodexRuntime, createCodexAuth, codexDockerfile } from "@cantelop/sdk/harnesses/codex";
-import type { CodexSessionCommand, CodexSessionEvent, CodexSessionReply } from "@cantelop/sdk/harnesses/codex/protocol";
+import type { CodexSessionCommand, CodexSessionEvent, CodexSessionReply, CodexSessionView } from "@cantelop/sdk/harnesses/codex/protocol";
 
-export const app = new CantelopClient().app<CodexSessionCommand, CodexSessionEvent, CodexSessionReply>({
+export const app = new CantelopClient().app<CodexSessionCommand, CodexSessionEvent, CodexSessionReply, CodexSessionView>({
   name: "durable-codex",
   runtime: createCodexRuntime({ workspace: "/workspace", sandbox: "workspace-write", approvalPolicy: "never" }),
   auth: createCodexAuth({ workspace: "/workspace" }),
@@ -98,6 +98,32 @@ database fence cannot revoke an external shell or MCP side effect. Different
 Sessions in one Workspace have isolated inboxes, statuses and event histories.
 
 ## Committed observation
+
+`session.view()` reads the last platform-committed `CodexSessionView` without
+activating a Sandbox. It contains the native thread ID, the latest 50 task states
+with bounded input previews, a truncation flag, and the SQL event cursor:
+
+```ts
+const view = await session.view();
+renderTasks(view.state.messages);
+```
+
+The runtime commits SQL state first, then hands its projection to the platform,
+before acknowledging intake or publishing related live events. These are two
+separate commits: a crash between them can leave the view behind SQL. Every
+activation repairs the projection from committed SQL, including interrupted task
+status, before starting native work. Failed or ambiguous projection handoffs use
+the same recovery path; they never cause the original mutation to run again.
+Before the first activation creates a projection, `.view()` returns
+`session_view_not_found`. Dispatch acknowledges transport admission before
+application intake completes, so treat a missing first projection as a loading
+state and retry the read. Afterward the last projection remains readable while
+the Sandbox is stopped.
+
+The view is a task summary; transcript content remains in the durable event log.
+`view.state.cursor` is a SQL position, while `view.cursor` is the platform stream
+boundary. Keep their cursors separate. The existing `snapshot` command returns
+the same state but can activate a Sandbox.
 
 Session SSE/WebSocket cursors remain transient transport positions. Each packaged
 Codex event additionally has a durable, Session-local SQL `seq`. Publication is

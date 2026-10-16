@@ -12,6 +12,7 @@ import { createCodex } from "../dist/codex.js";
 import { CodexStateStore } from "../dist/harnesses/codex-state.js";
 import { CodexSessionOutput } from "../dist/harnesses/codex-protocol.js";
 import { createSessionRuntimeHandler } from "../dist/runtime.js";
+import { CantelopClient } from "../dist/index.js";
 
 async function database(t) {
   const root = await mkdtemp(join(tmpdir(), "codex-durable-"));
@@ -82,7 +83,13 @@ async function runtime(
     events = [];
   let active = false,
     mailbox = Promise.resolve();
-  const replies = [];
+  const replies = [],
+    views = [];
+  const view = {
+    commit: async (state) => {
+      views.push(structuredClone(state));
+    },
+  };
   const emit = async (event) => {
     await output(event);
     events.push(event);
@@ -93,7 +100,7 @@ async function runtime(
     env: {},
     database: async () => db,
     output: { send: emit },
-    view: { commit: async () => {} },
+    view,
     send: async (command) => {
       void send(command).catch((error) => errors.push(error));
     },
@@ -151,6 +158,8 @@ async function runtime(
     errors,
     tasks,
     controller,
+    views,
+    view,
     async snapshot() {
       await send({ type: "snapshot" });
       return replies.at(-1);
@@ -191,7 +200,7 @@ test("intake commits once, snapshots hide settings, and retries never rerun work
     "features.goals": false,
   });
   assert.doesNotMatch(
-    JSON.stringify(await app.snapshot()),
+    JSON.stringify([await app.snapshot(), ...app.views]),
     /private rules|settings|fingerprint/,
   );
   native.runs[0].resolve();
@@ -209,6 +218,145 @@ test("intake commits once, snapshots hide settings, and retries never rerun work
     log.events.map((e) => e.seq),
     log.events.map((_, i) => i + 1),
   );
+});
+
+test("views follow SQL commits in order, acknowledge intake, and match snapshots", async (t) => {
+  const { db } = await database(t),
+    native = fake();
+  const app = await runtime(t, db, native.create);
+  assert.deepEqual(app.views, [
+    { configured: true, cursor: 0, messages: [], truncated: false },
+  ]);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const commit = app.view.commit;
+  let admitted = false;
+  app.view.commit = async (view) => {
+    const stored = JSON.parse(
+      String(
+        (
+          await db.execute(
+            "SELECT state FROM cantelop_codex_sessions WHERE session_id='session-a'",
+          )
+        ).rows[0].state,
+      ),
+    );
+    assert.equal(
+      view.cursor,
+      stored.cursor,
+      "SQL must commit before its projection",
+    );
+    if (view.messages.at(-1)?.status === "queued") {
+      admitted = true;
+      await gate;
+    }
+    await commit(view);
+  };
+  const pending = app.send({
+    type: "queue",
+    id: "one",
+    text: "Inspect",
+    settings: { systemPrompt: "private instructions" },
+  });
+  await until(() => admitted);
+  assert.equal(
+    native.runs.length,
+    0,
+    "Native execution waits for committed intake projection",
+  );
+  release();
+  await pending;
+  await until(() => native.runs.length === 1);
+  await native.runs[0].work.output.send({
+    method: "item/agentMessage/delta",
+    params: { delta: "Hello" },
+  });
+  native.runs[0].resolve();
+  await until(
+    async () => (await app.snapshot()).messages[0].status === "completed",
+  );
+  const { type, ...snapshot } = await app.snapshot();
+  assert.deepEqual(app.views.at(-1), snapshot);
+  assert.ok(
+    app.views.every(
+      (view, index) =>
+        index === 0 || view.cursor >= app.views[index - 1].cursor,
+    ),
+  );
+  assert.doesNotMatch(
+    JSON.stringify(app.views),
+    /private instructions|settings|fingerprint/,
+  );
+});
+
+test("a lost view acknowledgment recovers admitted work without repeating its mutation", async (t) => {
+  const { db } = await database(t),
+    native = fake();
+  const app = await runtime(t, db, native.create);
+  const commit = app.view.commit;
+  let loseNext = true;
+  app.view.commit = async (view) => {
+    await commit(view);
+    if (loseNext) {
+      loseNext = false;
+      throw new Error("Lost view acknowledgment");
+    }
+  };
+  const command = { type: "queue", id: "once", text: "Admitted once" };
+  await assert.rejects(app.send(command), /Lost view acknowledgment/);
+  await until(() => native.runs.length === 1);
+  native.runs[0].resolve();
+  await until(
+    async () => (await app.snapshot()).messages[0].status === "completed",
+  );
+  await app.send(command);
+  assert.equal(native.runs.length, 1);
+  assert.equal(app.views.at(-1).messages[0].status, "completed");
+  assert.equal(
+    (await app.log()).events.filter(
+      (event) => event.type === "message.status" && event.status === "queued",
+    ).length,
+    1,
+  );
+});
+
+test("projection failure during native work preserves the log and recovers a terminal view", async (t) => {
+  const { db } = await database(t),
+    native = fake();
+  const app = await runtime(t, db, native.create);
+  await app.send({ type: "queue", id: "unsafe", text: "Unsafe effect" });
+  await until(() => native.runs.length === 1);
+  const commit = app.view.commit;
+  let failed = false;
+  app.view.commit = async (view) => {
+    if (!failed) {
+      failed = true;
+      throw new Error("View unavailable");
+    }
+    await commit(view);
+  };
+  const event = {
+    method: "item/agentMessage/delta",
+    params: { delta: "Already committed" },
+  };
+  await assert.rejects(
+    native.runs[0].work.output.send(event),
+    /View unavailable/,
+  );
+  native.runs[0].reject(new Error("Stop native execution"));
+  await until(
+    async () => (await app.snapshot()).messages[0].status === "interrupted",
+  );
+  assert.equal(app.views.at(-1).messages[0].status, "interrupted");
+  assert.equal(
+    (await app.log()).events.filter(
+      (e) => e.type === "codex" && e.event.method === event.method,
+    ).length,
+    1,
+  );
+  assert.equal(native.runs.length, 1);
 });
 
 test("every activation resumes queued input while unsafe running input remains interrupted", async (t) => {
@@ -242,10 +390,34 @@ test("every activation resumes queued input while unsafe running input remains i
   assert.equal(native.runs[0].options.conversation.id, "thread-before-restart");
   assert.equal(native.runs[0].options.model, "saved-model");
   assert.equal((await app.snapshot()).messages[0].status, "interrupted");
+  assert.equal(app.views[0].messages[0].status, "interrupted");
+  assert.equal(app.views[0].threadId, "thread-before-restart");
   native.runs[0].resolve();
   await until(
     async () => (await app.snapshot()).messages[1].status === "completed",
   );
+});
+
+test("view previews stay within the platform frame limit for escaped input and long histories", async (t) => {
+  const { db } = await database(t);
+  const store = await CodexStateStore.open(db, "bounded-view");
+  await store.update((state) => {
+    for (let index = 0; index < 55; index++)
+      state.messages.push({
+        id: "\u0000".repeat(41) + index,
+        text: "\u0001".repeat(200),
+        status: "completed",
+        fingerprint: "private fingerprint",
+        settings: { systemPrompt: "private rules" },
+      });
+    return [];
+  });
+  const view = store.view;
+  assert.equal(view.messages.length, 50);
+  assert.equal(view.messages[0].text.length, 128);
+  assert.equal(view.truncated, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(view)) < 64 * 1024);
+  assert.doesNotMatch(JSON.stringify(view), /private|settings|fingerprint/);
 });
 
 test("cancellation intent and steering survive replacement; queued work is isolated per Session", async (t) => {
@@ -630,14 +802,17 @@ test("SIGKILL after an unsafe effect retains accepted work and never repeats the
   );
 });
 
-test("real runtime keeps native work alive after intake settles and supports targeted cancellation", async (t) => {
+test("real runtime commits views, keeps work owned, and serves cold view reads", async (t) => {
   const { db } = await database(t),
     native = fake();
   const durable = createCodexRuntime({ activityTimeoutMs: 90 }, native.create);
+  let activations = 0;
   const wrapped = {
     ...durable,
-    onActivate: (context) =>
-      durable.onActivate({ ...context, database: async () => db }),
+    onActivate: (context) => {
+      activations++;
+      return durable.onActivate({ ...context, database: async () => db });
+    },
     receive: (context) =>
       durable.receive({ ...context, database: async () => db }),
   };
@@ -645,14 +820,17 @@ test("real runtime keeps native work alive after intake settles and supports tar
   const server = createServer(
     createSessionRuntimeHandler(wrapped, { sandboxId }),
   );
+  const collector = new AbortController();
+  let collecting = Promise.resolve();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(
-    () =>
-      new Promise((resolve) => {
-        server.close(resolve);
-        server.closeAllConnections();
-      }),
-  );
+  t.after(async () => {
+    collector.abort();
+    await collecting;
+    await new Promise((resolve) => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
+  });
   const url = `http://127.0.0.1:${server.address().port}`;
   const headers = {
     "X-Cantelop-Sandbox-ID": sandboxId,
@@ -687,6 +865,56 @@ test("real runtime keeps native work alive after intake settles and supports tar
       ),
     );
   await dispatch(1, { type: "queue", id: "long", text: "Keep working" });
+  let projection;
+  collecting = (async () => {
+    let cursor = 0;
+    while (!collector.signal.aborted) {
+      const page = await (
+        await fetch(
+          `${url}/__cantelop/v2/runtime/events?after=${cursor}&wait=0`,
+          { headers, signal: collector.signal },
+        )
+      ).json();
+      for (const event of page.events) {
+        if (event.view !== undefined)
+          projection = {
+            protocolVersion: 2,
+            sessionId: "http-session",
+            workspaceId: "wsp_" + "b".repeat(32),
+            revision: String(event.cursor),
+            updatedAt: new Date().toISOString(),
+            cursor: { streamId: "c".repeat(32), sequence: event.cursor },
+            state: event.view,
+          };
+        cursor = event.cursor;
+      }
+      if (page.events.length) {
+        const ack = await fetch(`${url}/__cantelop/v2/runtime/events/ack`, {
+          method: "POST",
+          headers,
+          signal: collector.signal,
+          body: JSON.stringify({ through: cursor }),
+        });
+        assert.equal(ack.status, 200);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  })().catch((error) => {
+    if (!collector.signal.aborted) throw error;
+  });
+  const session = new CantelopClient()
+    .app({
+      name: "view-codex",
+      runtime: durable,
+      connection: {
+        fetch: async (request) => {
+          assert.equal((await request.json()).command.type, "view");
+          return Response.json(projection);
+        },
+      },
+    })
+    .workspace({ id: "wsp_" + "b".repeat(32) })
+    .session({ id: "http-session" });
   await until(() => native.runs.length === 1);
   await new Promise((resolve) => setTimeout(resolve, 220));
   assert.equal(
@@ -695,6 +923,7 @@ test("real runtime keeps native work alive after intake settles and supports tar
     "renewal uses activation capabilities after the intake invocation closes",
   );
   assert.equal((await state()).messages[0].status, "running");
+  assert.equal((await session.view()).state.messages[0].status, "running");
   const status = await (
     await fetch(url + "/__cantelop/v2/runtime", { headers })
   ).json();
@@ -702,4 +931,20 @@ test("real runtime keeps native work alive after intake settles and supports tar
   assert.equal(status.capabilities.redelivery, true);
   await dispatch(2, { type: "cancel", id: "long" });
   await until(async () => (await state()).messages[0].status === "cancelled");
+  await until(() => projection.state.messages[0]?.status === "cancelled");
+  await until(
+    async () =>
+      (await (await fetch(url + "/__cantelop/v2/runtime", { headers })).json())
+        .quiescent,
+  );
+  collector.abort();
+  await collecting;
+  await new Promise((resolve) => {
+    server.close(resolve);
+    server.closeAllConnections();
+  });
+  const parked = await session.view();
+  assert.equal(parked.state.messages[0].status, "cancelled");
+  assert.equal(parked.state.cursor, (await state()).cursor);
+  assert.equal(activations, 1, "View reads must not activate a Sandbox");
 });
