@@ -5,7 +5,7 @@ import { createProtocolWorker } from '../dist/protocol-edge.js';
 
 function fixture(platform) {
   const calls = [];
-  const worker = createProtocolWorker({ runtimeId: 'unrelated.v1', environment: { GH_TOKEN: { secret: true }, MODEL: {} }, fetch: async request => {
+  const worker = createProtocolWorker({ runtimeId: 'unrelated.v1', environment: { GH_TOKEN: { secret: true }, MODEL: {}, API_KEY: { secret: true, required: true }, REGION: { required: true, default: 'us' } }, fetch: async request => {
     assert.equal(request.headers.get('Authorization'), null);
     calls.push({ path: new URL(request.url).pathname, body: await request.json() });
     return platform(calls.at(-1));
@@ -22,7 +22,11 @@ test('environment updates use the existing App connection without a Workspace, S
   await f.app.environment().unset('GH_TOKEN', { secret: true });
   await f.app.environment().status(7);
   assert.deepEqual(f.calls.map(call => call.path), ['/__cantelop/v1/environment/set', '/__cantelop/v1/environment/unset', '/__cantelop/v1/environment/status']);
-  assert.deepEqual(f.calls[0].body, { type: 'app.environment.set', name: 'GH_TOKEN', value: 'fixture-token', secret: true });
+  assert.match(f.calls[0].body.id, /^msg_[0-9a-f]{32}$/);
+  assert.deepEqual(f.calls[0].body, { type: 'app.environment.set', name: 'GH_TOKEN', value: 'fixture-token', secret: true, id: f.calls[0].body.id });
+  const id = `msg_${'b'.repeat(32)}`;
+  await f.app.environment().set('GH_TOKEN', 'fixture-token', { secret: true, id });
+  assert.equal(f.calls.at(-1).body.id, id);
   assert.ok(f.calls.every(call => !('workspace' in call.body) && !('session' in call.body)));
 });
 
@@ -32,7 +36,10 @@ test('secret names, sizes, kinds and undeclared values are rejected before platf
   await assert.rejects(f.app.environment().set('GH_TOKEN', 'x'.repeat(65537), { secret: true }));
   await assert.rejects(f.app.environment().set('GH_TOKEN', 'a\0b', { secret: true }));
   await assert.rejects(f.app.environment().set('UNKNOWN', 'value', { secret: true }), error => error.code === 'environment_not_declared');
-  await assert.rejects(f.app.environment().set('GH_TOKEN', 'value'), error => error.code === 'environment_not_declared');
+  await assert.rejects(f.app.environment().set('GH_TOKEN', 'value'), error => error.code === 'environment_kind_mismatch');
+  await assert.rejects(f.app.environment().set('API_KEY', '', { secret: true }), error => error.code === 'environment_required');
+  await assert.rejects(f.app.environment().unset('API_KEY', { secret: true }), error => error.code === 'environment_required');
+  await assert.rejects(f.app.environment().set('REGION', ''), error => error.code === 'environment_required');
   for (const revision of [-1, NaN, '7']) await assert.rejects(f.app.environment().status(revision));
   assert.equal(f.calls.length, 0);
 });
@@ -47,7 +54,13 @@ test('wait handles propagation, failure, abort and timeout without exposing stor
   await assert.rejects(pending.app.environment().wait(1, { timeoutMs: 5 }));
   await assert.rejects(pending.app.environment().wait(1, { signal: AbortSignal.abort(new Error('stopped')) }), /stopped/);
   const unsafe = fixture(() => Response.json({ revision: 1, status: 'applied', value: 'must-not-return' }));
-  await assert.rejects(unsafe.app.environment().status(1), error => error.code === 'invalid_environment_response');
+  assert.deepEqual(await unsafe.app.environment().status(1), { revision: 1, status: 'applied' });
+  const later = fixture(() => Response.json({ revision: 2, status: 'applied' }));
+  assert.equal((await later.app.environment().wait(1)).revision, 2);
+  const earlier = fixture(() => Response.json({ revision: 0, status: 'applied' }));
+  await assert.rejects(earlier.app.environment().status(1), error => error.code === 'invalid_environment_response');
+  const malformed = fixture(() => Response.json({ revision: '1', status: 'applied' }));
+  await assert.rejects(malformed.app.environment().status(1));
   assert.equal(attempts, 2);
 });
 

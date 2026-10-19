@@ -63,7 +63,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
     function prepare(envelope: AppCommandEnvelope): AppCommandEnvelope {
       const serialized = JSON.stringify(envelope);
       if (new TextEncoder().encode(serialized).byteLength > MAX_COMMAND_BYTES) throw new TypeError("Command exceeds 1 MiB");
-      return validateCommand(JSON.parse(serialized));
+      return validateCommand(JSON.parse(serialized)) as AppCommandEnvelope;
     }
     const selector = workspaceSelector(input);
     const authDeclared = this.#auth;
