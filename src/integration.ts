@@ -1,3 +1,4 @@
+import type { EnvironmentCommand } from "./environment.js";
 import type { HomepageHandler, WebhookRoutes } from "./webhooks.js";
 import type { AppDeploymentConfiguration } from "./app-definition.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
@@ -169,10 +170,10 @@ export type AppCommandEnvelope<Message = unknown> = {
   readonly protocolVersion: 2;
   /** Submission identity for dispatch/steer/request; command identity otherwise. */
   readonly id: string;
-  readonly workspace: WorkspaceSelector;
 } & (
-  | { readonly session: { readonly id: string }; readonly command: SessionCommand<Message> }
-  | { readonly session: null; readonly command: { readonly type: WorkspaceCommandType } }
+  | { readonly workspace: null; readonly session: null; readonly command: EnvironmentCommand }
+  | { readonly workspace: WorkspaceSelector; readonly session: { readonly id: string }; readonly command: SessionCommand<Message> }
+  | { readonly workspace: WorkspaceSelector; readonly session: null; readonly command: { readonly type: WorkspaceCommandType } }
 );
 
 export interface SessionEventCursor {

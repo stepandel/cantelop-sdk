@@ -65,7 +65,17 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         if (!record(value)) throw new EdgeFailure("invalid_platform_response", 502);
         return Response.json({ ...value, protocolVersion: 2 }, { status: response.status });
       }
+      if (workspace === null) {
+        if (command.type !== "app.environment.status") {
+          const declaration = environment[command.name];
+          if (!Object.hasOwn(environment, command.name) || declaration?.secret === true !== command.secret) throw new EdgeFailure("environment_not_declared", 400);
+        }
+        const response = await invoke(`/__cantelop/v1/environment/${command.type.slice("app.environment.".length)}`, "POST", command);
+        if (!response.ok) return response;
+        return Response.json({ ...await readPlatformJSON(response) as object, id: envelope.id }, { headers: { "Cache-Control": "private, no-store" } });
+      }
       async function resolveWorkspace(): Promise<string> {
+        if (workspace === null) throw new EdgeFailure("invalid_command", 400);
         if (workspace.id !== undefined) return workspace.id;
         const response = await invoke("/__cantelop/v1/workspaces/open", "POST", { slug: workspace.slug });
         if (!response.ok) throw await remoteFailure(response);

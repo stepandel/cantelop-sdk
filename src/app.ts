@@ -1,5 +1,6 @@
 import { assertSessionRuntime, RUNTIME_ID } from "./session-runtime-contract.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
+import { createAppEnvironment, type AppEnvironment } from "./environment.js";
 import { AppConfigurationError, type ConfigurationContext } from "./app-config.js";
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
 import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, SessionCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector, WorkspaceAuthLoginOptions, WorkspaceAuthLogin, WorkspaceAuthTerminal, WorkspaceOperationOptions, WorkspaceDeletion } from "./integration.js";
@@ -30,6 +31,20 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
     this.#runtimeId = (options.runtime as unknown as Record<symbol, string>)[RUNTIME_ID];
     this.#connection = resolveEdgeConnection(options, context, profile);
     this.#auth = options.auth !== undefined;
+  }
+
+  environment(): AppEnvironment {
+    return createAppEnvironment(async (command, options = {}) => {
+      options.signal?.throwIfAborted();
+      const id = options.id ?? messageID();
+      const envelope = validateCommand({ protocolVersion: 2, id, workspace: null, session: null, command });
+      let result: unknown;
+      try { result = await requestJSON(request => this.#connection.fetch(edgeRequest(request)), appCommandPath(command.type),
+        { method: "POST", body: envelope, ...(options.signal ? { signal: options.signal } : {}) }); }
+      catch (error) { throw submissionError(error, id, options.signal); }
+      if (!record(result) || result.protocolVersion !== 2 || result.id !== id) throw new RemoteAppError("invalid_environment_response", 0, id);
+      return result;
+    });
   }
 
   workspace(input: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View> {
