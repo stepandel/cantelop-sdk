@@ -73,8 +73,8 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           // Mirrors requestEnvironment: an empty or removed required value without a default fails every request.
           if (declaration.required && (command.type === "app.environment.set" ? command.value === "" : !declaration.default)) throw new EdgeFailure("environment_required", 400);
         }
-        // The envelope ID lets the platform deduplicate a retried ambiguous update.
-        const response = await invoke(`/__cantelop/v1/environment/${command.type.slice("app.environment.".length)}`, "POST", { ...command, id: envelope.id });
+        // The private gateway accepts command fields only; the ID correlates the public response.
+        const response = await invoke(`/__cantelop/v1/environment/${command.type.slice("app.environment.".length)}`, "POST", command);
         if (!response.ok) return response;
         // Only metadata crosses back, whatever else the platform includes.
         const value = await readPlatformJSON(response);

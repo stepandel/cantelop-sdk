@@ -22,11 +22,15 @@ test('environment updates use the existing App connection without a Workspace, S
   await f.app.environment().unset('GH_TOKEN', { secret: true });
   await f.app.environment().status(7);
   assert.deepEqual(f.calls.map(call => call.path), ['/__cantelop/v1/environment/set', '/__cantelop/v1/environment/unset', '/__cantelop/v1/environment/status']);
-  assert.match(f.calls[0].body.id, /^msg_[0-9a-f]{32}$/);
-  assert.deepEqual(f.calls[0].body, { type: 'app.environment.set', name: 'GH_TOKEN', value: 'fixture-token', secret: true, id: f.calls[0].body.id });
+  // These are decoded with DisallowUnknownFields by the platform gateway.
+  assert.deepEqual(f.calls.map(call => call.body), [
+    { type: 'app.environment.set', name: 'GH_TOKEN', value: 'fixture-token', secret: true },
+    { type: 'app.environment.unset', name: 'GH_TOKEN', secret: true },
+    { type: 'app.environment.status', revision: 7 },
+  ]);
   const id = `msg_${'b'.repeat(32)}`;
   await f.app.environment().set('GH_TOKEN', 'fixture-token', { secret: true, id });
-  assert.equal(f.calls.at(-1).body.id, id);
+  assert.deepEqual(f.calls.at(-1).body, f.calls[0].body);
   assert.ok(f.calls.every(call => !('workspace' in call.body) && !('session' in call.body)));
 });
 

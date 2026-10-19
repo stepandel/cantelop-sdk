@@ -1,5 +1,10 @@
-import type { SessionCommandOptions } from "./integration.js";
 import { RemoteAppError } from "./remote-app.js";
+
+export interface EnvironmentCommandOptions {
+  /** Correlates this request and response. Retried mutations create a new configuration revision. */
+  readonly id?: string;
+  readonly signal?: AbortSignal;
+}
 
 /** Only metadata is returned; secret values cannot be read through this API. */
 export interface EnvironmentUpdate {
@@ -13,9 +18,9 @@ export type EnvironmentCommand =
   | { readonly type: "app.environment.unset"; readonly name: string; readonly secret: boolean }
   | { readonly type: "app.environment.status"; readonly revision: number };
 export interface AppEnvironment {
-  set(name: string, value: string, options?: SessionCommandOptions & { readonly secret?: boolean }): Promise<EnvironmentUpdate>;
-  unset(name: string, options?: SessionCommandOptions & { readonly secret?: boolean }): Promise<EnvironmentUpdate>;
-  status(revision: number, options?: SessionCommandOptions): Promise<EnvironmentUpdate>;
+  set(name: string, value: string, options?: EnvironmentCommandOptions & { readonly secret?: boolean }): Promise<EnvironmentUpdate>;
+  unset(name: string, options?: EnvironmentCommandOptions & { readonly secret?: boolean }): Promise<EnvironmentUpdate>;
+  status(revision: number, options?: EnvironmentCommandOptions): Promise<EnvironmentUpdate>;
   /** Wait for Edge and compute configuration to reach this revision. Does not restart existing Sandboxes. */
   wait(revision: number, options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number }): Promise<EnvironmentUpdate>;
 }
@@ -28,8 +33,8 @@ export function validateEnvironmentCommand(command: EnvironmentCommand): void {
   if (command.type === "app.environment.set" && (typeof command.value !== "string" || command.value.includes("\0") || new TextEncoder().encode(command.value).length > 64 * 1024)) throw new TypeError("Invalid environment value");
 }
 /** `send` validates the command envelope, including the command itself, before transport. */
-export function createAppEnvironment(send: (command: EnvironmentCommand, options?: SessionCommandOptions) => Promise<unknown>): AppEnvironment {
-  async function request(command: EnvironmentCommand, options?: SessionCommandOptions): Promise<EnvironmentUpdate> {
+export function createAppEnvironment(send: (command: EnvironmentCommand, options?: EnvironmentCommandOptions) => Promise<unknown>): AppEnvironment {
+  async function request(command: EnvironmentCommand, options?: EnvironmentCommandOptions): Promise<EnvironmentUpdate> {
     const result = await send(command, options) as EnvironmentUpdate | null;
     if (!result || !Number.isSafeInteger(result.revision) || result.revision < 0 || !["pending", "applied", "failed"].includes(result.status) ||
         Object.keys(result).some(key => !["revision", "status", "protocolVersion", "id"].includes(key)) ||

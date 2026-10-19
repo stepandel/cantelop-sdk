@@ -91,7 +91,9 @@ configuration revision also satisfies a wait for an earlier one.
 
 Values are app-wide. Ordinary variables use `secret: false` (the SDK default).
 Only declared names with matching kinds can be mutated; reserved `CANTELOP_*`
-names and removal of required values are rejected. The transport uses explicit
+names and removal of required values without a default are rejected. An optional
+request `id` correlates the response; retrying a mutation can create another
+configuration revision. The transport uses explicit
 `app.environment.set`, `app.environment.unset`, and `app.environment.status`
 commands with null Workspace and Session, without allocating either resource
 or checking Session runtime compatibility. Updates use the encrypted control
