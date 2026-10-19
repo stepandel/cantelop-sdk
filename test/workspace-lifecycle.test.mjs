@@ -41,28 +41,29 @@ test('SDK deletion pins the inspected ID and does not depend on session runtime 
   assert.equal(absent.calls.length, 1);
 });
 
-test('canonical deletion retries bypass slug lookup and successful deletion invalidates resolve cache', async () => {
-  let current = id;
-  const f = fixture(request => {
-    if (request.method === 'DELETE') { current = replacement; return Response.json({ id, status: 'deleting', hostArchived: true }, { status: 202 }); }
+test('canonical deletion retries bypass slug lookup', async () => {
+  const f = fixture(() => Response.json({ id, status: 'deleting', hostArchived: true }, { status: 202 }));
+  await f.app.workspace({ id }).delete();
+  await f.app.workspace({ id }).delete();
+  assert.deepEqual(f.calls, Array(2).fill(`DELETE /__cantelop/integration/v2/workspaces/${id}`));
+});
+
+test('successful deletion invalidates the resolve cache, including a resolve made in flight', async () => {
+  let current = id, ref;
+  const f = fixture(async request => {
+    if (request.method === 'GET') return Response.json({ workspace: data() });
+    if (request.method === 'DELETE') {
+      // The Workspace is still present while deletion is in flight.
+      assert.equal((await ref.resolve()).id, id);
+      current = replacement;
+      return Response.json({ id, status: 'deleting', hostArchived: true }, { status: 202 });
+    }
     return Response.json(data(current));
   });
-  const ref = f.app.workspace({ slug: 'project' });
+  ref = f.app.workspace({ slug: 'project' });
   assert.equal((await ref.resolve()).id, id);
-  await f.app.workspace({ id }).delete();
-  await f.app.workspace({ id }).delete();
-  // A separate reference retains its own resolve cache. Delete through ref to
-  // verify its cache is reset, independently of canonical retries.
-  const cached = fixture(request => request.method === 'DELETE'
-    ? Response.json({ id, status: 'deleting', hostArchived: true }, { status: 202 })
-    : request.method === 'GET' ? Response.json({ workspace: data() }) : Response.json(data(current)));
-  current = id;
-  const scoped = cached.app.workspace({ slug: 'project' });
-  assert.equal((await scoped.resolve()).id, id);
-  await scoped.delete(); current = replacement;
-  assert.equal((await scoped.resolve()).id, replacement);
-  assert.equal(f.calls.filter(call => call.startsWith('GET')).length, 0);
-  assert.equal(f.calls.filter(call => call === `DELETE /__cantelop/integration/v2/workspaces/${id}`).length, 2);
+  await ref.delete();
+  assert.equal((await ref.resolve()).id, replacement);
 });
 
 test('SDK rejects malformed or mismatched inspection and deletion replies', async () => {

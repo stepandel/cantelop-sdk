@@ -81,10 +81,8 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
               : await invoke(`/__cantelop/v1/workspaces/${workspace.id}`, "GET");
           case "workspace.database":
             return await invoke("/__cantelop/v1/workspaces/database/credentials", "POST", { workspace_id: await resolveWorkspace() });
-          case "workspace.inspect": {
-            const query = new URLSearchParams(workspace.id === undefined ? { workspace_slug: workspace.slug } : { workspace_id: workspace.id });
-            return await invoke(`/__cantelop/integration/v2/workspaces?${query}`, "GET");
-          }
+          case "workspace.inspect":
+            return await invoke(`/__cantelop/integration/v2/workspaces?${workspaceQuery(workspace)}`, "GET");
           case "workspace.delete":
             return await invoke(`/__cantelop/integration/v2/workspaces/${workspace.id}`, "DELETE");
         }
@@ -276,9 +274,11 @@ async function boundedWebhookRequest(request: Request): Promise<Request> {
     return new Request(request, { body });
   } finally { if (!done) await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
+function workspaceQuery(workspace: WorkspaceSelector): URLSearchParams {
+  return new URLSearchParams(workspace.id === undefined ? { workspace_slug: workspace.slug } : { workspace_id: workspace.id });
+}
 function sessionPath(id: string, workspace: WorkspaceSelector, suffix: string): string {
-  const query = new URLSearchParams(workspace.id === undefined ? { workspace_slug: workspace.slug } : { workspace_id: workspace.id });
-  return `/__cantelop/integration/v2/sessions/${encodeURIComponent(id)}${suffix}?${query}`;
+  return `/__cantelop/integration/v2/sessions/${encodeURIComponent(id)}${suffix}?${workspaceQuery(workspace)}`;
 }
 async function authenticate(request: Request, bindings: Readonly<Record<string, unknown>>): Promise<void> {
   const token = bindings.CANTELOP_INTEGRATION_TOKEN;

@@ -5,6 +5,7 @@ import type { WorkspaceDatabase } from "./database.js";
 import type { AppAuth, AuthCommand } from "./native-auth.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 import type { WorkspaceSync, WorkspaceSyncOptions } from "./sync.js";
+import type { WorkspaceCommandType } from "./integration-protocol.js";
 
 /** Exactly one canonical ID or App-scoped slug. */
 export type WorkspaceSelector =
@@ -171,7 +172,7 @@ export type AppCommandEnvelope<Message = unknown> = {
   readonly workspace: WorkspaceSelector;
 } & (
   | { readonly session: { readonly id: string }; readonly command: SessionCommand<Message> }
-  | { readonly session: null; readonly command: { readonly type: "workspace.resolve" | "workspace.database" | "workspace.inspect" | "workspace.delete" } }
+  | { readonly session: null; readonly command: { readonly type: WorkspaceCommandType } }
 );
 
 export interface SessionEventCursor {

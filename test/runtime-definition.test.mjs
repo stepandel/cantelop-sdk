@@ -42,9 +42,10 @@ test('Edge rejects missing or different runtime identity on every Session method
   }
   assert.equal(calls, 0);
   // Workspace commands never touch the Sandbox runtime, so they do not require its identity.
+  // Deletion requires a canonical ID, so use one to reach routing for every type.
   for (const type of ['workspace.resolve', 'workspace.database', 'workspace.inspect', 'workspace.delete']) {
-    const response = await worker.fetch(request({ ...command(), session: null, command: { type } }, undefined), { CANTELOP_INTEGRATION_TOKEN: 'scoped' });
-    assert.notEqual((await response.json()).error?.code, 'session_runtime_mismatch');
+    const response = await worker.fetch(request({ ...command(), workspace: { id: `wsp_${'0'.repeat(32)}` }, session: null, command: { type } }, undefined), { CANTELOP_INTEGRATION_TOKEN: 'scoped' });
+    assert.equal(response.status, 200);
   }
 });
 
