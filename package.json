@@ -63,10 +63,9 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs",
     "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
-    "check:package": "pnpm build && node scripts/build-sync-helper.mjs --all && node scripts/check-package.mjs",
-    "prepack": "pnpm build && node scripts/build-sync-helper.mjs --all",
+    "check:package": "node scripts/check-package.mjs",
     "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
-    "prepare": "npm run build"
+    "prepare": "npm run build && node scripts/build-sync-helper.mjs --all"
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",

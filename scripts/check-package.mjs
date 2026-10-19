@@ -13,7 +13,7 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-package-"))
 try {
   const { stdout } = await runCommand(
     "npm",
-    ["pack", "--json", "--ignore-scripts", "--pack-destination", temporary],
+    ["pack", "--json", "--foreground-scripts=false", "--pack-destination", temporary],
     { cwd: root, maxBuffer: 1024 * 1024 },
   );
   const [pack] = JSON.parse(stdout);

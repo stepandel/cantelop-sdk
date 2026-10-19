@@ -5,6 +5,9 @@ Release packages contain macOS and Linux executables for arm64 and x64. Registry
 consumers need neither Go nor the Cantelop CLI, even with install scripts disabled.
 Source builds require Go 1.26.2 or newer. `pnpm build` builds the host executable;
 `node scripts/build-sync-helper.mjs --all` builds all release targets without CGO.
+The npm `prepare` lifecycle builds every release target so source installs,
+`npm pack`, and `npm publish` retain all four binaries. Package qualification
+runs that lifecycle before checking the tarball.
 
 `platform/` is a source snapshot of the filesystem implementation and its Go
 dependencies from `stepandel/cantelop` commit
