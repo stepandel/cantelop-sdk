@@ -13,7 +13,7 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-package-"))
 try {
   const { stdout } = await runCommand(
     "npm",
-    ["pack", "--json", "--ignore-scripts", "--pack-destination", temporary],
+    ["pack", "--json", "--foreground-scripts=false", "--pack-destination", temporary],
     { cwd: root, maxBuffer: 1024 * 1024 },
   );
   const [pack] = JSON.parse(stdout);
@@ -21,6 +21,11 @@ try {
   assert.equal(pack.version, manifest.version);
   assert.ok(pack.size > 0);
   const paths = pack.files.map(({ path: file }) => file);
+  for (const target of ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64']) {
+    const binary = pack.files.find(file => file.path === `dist/native/${target}/sync-helper`);
+    assert.ok(binary, `${target} sync helper is not packed`);
+    assert.ok(binary.mode & 0o111, `${target} sync helper is not executable`);
+  }
   assert.ok(paths.includes("dist/build.js"));
   for (const target of Object.values(manifest.imports["#cantelop-app-config"])) {
     assert.ok(paths.includes(target.replace(/^\.\//, "")), "configuration adapter is not packed");
@@ -90,6 +95,11 @@ try {
     'assert.match(await readFile(new URL(import.meta.resolve("@cantelop/sdk/harnesses/claude/Dockerfile")), "utf8"), /claude-code@/);',
   ].join("\n"));
   await runCommand(process.execPath, ["qualify.mjs"], { cwd: consumer, maxBuffer: 1024 * 1024 });
+  await writeFile(path.join(consumer, 'qualify-sync.mjs'), await readFile(path.join(root, 'test/fixtures/sync-packaged.mjs')));
+  await runCommand(process.execPath, ['qualify-sync.mjs'], {
+    cwd: consumer, maxBuffer: 1024 * 1024,
+    env: { ...process.env, PATH: '', CANTELOP_SYNC_HELPER: '/missing/cantelop' },
+  });
   await writeFile(path.join(consumer, "integration.ts"), [
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION, type AppConnection, type AppCommandEnvelope, type SessionEventCursor } from "@cantelop/sdk";',
     'const runtime = { receive() {} };',

@@ -31,6 +31,10 @@ jobs:
       - name: Enable pinned package manager
         run: corepack enable
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/go.mod
+
       - name: Require the requested version
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
@@ -45,6 +49,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - name: Qualify native filesystem adapter
+        working-directory: native
+        run: go test ./... github.com/stepandel/cantelop/fire-fuse/workspacesync github.com/stepandel/cantelop/fire-fuse/syncprotocol
       - run: pnpm test
       - run: pnpm check:examples
       - run: pnpm check:package

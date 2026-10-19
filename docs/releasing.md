@@ -15,7 +15,8 @@ corepack pnpm check:examples
 corepack pnpm check:package
 ```
 
-The last command creates an ephemeral `npm pack` tarball, verifies that all
+The last command runs the real npm preparation lifecycle to create an ephemeral
+`npm pack` tarball, verifies that all four native filesystem adapters and all
 JavaScript and declaration targets in `exports` are present, rejects source and
 test directories, installs the tarball into an empty consumer, imports every
 public entrypoint, and builds matching generated Edge, native runtime and backend client artifacts. It deletes the tarball and
@@ -23,7 +24,8 @@ consumer afterward.
 
 The package version is explicit in `package.json`; release automation must fail
 if the tag is not exactly `sdk-v<version>`. A release commit must contain no
-generated `dist` files because `prepack` rebuilds them from tracked source.
+generated `dist` files because `prepare` rebuilds them from tracked source,
+including every supported native filesystem adapter.
 
 ## Production operation
 
