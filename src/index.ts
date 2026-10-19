@@ -22,6 +22,7 @@ export { WorkspaceSyncError } from "./sync.js";
 export type { SessionRuntime } from "./session-runtime-contract.js";
 
 export type { App } from "./app.js";
+export type { AppEnvironment, EnvironmentUpdate, EnvironmentCommand, EnvironmentCommandOptions } from "./environment.js";
 export type { AppDeploymentConfiguration, AppEnvironmentDeclaration } from "./app-definition.js";
 
 export type { AppRequestContext, HomepageHandler, WebhookContext, WebhookHandler, WebhookRoute, WebhookRoutes } from "./webhooks.js";

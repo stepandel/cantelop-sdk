@@ -1,4 +1,5 @@
-import type { AppCommandEnvelope, WorkspaceSelector } from "./integration.js";
+import type { AppCommandEnvelope, AppEnvironmentEnvelope, WorkspaceSelector } from "./integration.js";
+import { ENVIRONMENT_COMMAND_TYPES, validateEnvironmentCommand, type EnvironmentCommand } from "./environment.js";
 import { isAuthCommand } from "./runtime-command.js";
 import { AUTH_SESSION_ID } from "./native-auth.js";
 
@@ -8,6 +9,7 @@ export const APP_COMMAND_PATH_PREFIX = "/commands/";
 export const WORKSPACE_COMMAND_TYPES = Object.freeze(["workspace.resolve", "workspace.database", "workspace.inspect", "workspace.delete"] as const);
 export type WorkspaceCommandType = (typeof WORKSPACE_COMMAND_TYPES)[number];
 export const APP_COMMAND_TYPES = Object.freeze([
+  ...ENVIRONMENT_COMMAND_TYPES,
   ...WORKSPACE_COMMAND_TYPES,
   "dispatch", "steer", "request", "auth", "cancel", "status", "view", "stop", "stream",
 ] as const);
@@ -50,10 +52,18 @@ export function assertCursor(value: unknown): void {
 export function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
+export type ProtocolEnvelope = AppCommandEnvelope | AppEnvironmentEnvelope;
 /** Validate untrusted Edge input before any private routing or provisioning. */
-export function validateCommand(value: unknown): AppCommandEnvelope {
+export function validateCommand(value: unknown): ProtocolEnvelope {
   if (!record(value) || value.protocolVersion !== 2 || Object.keys(value).some(key => !["protocolVersion", "id", "workspace", "session", "command"].includes(key))) throw new TypeError("Invalid command envelope");
   assertMessageID(value.id);
+  if (record(value.command) && (ENVIRONMENT_COMMAND_TYPES as readonly unknown[]).includes(value.command.type)) {
+    if (value.workspace !== null || value.session !== null) throw new TypeError("App environment commands require null Workspace and Session");
+    const keys = value.command.type === "app.environment.set" ? ["type", "name", "value", "secret"] : value.command.type === "app.environment.unset" ? ["type", "name", "secret"] : ["type", "revision"];
+    if (Object.keys(value.command).length !== keys.length || Object.keys(value.command).some(key => !keys.includes(key))) throw new TypeError("Invalid environment command fields");
+    validateEnvironmentCommand(value.command as unknown as EnvironmentCommand);
+    return value as unknown as AppEnvironmentEnvelope;
+  }
   const workspace = workspaceSelector(value.workspace);
   if (Object.keys(value.workspace as object).length !== 1) throw new TypeError("Invalid Workspace selector");
   if (!record(value.command) || typeof value.command.type !== "string") throw new TypeError("Invalid command");

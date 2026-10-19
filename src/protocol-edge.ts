@@ -4,8 +4,8 @@ import { validateAppDeploymentConfiguration, type AppEnvironmentDeclaration } fr
 import { RUNTIME_ID } from "./session-runtime-contract.js";
 import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
-import type { AppCommandEnvelope, SessionCommand, WorkspaceSelector } from "./integration.js";
-import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand } from "./integration-protocol.js";
+import type { SessionCommand, WorkspaceSelector } from "./integration.js";
+import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand, type ProtocolEnvelope } from "./integration-protocol.js";
 import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
 import { MAX_SYNC_FILE_BYTES, SYNC_PUBLIC_ROUTE, validSyncRequest } from "./sync.js";
 
@@ -45,7 +45,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
       const type = appCommandType(url.pathname);
       if (request.method !== "POST" || type === undefined || url.search) throw new EdgeFailure("not_found", 404);
       if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") throw new EdgeFailure("invalid_command", 400);
-      let envelope: AppCommandEnvelope;
+      let envelope: ProtocolEnvelope;
       try { envelope = validateCommand(await readJSON(request)); }
       catch (error) { if (error instanceof EdgeFailure) throw error; throw new EdgeFailure("invalid_command", 400); }
       // The path names the operation for every layer in front of Edge; the body must agree.
@@ -65,7 +65,24 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         if (!record(value)) throw new EdgeFailure("invalid_platform_response", 502);
         return Response.json({ ...value, protocolVersion: 2 }, { status: response.status });
       }
+      if (workspace === null) {
+        if (command.type !== "app.environment.status") {
+          if (!Object.hasOwn(environment, command.name)) throw new EdgeFailure("environment_not_declared", 400);
+          const declaration = environment[command.name]!;
+          if ((declaration.secret === true) !== command.secret) throw new EdgeFailure("environment_kind_mismatch", 400);
+          // Mirrors requestEnvironment: an empty or removed required value without a default fails every request.
+          if (declaration.required && (command.type === "app.environment.set" ? command.value === "" : !declaration.default)) throw new EdgeFailure("environment_required", 400);
+        }
+        // The private gateway accepts command fields only; the ID correlates the public response.
+        const response = await invoke(`/__cantelop/v1/environment/${command.type.slice("app.environment.".length)}`, "POST", command);
+        if (!response.ok) return response;
+        // Only metadata crosses back, whatever else the platform includes.
+        const value = await readPlatformJSON(response);
+        if (!record(value) || !Number.isSafeInteger(value.revision) || !["pending", "applied", "failed"].includes(value.status as string)) throw new EdgeFailure("invalid_platform_response", 502);
+        return Response.json({ protocolVersion: 2, id: envelope.id, revision: value.revision, status: value.status }, { headers: { "Cache-Control": "private, no-store" } });
+      }
       async function resolveWorkspace(): Promise<string> {
+        if (workspace === null) throw new EdgeFailure("invalid_command", 400);
         if (workspace.id !== undefined) return workspace.id;
         const response = await invoke("/__cantelop/v1/workspaces/open", "POST", { slug: workspace.slug });
         if (!response.ok) throw await remoteFailure(response);

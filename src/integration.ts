@@ -1,3 +1,4 @@
+import type { EnvironmentCommand } from "./environment.js";
 import type { HomepageHandler, WebhookRoutes } from "./webhooks.js";
 import type { AppDeploymentConfiguration } from "./app-definition.js";
 import type { SessionRuntime } from "./session-runtime-contract.js";
@@ -174,6 +175,14 @@ export type AppCommandEnvelope<Message = unknown> = {
   | { readonly session: { readonly id: string }; readonly command: SessionCommand<Message> }
   | { readonly session: null; readonly command: { readonly type: WorkspaceCommandType } }
 );
+/** App-scoped environment commands carry no Workspace or Session; kept apart so `AppCommandEnvelope.workspace` stays non-null. */
+export type AppEnvironmentEnvelope = {
+  readonly protocolVersion: 2;
+  readonly id: string;
+  readonly workspace: null;
+  readonly session: null;
+  readonly command: EnvironmentCommand;
+};
 
 export interface SessionEventCursor {
   readonly streamId: string;

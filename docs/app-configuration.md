@@ -67,3 +67,42 @@ const app = cantelop.app({
 A custom connection owns routing, authentication and reserved metadata. Alternatively supply `edgeUrl` and `accessToken` together on the App. URLs require HTTPS, with HTTP loopback permitted for local development. Credentials are backend-only; SDK transport does not follow redirects.
 
 Runtime handlers, provider environment declarations and optional Dockerfile configuration also belong on the App. Cantelop injects the actual provider secrets, set through the CLI, into its Sandbox. See [the definition contract](runtime-definitions.md).
+
+## Updating deployed environment values
+
+Use the named App's existing integration connection; no administrative login or
+Cantelop CLI process is involved:
+
+```ts
+const environment = app.environment();
+const update = await environment.set("GH_TOKEN", token, { secret: true, signal });
+await environment.wait(update.revision, { signal, timeoutMs: 120_000 });
+const removal = await environment.unset("GH_TOKEN", { secret: true, signal });
+await environment.wait(removal.revision, { signal });
+```
+
+The live App must declare `GH_TOKEN: { secret: true }` in `environment`.
+`set` and `unset` return only `{ revision, status }`; `status(revision)` reports
+`pending`, `applied`, or `failed`. Secret values cannot be read through this API.
+`wait` checks propagation to both Edge and compute, supports cancellation and a
+bounded timeout, and reports projection failures. A timeout does not undo a
+stored update; the returned revision can be checked again. A later applied
+configuration revision also satisfies a wait for an earlier one.
+
+Values are app-wide. Ordinary variables use `secret: false` (the SDK default).
+Only declared names with matching kinds can be mutated; reserved `CANTELOP_*`
+names and removal of required values without a default are rejected. An optional
+request `id` correlates the response; retrying a mutation can create another
+configuration revision. The transport uses explicit
+`app.environment.set`, `app.environment.unset`, and `app.environment.status`
+commands with null Workspace and Session, without allocating either resource
+or checking Session runtime compatibility. Updates use the encrypted control
+plane and existing configuration projection worker, without creating a release.
+New Sandboxes receive the new values; existing process environments are not
+modified. The Claude runtime image includes `gh` for applications that configure
+Git's GitHub CLI credential helper.
+
+Roll out the platform's App-scoped environment gateway and redeploy the App with
+SDK 1.4.0 once before using this API. Later environment changes require no build
+or deployment. These APIs manage a deployed App; local `cantelop dev` environment
+configuration continues to come from its local environment file.
