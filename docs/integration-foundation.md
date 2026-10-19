@@ -122,7 +122,7 @@ Submission IDs remain for receipt/status inspection and output correlation. `sto
 
 ## Durable application view
 
-Hosted Cantelop does not store Session views yet, so deployed Apps can't commit or read them.
+The SDK commits projections through the platform's durable view service. Reading a committed projection does not activate a Sandbox. Views and replay have bounded retention; an evicted view returns 404 and an expired stream cursor requires a fresh snapshot.
 
 `SessionView<View>` contains `revision`, `updatedAt`, typed `state`, and an atomic event `cursor`. The wire snapshot also contains matching `sessionId`, canonical `workspaceId` and `protocolVersion`. The SDK validates identities, timestamp/revision and cursor metadata; application schemas own validation of `state`.
 

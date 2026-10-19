@@ -1,134 +1,24 @@
-# Stock Claude Code CLI harness
+# Claude Code
 
-This example runs the published, unmodified CLI for each turn, supplies the prompt through stdin, forwards native JSON events and resumes the provider's existing conversation.
+The packaged runtime runs stock Claude Code with native streaming input. Input starts a run while idle and steers ongoing work while busy. Accepted inputs and observations survive replacement in the Workspace, and `.view()` reconstructs the public conversation without starting a Sandbox.
 
-```text
-claude -p --output-format stream-json --verbose --include-partial-messages [--session-id ID | --resume ID]
-```
-
-The harness, native auth provider, and self-contained Dockerfile are shipped with `@cantelop/sdk`. No copied provider implementation or Docker assets are needed:
+## Define the App
 
 ```ts
 import { CantelopClient } from "@cantelop/sdk";
 import {
-  createClaudeHarness, claudeAuth, claudeDockerfile,
-  type ClaudeMessage, type ClaudeEvent,
+  createClaudeRuntime, claudeAuth, claudeDockerfile,
+  type ClaudeSessionCommand, type ClaudeSessionEvent,
+  type ClaudeSessionReply, type ClaudeSessionView,
 } from "@cantelop/sdk/harnesses/claude";
 
-export const app = new CantelopClient().app<ClaudeMessage, ClaudeEvent>({
-  name: "claude-agent",
-  runtime: { create: createClaudeHarness },
-  auth: claudeAuth,
-  dockerfile: claudeDockerfile,
-  environment: {
-    CLAUDE_PATH: { default: "/usr/local/bin/claude" },
-    CLAUDE_MODEL: {},
-  },
-});
-```
-
-`claudeDockerfile` is a project-relative path under `node_modules/@cantelop/sdk`. Install the SDK in the project root before building or deploying. The image installs Node 22, the pinned stock Claude CLI, Python, git, ripgrep, and the login PTY helper. The helper is embedded in the Dockerfile, so Docker needs no `COPY` from your project or its `node_modules`. Updating the SDK updates the harness and image together.
-
-For a custom image, resolve the packaged Dockerfile with `import.meta.resolve("@cantelop/sdk/harnesses/claude/Dockerfile")`, copy it into your project, extend it, and set `dockerfile` to the local path. That copy then becomes application-maintained.
-
-The `createClaudeHarness` factory returns a session-scoped `NativeClaude` runner directly. Each runner implements Cantelop’s `SessionHarness` interface, `queue(message, work)`, `steer(message, work)` and `cancel()`. An existing runner implementing that interface can be returned directly too:
-```ts
-runtime: {
-  create(context) {
-    return createExistingNativeRunner(context);
-  },
-}
-```
-
-The app registers its factory. The runner owns queueing and implements steering by interrupting its active CLI turn and admitting priority input. `session.dispatch()` schedules FIFO input; `session.steer()` admits priority input and interrupts the active turn. Work remains in the execution slot until the CLI and its process group exit, then the steering prompt resumes the same native conversation before ordinary queued work. Steering submissions retain FIFO order within their priority. `session.cancel()` interrupts the active operation and preserves queued input; it takes no target message ID.
-
-Cancellation sends SIGTERM and escalates to SIGKILL after one second. Cleanup also runs on parsing/output failures and waits for the actual subprocess before returning. Process-group cleanup targets Linux/macOS Sandbox processes; tools that detach into a different group require broader Sandbox cleanup. Prompts stay out of command arguments, and stderr is never published.
-
-## Native authentication and state
-
-The App declares `auth: claudeAuth`, so each Workspace can sign in to Claude with the user's own subscription. Resolve the Workspace from your verified user identity, then run the link-and-code sign-in from your backend:
-
-```ts
-const auth = app.workspace({ slug: verifiedUserWorkspace }).auth();
-const login = await auth.login();
-if (!login.authenticated) {
-  // Show login.url to the user and collect the code Anthropic's page displays.
-  await auth.submitCode({ attemptId: login.attemptId, code });
-  // Cancel an abandoned attempt with auth.cancelLogin({ attemptId: login.attemptId }).
-}
-```
-
-No terminal component or WebSocket transport is needed for this flow. The SDK starts the unmodified CLI privately and waits for its link and code prompt. A rejected code (`code_rejected`) leaves the same attempt available for retry. A completed code requires fresh native status before authentication succeeds. Output stays in bounded Session memory and is never returned to the application. Codes are validated and written only to that attempt's stdin; credentials remain in the Workspace. `login({ force: true })` confirms native logout before starting a fresh login.
-
-As a low-level alternative, `auth.terminal()` hands the stock `claude auth login` PTY to the user's browser over a WebSocket, with every sign-in method the CLI offers. Hosted Cantelop does not yet relay that terminal. `auth.close({ terminalId })` ends an unfinished terminal login, and `auth.logout()` runs the native logout. See [native auth](../../docs/native-auth.md) for the browser snippet, lifecycle and protocol.
-
-The provider runs Claude's own `auth status`, `auth login` and `auth logout` with the Workspace-scoped environment. The packaged `login-pty.py` gives the CLI a real terminal, applies resizes, and relays bytes without recording them. Native credentials remain under the Workspace's `.claude` directory, so every Session in the Workspace uses them. The adapter does not inject inherited API keys, and the host's auth/config environment is unchanged.
-
-Claude owns `/workspace/.claude`, including native login and conversation files. The adapter allocates a native conversation UUID, saves it, and marks it resumable when Claude emits `system/init`. Subsequent turns use `--resume` for that same conversation.
-
-The Cantelop Session-to-native-conversation mapping is saved atomically in a private file under `/workspace/.cantelop/native-harness`. Different Cantelop Sessions sharing a Workspace retain independent provider conversation IDs. These examples do not replay interrupted turns or make the example’s waiting queue durable. Application-owned pending jobs and recovery policy remain separate; see [the application queue example](../application-queue/README.md).
-
-## Configuration and output
-
-`CLAUDE_PATH` defaults to `/usr/local/bin/claude`; override it for a local installation. `CLAUDE_MODEL` is optional and otherwise preserves native model configuration. Configure native tools, prompts, permissions and MCPs through the harness's own files/options. The SDK maintains the CLI pin in `assets/claude/Dockerfile`. For custom construction, import `NativeClaude` and `ClaudeHarnessOptions` from the same harness subpath; pass `{ workspace, sessionId, binary, model? }` and the runtime lifetime signal to the constructor. Optional `tools`, `allowedTools`, `permissionMode`, `settingSources`, `maxTurns`, `mcps`, and `systemPrompt` preserve application execution restrictions. A `conversation: { id, resumable }` seed migrates an existing native conversation once; persisted SDK state takes precedence. System prompts use private temporary files removed after the turn.
-
-`session.stream()` carries native JSON objects. Frames over 48 KiB are emitted as `native.fragment` objects with `eventId`, `index`, `total` and `json`; concatenate fragments in order and parse the reconstructed JSON. Subscribe before dispatching for live output or use retained replay.
-
-Run `pnpm check:examples` from the SDK root to type-check and qualify backend/Edge/native artifacts. Tests use executable CLI fixtures, including stubborn tool subprocesses; they require no real credentials or model calls.
-
-## Per-Session configuration
-
-The same SDK factory accepts optional configuration when an application chooses
-permissions, MCP servers, prompts or models for each Session:
-
-```ts
-import { createClaudeHarness, type ClaudeHarnessFactoryOptions } from "@cantelop/sdk/harnesses/claude";
-import type { SessionHarnessContext } from "@cantelop/sdk/session";
-
-export function create(context: SessionHarnessContext) {
-  const settings: ClaudeHarnessFactoryOptions = {
-    permissionMode: "dontAsk",
-    settingSources: [],
-    tools: [],
-    allowedTools: ["mcp__project__*"],
-    mcps: { project: { type: "http", url: "https://tools.example/mcp" } },
-    systemPrompt: "Work through the supplied project tools.",
-    maxTurns: 24,
-    model: "sonnet",
-  };
-  return createClaudeHarness(context, settings);
-}
-```
-
-Load application-owned durable configuration before creating the harness. It is
-snapshotted when the factory runs; editing the original objects does not change a
-live Session. Omit the second argument to retain the default factory behavior.
-`binary`/`model` override `CLAUDE_PATH`/`CLAUDE_MODEL`; `workspace` defaults to the
-mounted working directory. The canonical Session ID always comes from `context`.
-The optional `conversation` seed imports an existing native conversation only
-when SDK state is absent; existing SDK state takes precedence.
-
-Applications with durable job queues can also use this factory inside a managed
-activity and call the returned harness's public `queue`, `steer` and `cancel`
-methods. Forward its output unchanged or add application message attribution.
-Large output arrives as `native.fragment`; the SDK owns fragmentation, subprocess
-parsing and cleanup. Keep the factory context signal tied to the runtime
-incarnation, and the work signal tied to the individual activity/submission.
-
-### Durable Session lifecycle
-
-Applications that need App-declared settings, persistent queueing, targeted cancellation, snapshots and recovery can declare the packaged runtime instead of implementing a behaviour:
-
-```ts
-import { CantelopClient } from "@cantelop/sdk";
-import { createClaudeRuntime, claudeAuth, claudeDockerfile } from "@cantelop/sdk/harnesses/claude";
-import type { ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply } from "@cantelop/sdk/harnesses/claude/protocol";
-
-export const agent = new CantelopClient().app<ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply>({
-  name: "durable-claude",
+export const app = new CantelopClient().app<
+  ClaudeSessionCommand, ClaudeSessionEvent, ClaudeSessionReply, ClaudeSessionView
+>({
+  name: "anthropic",
   runtime: createClaudeRuntime({
-    workspace: "/workspace", permissionMode: "dontAsk", settingSources: [],
-    tools: ["Read"], allowedTools: ["Read"], mcps: {},
+    permissionMode: "dontAsk", settingSources: [],
+    tools: ["Read", "Glob", "Grep"], allowedTools: ["Read", "Glob", "Grep"], mcps: {},
     model: "sonnet", systemPrompt: "Investigate issues and report your findings.", maxTurns: 24,
   }),
   auth: claudeAuth,
@@ -136,20 +26,72 @@ export const agent = new CantelopClient().app<ClaudeSessionCommand, ClaudeSessio
 });
 ```
 
-Declare tools, allowed tools, MCPs, model, system prompt and turn limit in `createClaudeRuntime(...)` at App initialization. Dispatch `{type:"queue",id,text}` immediately; no configuration request is needed. Omitted settings retain native defaults and environment fallbacks. Explicit `tools: []` disables tools and `mcps: {}` disables external MCPs. Each queue or steer message may also carry optional `settings` with these same fields. Omitted fields inherit App defaults; tool lists and MCP maps replace their defaults. Settings are validated and snapshotted when the task is admitted. The runtime reuses a harness for unchanged App settings and constructs a task-specific harness for overrides, preserving the native conversation. For example:
+Run `cantelop dev --container` from this directory. The image ships the pinned CLI and its private sign-in PTY helper; sign in through `app.workspace(selector).auth()` before submitting input. See [native auth](../../docs/native-auth.md). App secrets and provider credentials remain Workspace scoped.
+
+## Submit and observe
+
+Use the compiled backend client produced by `cantelop build` or `cantelop deploy`:
 
 ```ts
-await session.dispatch({
-  type: "queue", id: task.id, text: task.prompt,
-  settings: {
-    allowedTools: ["mcp__canvas__*"],
-    mcps: { canvas: { type: "http", url: task.mcpUrl, headers: { Authorization: `Bearer ${task.token}` } } },
-    model: "sonnet", systemPrompt: task.instructions, maxTurns: 24,
-  },
-});
+import { app } from "./.cantelop/client/client.mjs";
+import { applyClaudeSessionChange } from "@cantelop/sdk/harnesses/claude/protocol";
+
+const session = app.workspace({ slug: "customer" }).session({ id: "investigation" });
+const admitted = await session.request({ type: "input", id: "issue-123", text: "Investigate this issue" });
+if (admitted.type === "error") throw new Error(admitted.code);
+
+const snapshot = await session.view();
+let state = snapshot.state;
+render(state);
+for await (const event of session.stream({ after: snapshot.cursor })) {
+  if (event.data.type === "session.changed") {
+    state = applyClaudeSessionChange(state, event.data);
+    render(state);
+  }
+}
 ```
 
-Task settings are private durable queue data and are excluded from snapshots and status events. They are removed when the task completes, fails, is interrupted, or is cancelled. Queued work keeps the settings it accepted across recovery and App configuration changes. The backend owns task-token expiry and revocation; if queued credentials expire, cancel that task and dispatch a new ID with fresh credentials. Retrying an existing ID with different settings returns `message_id_conflict`.
+`request()` returns an `input.status` admission/delivery reply, not the model's final answer. `dispatch()` returns platform admission earlier; the first view may not exist until runtime intake commits it. Reuse the same input `id` and payload for retries. Changed text or settings with that ID return `message_id_conflict`.
 
+`{type:"steer",id,text}` has the same native input behavior. Busy inputs enter the active run; they do not wait for a separate follow-up job. Each native input has a persisted UUID, and only an echoed input becomes `running`. A native result settles the inputs consumed in that turn. Inputs arriving while cleanup is in progress return `run_finishing` before admission.
 
-The SDK persists Session configuration, history and pending IDs atomically under `<workspace>/.cantelop/<hashed-session-id>.json`. App settings are applied on every activation, while conversation history and pending work are retained. This format supports migration from existing durable Claude integrations. Running work becomes `interrupted` on replacement and is never replayed; queued work resumes on recovery. `steer` interrupts the active turn and prioritizes its new input after native cleanup. `cancel` targets a queued or active ID. History is bounded to 1,000 messages; snapshots contain the latest 50 previews. Events use the exported Session protocol, including attributed Claude fragments and `auth.required`. Authorize queue/steer/cancel requests on the application backend.
+The platform snapshot's `revision` and `cursor` belong to its view service. `snapshot.state.revision` belongs to the Claude adapter; the reducer uses it to ignore duplicated publication after a crash. When the platform cursor expires, fetch a fresh `view()` and subscribe from its cursor. Ending a subscription does not cancel execution.
+
+The view contains the recent conversation, input states, the current/latest run, tool observations and latest reported usage. It stays under 48 KiB within the platform's 64 KiB frame limit. Input previews are capped at 1 KiB; entry text is capped at 8 KiB. `truncated` explicitly indicates incomplete history. State retains at most 1,000 input identities and 256 recent entries; after input capacity is exhausted, start another Session. This API does not expose an unlimited transcript archive.
+
+Raw native observations remain available as `claude` and `claude.fragment` events. Their `id` is the run ID, and `revision` identifies their durable adapter transition. `ClaudeSessionOutput(runId)` reconstructs fragments. Consumers of raw output must deduplicate replayed revisions themselves; the view reducer already does so.
+
+## Settings and cancellation
+
+An idle input may override `tools`, `allowedTools`, `mcps`, `model`, `systemPrompt` and `maxTurns`. Lists and MCP maps replace defaults. A busy input inherits the active run's accepted settings; incompatible overrides return `active_settings_conflict`. Settings remain immutable until that run finishes. Completed runs release their private MCP settings, which never enter the public view.
+
+`session.cancel()` cancels the active managed activity. A targeted runtime request, `session.request({type:"cancel",id:"issue-123"})`, cancels that input's active run, including other inputs steering the same run. Neither operation rolls back tool effects. Cancellation receipts acknowledge a request; the view records the outcome after cleanup. Reuse the platform command ID when retrying cancellation or reset so it cannot affect a later run.
+
+## Persistence and recovery
+
+The runtime writes a versioned private state file at `/workspace/.cantelop/<hashed-session-id>.json`. It synchronizes temporary file contents before atomic rename and synchronizes the containing directory. State transitions and pending publication are committed together. Publication sends the revisioned change before committing its platform view/cursor; acknowledged outbox records are then removed. Replacement retries the same logical changes, and the client reducer ignores duplicates.
+
+Claude owns the native transcript under `/workspace/.claude`. Native `init` is not proof of a durable checkpoint. On the next run, the adapter checks for a candidate transcript and lets Claude validate resume. Missing candidates produce `native_resume_unavailable`; other native failures remain explicit failures. The runtime never repairs or edits private transcript formats.
+
+On activation, input that was never attempted can be delivered. Attempted input whose outcome was not recorded becomes `interrupted`; it is not automatically resubmitted. The next explicit input can resume the preserved conversation. If no usable checkpoint exists, `session.request({type:"reset"})` explicitly starts a fresh native conversation while retaining the adapter's observed history. Reset requires idle execution.
+
+Workspace durability and exclusive ownership during Sandbox replacement are platform guarantees. Local process tests do not establish NFS/JuiceFS host-failure durability or qualify a deployed platform release. Arbitrary tool replay and native background-agent recovery are outside this runtime's guarantee.
+
+## Migration and lower-level harness
+
+Previous `createClaudeRuntime` versions accepted `{type:"queue",...}`. Replace those calls with `{type:"input",...}` only where native steering is intended. Old queue commands now return `unsupported_command`; old pending/running state migrates to explicit interruption and never silently executes as steering. Submit intentional replacement work with a new input ID. The old `snapshot` request now returns `{type:"session.state",state:ClaudeSessionView}`. Use the fourth App generic above to type `.view()`.
+
+Existing applications using `runtime: {create:createClaudeHarness}` or `NativeClaude` keep their one-shot CLI behavior and process-local ordering. That lower-level API remains available for application-owned orchestration. Its `steer` interrupts and resumes a CLI process; it does not provide this runtime's native streaming input or durable view.
+
+For a custom image, install the same pinned CLI and `/opt/app/login-pty.py`, set the App's `dockerfile` to your image's Dockerfile, and optionally declare `CLAUDE_PATH` and `CLAUDE_MODEL` environment settings. The SDK-provided Dockerfile is self-contained and requires no copied files from this example.
+
+## Qualification
+
+From the SDK repository root, run `pnpm test`, `pnpm check:examples` and `pnpm check:package` for SDK verification. The optional native integration test uses a local mock model endpoint and temporary credentials, with no paid model calls:
+
+```sh
+CANTELOP_TEST_CLAUDE_BINARY=/absolute/path/to/pinned/claude \
+  node --test test/claude-native-integration.test.mjs
+```
+
+Use the version pinned in `assets/claude/Dockerfile`. This test covers real native input acknowledgments, steering, exact conversation resume and view reconstruction through the actor protocol with a simulated platform collector. `test/claude-crash-recovery.test.mjs` kills separate runtime workers before native delivery and during unacknowledged observation publication.

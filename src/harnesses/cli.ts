@@ -81,6 +81,8 @@ export class ConversationStore {
 export async function runJsonProcess(options: {
   binary: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv; turn: NativeTurn;
   format?: "jsonl" | "json" | "text";
+  /** Install a live input channel instead of closing stdin after one prompt. */
+  input?: (write: (text: string) => Promise<void>, end: () => void) => void;
 }): Promise<void> {
   const { turn } = options;
   turn.signal.throwIfAborted();
@@ -114,7 +116,6 @@ export async function runJsonProcess(options: {
   turn.signal.addEventListener("abort", stop, { once: true });
   if (turn.signal.aborted) stop();
   child.stdin.on("error", () => undefined);
-  child.stdin.end(turn.text);
   child.stderr.resume(); // Native diagnostics may contain credentials; never publish stderr.
   child.stdout.setEncoding("utf8");
   let pending = "";
@@ -125,6 +126,11 @@ export async function runJsonProcess(options: {
     await turn.emit(event as NativeEvent);
   };
   try {
+    if (options.input) options.input(text => new Promise<void>((resolve, reject) => {
+      if (turn.signal.aborted) { reject(turn.signal.reason); return; }
+      child.stdin.write(text, error => error ? reject(error) : resolve());
+    }), () => child.stdin.end());
+    else child.stdin.end(turn.text);
     for await (const chunk of child.stdout) {
       pending += chunk;
       if (options.format === "json" || options.format === "text") {
