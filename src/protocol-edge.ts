@@ -81,6 +81,12 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
               : await invoke(`/__cantelop/v1/workspaces/${workspace.id}`, "GET");
           case "workspace.database":
             return await invoke("/__cantelop/v1/workspaces/database/credentials", "POST", { workspace_id: await resolveWorkspace() });
+          case "workspace.inspect": {
+            const query = new URLSearchParams(workspace.id === undefined ? { workspace_slug: workspace.slug } : { workspace_id: workspace.id });
+            return await invoke(`/__cantelop/integration/v2/workspaces?${query}`, "GET");
+          }
+          case "workspace.delete":
+            return await invoke(`/__cantelop/integration/v2/workspaces/${workspace.id}`, "DELETE");
         }
       }
       // Only Session commands depend on Sandbox runtime compatibility.

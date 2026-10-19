@@ -53,6 +53,10 @@ export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = 
   readonly selector: WorkspaceSelector;
   /** Resolves/provisions a slug, or retrieves an existing canonical ID. */
   resolve(): Promise<Workspace>;
+  /** Read an existing Workspace without provisioning or caching a slug. */
+  inspect(options?: WorkspaceOperationOptions): Promise<Workspace | undefined>;
+  /** Permanently delete remote data. Slugs are inspected first; IDs permit retrying an archived Workspace's purge. */
+  delete(options?: WorkspaceOperationOptions): Promise<WorkspaceDeletion | undefined>;
   database(): Promise<WorkspaceDatabase>;
   /** Node.js: continuously reconcile a local directory with this Workspace's project/ directory. */
   sync(options: WorkspaceSyncOptions): Promise<WorkspaceSync>;
@@ -60,6 +64,14 @@ export interface WorkspaceRef<Message, Event = unknown, Reply = unknown, View = 
   auth(): WorkspaceAuthRef;
   /** A lazy reference; omitting id generates a fresh App-scoped identity. */
   session(options?: IntegrationSessionOptions): SessionRef<Message, Event, Reply, View>;
+}
+
+export interface WorkspaceOperationOptions { readonly signal?: AbortSignal; }
+export interface WorkspaceDeletion {
+  readonly id: string;
+  readonly status: "deleting";
+  /** Host admission is closed; filesystem and database purge may still be pending. */
+  readonly hostArchived: boolean;
 }
 
 /** Structured login methods allocate SDK command identities and keep native credentials private. */
@@ -159,7 +171,7 @@ export type AppCommandEnvelope<Message = unknown> = {
   readonly workspace: WorkspaceSelector;
 } & (
   | { readonly session: { readonly id: string }; readonly command: SessionCommand<Message> }
-  | { readonly session: null; readonly command: { readonly type: "workspace.resolve" | "workspace.database" } }
+  | { readonly session: null; readonly command: { readonly type: "workspace.resolve" | "workspace.database" | "workspace.inspect" | "workspace.delete" } }
 );
 
 export interface SessionEventCursor {
