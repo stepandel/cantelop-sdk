@@ -72,6 +72,8 @@ Content-Type: application/json
 | `view` | none | Read last committed application projection without activation |
 | `workspace.resolve` | none | Open/provision a slug or retrieve a canonical Workspace |
 | `workspace.database` | none | Obtain renewable managed database credentials |
+| `workspace.inspect` | none | Read an existing Workspace without provisioning |
+| `workspace.delete` | none | Delete a canonical Workspace ID and queue permanent data purge |
 
 Each operation has its own Edge handler. There is no client-selected private path or URL. Authentication happens before parsing/routing. The Worker strips client authorization and identity headers; the outbound Worker derives trusted App identity. Private handlers must enforce App ownership and Session/Workspace binding on every operation, including reads and cancellation.
 

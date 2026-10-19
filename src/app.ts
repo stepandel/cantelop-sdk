@@ -2,13 +2,13 @@ import { assertSessionRuntime, RUNTIME_ID } from "./session-runtime-contract.js"
 import type { SessionRuntime } from "./session-runtime-contract.js";
 import { AppConfigurationError, type ConfigurationContext } from "./app-config.js";
 import { edgeRequest, resolveEdgeConnection } from "./edge-connection.js";
-import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, SessionCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector, WorkspaceAuthLoginOptions, WorkspaceAuthLogin, WorkspaceAuthTerminal } from "./integration.js";
+import type { AppConnection, AppCommandEnvelope, AppOptions, IntegrationSessionOptions, SessionCancellation, SessionCommand, SessionCommandOptions, SessionSubmissionOptions, SessionStreamOptions, SessionView, WorkspaceRef, WorkspaceSelector, WorkspaceAuthLoginOptions, WorkspaceAuthLogin, WorkspaceAuthTerminal, WorkspaceOperationOptions, WorkspaceDeletion } from "./integration.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 import { AUTH_KEEP_ALIVE_SECONDS, AUTH_SESSION_ID, isReservedAuthSessionID, AUTH_TERMINAL_PROTOCOL, LOGIN_ID_PATTERN, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN, type AuthCommand, type AuthResult } from "./native-auth.js";
 import { RemoteAppError, readWorkspace, readMessageStatus, requestJSON } from "./remote-app.js";
 import { streamSessionEvents } from "./stream.js";
 import type { WorkspaceSyncOptions } from "./sync.js";
-import { MAX_COMMAND_BYTES, appCommandPath, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector } from "./integration-protocol.js";
+import { MAX_COMMAND_BYTES, appCommandPath, assertCursor, assertKeepAlive, assertMessageID, assertSessionID, messageID, record, SLUG_PATTERN, validateCommand, workspaceSelector, type WorkspaceCommandType } from "./integration-protocol.js";
 
 /** A named App with a typed runtime and its own Workspace namespace. */
 export class App<Message = unknown, Event = never, Reply = never, View = unknown> {
@@ -53,21 +53,36 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
     const selector = workspaceSelector(input);
     const authDeclared = this.#auth;
     let pending: Promise<Workspace> | undefined;
-    const workspaceCommand = (type: "workspace.resolve" | "workspace.database", workspace = selector) => send({ protocolVersion: 2, id: messageID(), workspace, session: null, command: { type } });
+    const workspaceCommand = (type: WorkspaceCommandType, workspace = selector, signal?: AbortSignal) => send({ protocolVersion: 2, id: messageID(), workspace, session: null, command: { type } }, signal);
+    function readBoundWorkspace(value: unknown): Workspace {
+      const databaseFetch = async (request: Request) => {
+        const body = await request.json() as { workspace_id: string };
+        return Response.json(await workspaceCommand("workspace.database", { id: body.workspace_id }));
+      };
+      const workspace = readWorkspace(value, databaseFetch, connection.localDatabaseOrigin);
+      if (selector.id !== undefined ? workspace.id !== selector.id : workspace.slug !== selector.slug) throw new TypeError("The connection returned a different Workspace");
+      return workspace;
+    }
     function resolve(): Promise<Workspace> {
-      pending ??= workspaceCommand("workspace.resolve").then(value => {
-        const databaseFetch = async (request: Request) => {
-          const body = await request.json() as { workspace_id: string };
-          return Response.json(await workspaceCommand("workspace.database", { id: body.workspace_id }));
-        };
-        const workspace = readWorkspace(value, databaseFetch, connection.localDatabaseOrigin);
-        if (selector.id !== undefined ? workspace.id !== selector.id : workspace.slug !== selector.slug) throw new TypeError("The connection returned a different Workspace");
-        return workspace;
-      }).catch(error => { pending = undefined; throw error; });
+      pending ??= workspaceCommand("workspace.resolve").then(readBoundWorkspace).catch(error => { pending = undefined; throw error; });
       return pending;
     }
+    async function inspect(options: WorkspaceOperationOptions = {}): Promise<Workspace | undefined> {
+      const value = await workspaceCommand("workspace.inspect", selector, options.signal);
+      if (!record(value) || value.protocolVersion !== 2 || !("workspace" in value)) throw new RemoteAppError("invalid_workspace_inspection_response", 0);
+      return value.workspace === null ? undefined : readBoundWorkspace(value.workspace);
+    }
     return Object.freeze({
-      selector, resolve,
+      selector, resolve, inspect,
+      async delete(options: WorkspaceOperationOptions = {}): Promise<WorkspaceDeletion | undefined> {
+        const id = selector.id ?? (await inspect(options))?.id;
+        if (id === undefined) return undefined;
+        // A lost response can still mean deletion was accepted. Clear once the
+        // call settles so a resolve() made while it was in flight is not kept.
+        const value = await workspaceCommand("workspace.delete", { id }, options.signal).finally(() => { pending = undefined; });
+        if (!record(value) || value.protocolVersion !== 2 || value.id !== id || value.status !== "deleting" || typeof value.hostArchived !== "boolean") throw new RemoteAppError("invalid_workspace_deletion_response", 0);
+        return Object.freeze({ id, status: "deleting", hostArchived: value.hostArchived });
+      },
       async database() { return (await resolve()).database(); },
       async sync(options: WorkspaceSyncOptions) {
         const workspace = await resolve();

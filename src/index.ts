@@ -8,6 +8,7 @@ export { CantelopClient } from "./client.js";
 export type {
   AppConnection, AppSelector, AppOptions, CantelopClientOptions, IntegrationSessionOptions,
   SessionRef, WorkspaceRef, WorkspaceAuthRef, WorkspaceAuthTerminal, WorkspaceAuthLogin, WorkspaceAuthLoginOptions, WorkspaceSelector,
+  WorkspaceOperationOptions, WorkspaceDeletion,
   SessionEvent, SessionEventCursor, SessionStreamOptions,
   SessionCommandOptions, SessionSubmissionOptions, SessionCancellation, SessionView,
   SessionCommand, AppCommandEnvelope,

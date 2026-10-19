@@ -5,8 +5,10 @@ import { AUTH_SESSION_ID } from "./native-auth.js";
 export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
 /** Each command has its own path so every layer between backend and Edge can see the operation. */
 export const APP_COMMAND_PATH_PREFIX = "/commands/";
+export const WORKSPACE_COMMAND_TYPES = Object.freeze(["workspace.resolve", "workspace.database", "workspace.inspect", "workspace.delete"] as const);
+export type WorkspaceCommandType = (typeof WORKSPACE_COMMAND_TYPES)[number];
 export const APP_COMMAND_TYPES = Object.freeze([
-  "workspace.resolve", "workspace.database",
+  ...WORKSPACE_COMMAND_TYPES,
   "dispatch", "steer", "request", "auth", "cancel", "status", "view", "stop", "stream",
 ] as const);
 export type AppCommandType = (typeof APP_COMMAND_TYPES)[number];
@@ -57,8 +59,9 @@ export function validateCommand(value: unknown): AppCommandEnvelope {
   if (!record(value.command) || typeof value.command.type !== "string") throw new TypeError("Invalid command");
   const command = value.command;
   let keys: string[];
-  if (command.type === "workspace.resolve" || command.type === "workspace.database") {
+  if ((WORKSPACE_COMMAND_TYPES as readonly unknown[]).includes(command.type)) {
     if (value.session !== null) throw new TypeError("Workspace command requires a null Session");
+    if (command.type === "workspace.delete" && workspace.id === undefined) throw new TypeError("Workspace deletion requires a canonical ID");
     keys = ["type"];
   } else {
     if (!record(value.session) || Object.keys(value.session).length !== 1) throw new TypeError("Invalid Session");
