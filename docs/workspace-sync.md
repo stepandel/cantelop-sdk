@@ -37,11 +37,15 @@ reconciles without prior deletions.
 
 ## Requirements and lifetime
 
-This feature requires the matching Cantelop platform sync routes, a rebuilt App
-Edge Worker, and a Cantelop CLI containing `internal-sync-files`. The SDK starts
-that private native helper automatically; there is no new user-facing CLI
-command. `CANTELOP_SYNC_HELPER` can select a specific CLI binary for development.
-The first version supports macOS and Linux.
+This feature requires the matching Cantelop platform sync routes and a rebuilt
+App Edge Worker. The SDK package includes its own native filesystem adapter for
+macOS and Linux on arm64 and x64. It starts that adapter by its package-relative
+absolute path; the Cantelop CLI and Go are not required on consumer machines.
+There are no runtime downloads or install scripts. `CANTELOP_SYNC_HELPER` is no
+longer used. An incomplete SDK installation reports `sync_helper_unavailable`;
+reinstall the SDK instead of installing or upgrading the CLI.
+
+Source contributors need Go 1.26.2 or newer; see [the native build](../native/README.md).
 
 The helper uses the platform's traversal-resistant Go filesystem implementation
 for local file access. It listens only on numeric loopback, requires a random
@@ -124,12 +128,11 @@ must remain disabled until the deployed storage concurrency contract is tested.
 
 ## Cross-repository verification
 
-SDK unit tests use a local protocol double so the package tests are self-contained.
-Run the same suite against the real CLI helper after building the platform branch:
-
-```sh
-CANTELOP_SYNC_HELPER=/absolute/path/to/cantelop node --test test/sync.test.mjs
-```
+SDK sync tests use the packaged native adapter against a local remote-transport
+double. Run `pnpm test` to exercise real filesystem access and OS locks, including
+a transfer with an empty `PATH`. `pnpm check:package` cross-builds all four release
+binaries and tests sync from a tarball installed with `--ignore-scripts`. No CLI
+installation, account credentials, or Go compiler is needed by that consumer.
 
 The platform's optional `TestWorkspaceSyncSDK` test connects this SDK's generated
 Edge adapter and native local helper to the actual Go workspace file service.

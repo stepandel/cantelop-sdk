@@ -8,7 +8,7 @@ Cantelop runs agents for your application in isolated Sandboxes with durable Wor
 
 You define the Session runtime. The SDK generates the App's Edge API, and Cantelop deploys both. Apps use [project schema 3](schemas/app-v3.json).
 
-For a local editor with remote agent execution, [`workspace.sync()`](docs/workspace-sync.md) reconciles a local directory with the Workspace's `project/` folder. Hosted writes remain gated pending storage qualification.
+For a local editor with remote agent execution, [`workspace.sync()`](docs/workspace-sync.md) reconciles a local directory with the Workspace's `project/` folder. The SDK includes its native filesystem adapter; consumer applications do not need the Cantelop CLI or Go. Hosted writes remain gated pending storage qualification.
 
 ## Get started
 

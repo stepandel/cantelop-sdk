@@ -1,6 +1,6 @@
 {
   "name": "@cantelop/sdk",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
@@ -59,12 +59,12 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/build-harness-assets.mjs",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/build-harness-assets.mjs && node scripts/build-sync-helper.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs",
     "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
-    "check:package": "pnpm build && node scripts/check-package.mjs",
-    "prepack": "pnpm build",
+    "check:package": "pnpm build && node scripts/build-sync-helper.mjs --all && node scripts/check-package.mjs",
+    "prepack": "pnpm build && node scripts/build-sync-helper.mjs --all",
     "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
     "prepare": "npm run build"
   },

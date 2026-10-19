@@ -4,13 +4,11 @@ import { mkdtemp, mkdir, readFile, readdir, writeFile, unlink, rm, symlink, stat
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { CantelopClient, WorkspaceSyncError } from '../dist/index.js';
 import { createProtocolWorker } from '../dist/protocol-edge.js';
 import { validSyncPath, validSyncRequest } from '../dist/sync.js';
 
 const workspaceId='wsp_'+'1'.repeat(32);
-process.env.CANTELOP_SYNC_HELPER ??= fileURLToPath(new URL('./fixtures/sync-helper.mjs',import.meta.url));
 const hash=(data,executable=false)=>createHash('sha256').update(Buffer.from([executable?1:0])).update(data).digest('hex');
 const item=(name,data,executable=false)=>({path:name,version:hash(data,executable),size:data.length,executable});
 const fail=(code,status=409)=>Response.json({error:{code}},{status});
@@ -58,6 +56,25 @@ test('one capability reconciles binary files, executable bits, creates and delet
   assert.equal(f.files.get('src/local.bin').data.toString(),'local edit');assert.equal(await readFile(path.join(f.root,'remote.sh'),'utf8'),'remote edit');
   await unlink(path.join(f.root,'src/local.bin'));f.files.delete('remote.sh');await sync.flush();
   assert.equal(f.files.size,0);await assert.rejects(readFile(path.join(f.root,'remote.sh')),{code:'ENOENT'});
+});
+test('native sync works without PATH executables and ignores the former CLI override',async t=>{
+  const f=await fixture(t);
+  const previousPath=process.env.PATH,previousHelper=process.env.CANTELOP_SYNC_HELPER;
+  try {
+    process.env.PATH='';process.env.CANTELOP_SYNC_HELPER='/missing/cantelop';
+    await writeFile(path.join(f.root,'local'),'upload');f.put('remote','download');
+    const sync=await f.start();
+    try {
+      await sync.ready();
+      assert.equal(f.files.get('local').data.toString(),'upload');
+      assert.equal(await readFile(path.join(f.root,'remote'),'utf8'),'download');
+      await writeFile(path.join(f.root,'local'),'edit');await sync.flush();
+      assert.equal(f.files.get('local').data.toString(),'edit');
+    } finally { await sync.stop(); }
+  } finally {
+    if(previousPath===undefined)delete process.env.PATH;else process.env.PATH=previousPath;
+    if(previousHelper===undefined)delete process.env.CANTELOP_SYNC_HELPER;else process.env.CANTELOP_SYNC_HELPER=previousHelper;
+  }
 });
 test('relative directories scope every operation and retain their baseline across restart',async t=>{
   const f=await fixture(t);await writeFile(path.join(f.root,'README.md'),'local');f.put('remote','download');
