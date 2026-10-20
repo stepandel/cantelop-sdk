@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { copyFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { temporaryDirectory } from './helpers.mjs';
 
 test('an incomplete SDK installation reports its own missing adapter without a CLI fallback', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'sdk-missing-adapter-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await temporaryDirectory(t, 'sdk-missing-adapter-');
   await writeFile(join(root, 'package.json'), '{"type":"module"}');
   for (const name of ['sync-node.js', 'sync.js', 'shared.js']) {
     await copyFile(new URL(`../dist/${name}`, import.meta.url), join(root, name));

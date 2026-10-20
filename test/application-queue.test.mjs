@@ -6,11 +6,8 @@ import { join } from "node:path";
 import { createClient } from "@libsql/client";
 import { InMemoryActivity } from "../dist/activity.js";
 import { createPersistentAgent } from "../examples/application-queue/session.mjs";
+import { until } from "./helpers.mjs";
 
-const until = async predicate => {
-  for (let n=0;n<100;n++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve,5)); }
-  assert.fail("condition not reached");
-};
 
 test("application queue commits intake once, steers busy work, and restores checkpoints", async t => {
   const directory = await mkdtemp(join(tmpdir(), "application-queue-"));

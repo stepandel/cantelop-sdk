@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { createSessionRuntimeHandler } from '../dist/runtime.js';
 import { RuntimeMessages } from '../dist/runtime-messages.js';
+import { until } from './helpers.mjs';
 const sandbox = 'sbx-' + '1'.repeat(32);
 const id = 'msg_' + '2'.repeat(32);
 const envelope = (payload = {}) => ({ session: { id: 'thread', workspace_id: 'wsp_' + '3'.repeat(32), keep_alive_seconds: 600 }, message: { id, payload } });
@@ -13,10 +14,6 @@ async function fixture(t, receive, options = {}) {
   return (path, method = 'GET', body, identity = sandbox) => fetch(`http://127.0.0.1:${server.address().port}/__cantelop/v2/${path}`, {
     method, headers: { 'X-Cantelop-Sandbox-ID': identity, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-}
-async function until(fn) {
-  for (let i = 0; i < 100; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 5)); }
-  assert.fail('condition not reached');
 }
 test('ACK reserves the ID before execution settles; retries do not execute twice', async t => {
   let release; let calls = 0;
@@ -166,7 +163,8 @@ test('completion waits wake on settlement while runtime activity remains active'
  await request('messages','POST',{...envelope(),reply:true});
  let returned=false;
  const pending=request('runtime/completions?after=0').then(async r=>{assert.equal(r.status,200);returned=true;return r.json();});
- await new Promise(resolve=>setTimeout(resolve,20));
+ // A status round trip instead of a sleep: the completion wait is still open while the handler runs.
+ assert.equal((await (await request(`messages/${id}`)).json()).state,'running');
  assert.equal(returned,false);
  release();
  assert.deepEqual(await pending,{generation:1});

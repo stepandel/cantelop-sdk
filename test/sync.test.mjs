@@ -1,20 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, readFile, readdir, writeFile, unlink, rm, symlink, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, readdir, writeFile, unlink, symlink, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { CantelopClient, WorkspaceSyncError } from '../dist/index.js';
 import { createProtocolWorker } from '../dist/protocol-edge.js';
 import { validSyncPath, validSyncRequest } from '../dist/sync.js';
+import { temporaryDirectory } from './helpers.mjs';
 
 const workspaceId='wsp_'+'1'.repeat(32);
 const hash=(data,executable=false)=>createHash('sha256').update(Buffer.from([executable?1:0])).update(data).digest('hex');
 const item=(name,data,executable=false)=>({path:name,version:hash(data,executable),size:data.length,executable});
 const fail=(code,status=409)=>Response.json({error:{code}},{status});
 async function fixture(t) {
-  const root=await mkdtemp(path.join(tmpdir(),'cantelop-sync-'));t.after(()=>rm(root,{recursive:true,force:true}));
-  const state=await mkdtemp(path.join(tmpdir(),'cantelop-sync-state-'));t.after(()=>rm(state,{recursive:true,force:true}));
+  const root=await temporaryDirectory(t,'cantelop-sync-');
+  const state=await temporaryDirectory(t,'cantelop-sync-state-');
   process.env.CANTELOP_SYNC_STATE_HOME=state;
   const files=new Map(), calls=[];let online=true,writes=true,corrupt=false,manifestRoot;
   const platform=async request=>{
@@ -148,7 +148,7 @@ test('reserved state, credentials and dependency directories never transfer',asy
   await writeFile(path.join(f.root,'.env'),'secret');await writeFile(path.join(f.root,'ok'),'ok');const sync=await f.start({ignore:['.git','node_modules','.env']});await sync.ready();assert.deepEqual([...f.files.keys()],['ok']);
 });
 test('scans omit local links and downloads cannot follow them or escape the directory',async t=>{
-  const f=await fixture(t);const outside=await mkdtemp(path.join(tmpdir(),'sync-outside-'));t.after(()=>rm(outside,{recursive:true,force:true}));await writeFile(path.join(outside,'secret'),'private');
+  const f=await fixture(t);const outside=await temporaryDirectory(t,'sync-outside-');await writeFile(path.join(outside,'secret'),'private');
   await symlink(outside,path.join(f.root,'escape'));const sync=await f.start();await sync.ready();assert.equal(f.files.size,0);
   f.put('escape/secret','attack');await assert.rejects(sync.flush());assert.equal(await readFile(path.join(outside,'secret'),'utf8'),'private');f.files.delete('escape/secret');
   await unlink(path.join(f.root,'escape'));f.put('../secret','attack');await assert.rejects(sync.flush());assert.equal(await readFile(path.join(outside,'secret'),'utf8'),'private');
