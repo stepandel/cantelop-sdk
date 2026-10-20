@@ -1,4 +1,4 @@
-import { TurnQueue } from "../../harness/queue.ts";
+import { TurnQueue } from "@cantelop/sdk/harnesses/native";
 import { Agent, MemorySession, run } from "@openai/agents";
 import type { SessionHarnessContext, SessionHarness } from "@cantelop/sdk/session";
 import type { SessionEvent, SessionMessage } from "./contracts.ts";

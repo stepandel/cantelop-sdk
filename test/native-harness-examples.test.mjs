@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
 import { createClaudeHarness, NativeClaude } from "@cantelop/sdk/harnesses/claude";
+import { CliHarness } from "@cantelop/sdk/harnesses/native";
 
 const moduleDirectory = await mkdtemp(join(tmpdir(), "native-harness-modules-"));
 after(() => rm(moduleDirectory, { recursive: true, force: true }));
@@ -138,7 +139,6 @@ for (const [name, Native] of providers) {
 }
 
 test("large native frames are fragmented below the output limit and round-trip Unicode", async () => {
-  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   const nativeEvent = { type: "assistant", text: "😀".repeat(30_000) };
   const harness = new class extends CliHarness { async execute(turn) { await turn.emit(nativeEvent); } }();
   const events = [];
@@ -149,7 +149,6 @@ test("large native frames are fragmented below the output limit and round-trip U
 });
 
 test("incarnation shutdown interrupts a blocked output handoff and still waits for native cleanup", async () => {
-  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   const lifetime = new AbortController();
   let publishing = false, exited = false;
   const harness = new class extends CliHarness { async execute(turn) {
@@ -167,7 +166,6 @@ test("incarnation shutdown interrupts a blocked output handoff and still waits f
 });
 
 test("CLI harness steer owns interruption, priority FIFO and its cleanup barrier", async () => {
-  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   let release;
   const cleanup = new Promise(resolve => { release = resolve; });
   const started = [], origins = [];
@@ -199,7 +197,6 @@ test("CLI harness steer owns interruption, priority FIFO and its cleanup barrier
 });
 
 test("CLI harness rejects a full queue before steer can interrupt unrelated work", async () => {
-  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   let release, active;
   const exit = new Promise(resolve => { release = resolve; });
   const native = new class extends CliHarness {
@@ -216,7 +213,6 @@ test("CLI harness rejects a full queue before steer can interrupt unrelated work
 
 
 test("queued input expiry removes only that harness submission", async () => {
-  const { CliHarness } = await load("../examples/native-harness/cli.ts");
   let release, active;
   const started = [];
   const exit = new Promise(resolve => { release = resolve; });

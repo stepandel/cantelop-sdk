@@ -20,9 +20,9 @@ try {
     });
     for (const input of Object.keys(client.metafile.inputs)) {
       assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
-      assert.doesNotMatch(input, /(?:src|dist)\/harnesses\/(?:cli|login|queue)\.(?:js|ts)$/);
+      assert.doesNotMatch(input, /(?:src|dist)\/harnesses\/(?:cli|login|queue|native|durable-file)\.(?:js|ts)$/);
       assert.doesNotMatch(input, /node_modules\/.*(?:@openai\/(?:agents|codex)|@anthropic-ai|@earendil-works|@opencode-ai)/);
-      assert.doesNotMatch(input, /examples\/(?:harness|native-harness|(?:codex|anthropic|opencode)\/src\/(?:agent|native))/);
+      assert.doesNotMatch(input, /examples\/(?:codex|anthropic|opencode)\/src\/(?:agent|native)/);
     }
     const session = typeof manifest.definition === "string" ? manifest.definition : manifest.definition.entrypoint;
     const artifact = await buildSessionRuntime({

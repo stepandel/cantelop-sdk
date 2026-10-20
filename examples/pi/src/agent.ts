@@ -1,4 +1,4 @@
-import { TurnQueue } from "../../harness/queue.ts";
+import { TurnQueue } from "@cantelop/sdk/harnesses/native";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { SessionHarnessContext, SessionHarness } from "@cantelop/sdk/session";

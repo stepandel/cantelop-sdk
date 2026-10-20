@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
-import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.ts";
+import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "@cantelop/sdk/harnesses/native";
+import { codexEnvironment } from "./environment.ts";
 
 /** Stock codex exec, resumed by its native thread ID; no replacement agent loop. */
 export class NativeCodex extends CliHarness {
@@ -10,7 +11,7 @@ export class NativeCodex extends CliHarness {
   }
   protected async execute(turn: NativeTurn): Promise<void> {
     const state = await this.store.load();
-    const env = nativeEnvironment(this.options.workspace);
+    const env = nativeEnvironment(this.options.workspace, codexEnvironment);
     await mkdir(env.CODEX_HOME!, { recursive: true, mode: 0o700 });
     await mkdir(env.CODEX_SQLITE_HOME!, { recursive: true, mode: 0o700 });
     let completed = false, failed = false;

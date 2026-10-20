@@ -58,14 +58,11 @@ export function nativeEnvironment(workspace: string, provider?: NativeEnvironmen
     if (process.env[key]) env[key] = process.env[key];
   }
   env.HOME = workspace;
-  env.CODEX_HOME = join(workspace, ".codex");
-  env.CLAUDE_CONFIG_DIR = join(workspace, ".claude");
   env.XDG_CONFIG_HOME = join(workspace, ".config");
   env.XDG_DATA_HOME = join(workspace, ".local", "share");
   env.XDG_STATE_HOME = join(workspace, ".local", "state");
   // Do not put disposable caches on the durable Workspace.
   env.XDG_CACHE_HOME = join(process.env.TMPDIR ?? "/tmp", "cantelop-native-cache", createHash("sha256").update(workspace).digest("hex"));
-  env.CODEX_SQLITE_HOME = join(env.XDG_CACHE_HOME!, "codex-sqlite");
   env.DISABLE_AUTOUPDATER = "1";
   env.DISABLE_UPDATES = "1";
   // No inherited provider API keys, platform tokens, or host auth directories.

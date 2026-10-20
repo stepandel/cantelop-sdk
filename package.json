@@ -52,6 +52,10 @@
     "./harnesses/claude/protocol": {
       "types": "./dist/harnesses/claude-protocol.d.ts",
       "import": "./dist/harnesses/claude-protocol.js"
+    },
+    "./harnesses/native": {
+      "types": "./dist/harnesses/native.d.ts",
+      "import": "./dist/harnesses/native.js"
     }
   },
   "files": [
