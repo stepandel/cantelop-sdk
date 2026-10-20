@@ -21,8 +21,6 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
   readonly #runtimeId: string | undefined;
   readonly #auth: boolean;
   readonly #options: AppOptions<Message, Event, Reply, View>;
-  readonly #context: ConfigurationContext;
-  readonly #profile: string | undefined;
 
   get runtime(): SessionRuntime<Message, Event, Reply, View> { return this.#sessionRuntime; }
   /** Compiled code/contract identity, independent of the physical deployment. */
@@ -30,21 +28,35 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
 
   /** Bind this compiled definition to a trusted transport without changing other references. */
   connect(connection: AppConnection): App<Message, Event, Reply, View> {
+    // Never fall back to ambient configuration: that would bind another account's credentials.
+    if (!connection || typeof connection.fetch !== "function") throw new TypeError("An App connection is required");
     const { connection: _connection, edgeUrl: _url, accessToken: _token, ...definition } = this.#options;
-    return new App({ ...definition, connection }, this.#context, this.#profile);
+    return new App({ ...definition, connection }, { env: {} }, undefined, { runtime: this.#sessionRuntime, runtimeId: this.#runtimeId });
   }
 
-  constructor(options: AppOptions<Message, Event, Reply, View>, context: ConfigurationContext, profile?: string) {
+  constructor(options: AppOptions<Message, Event, Reply, View>, context: ConfigurationContext, profile?: string,
+    compiled?: { readonly runtime: SessionRuntime<Message, Event, Reply, View>; readonly runtimeId: string | undefined }) {
     if (!options || typeof options.name !== "string" || !SLUG_PATTERN.test(options.name)) throw new TypeError("A valid App name is required");
     this.#name = options.name;
-    this.#context = context;
-    this.#profile = profile;
-    assertSessionRuntime(options.runtime);
-    this.#sessionRuntime = Object.freeze({ ...options.runtime });
+    if (compiled) {
+      // Rebinding keeps the validated snapshot; the frozen copy has no prototype or non-enumerable members to re-derive from.
+      this.#sessionRuntime = compiled.runtime;
+      this.#runtimeId = compiled.runtimeId;
+    } else {
+      assertSessionRuntime(options.runtime);
+      this.#sessionRuntime = Object.freeze({ ...options.runtime });
+      this.#runtimeId = (options.runtime as unknown as Record<symbol, string>)[RUNTIME_ID];
+    }
     this.#options = Object.freeze({ ...options, runtime: this.#sessionRuntime });
-    this.#runtimeId = (options.runtime as unknown as Record<symbol, string>)[RUNTIME_ID];
     this.#connection = resolveEdgeConnection(options, context, profile);
     this.#auth = options.auth !== undefined;
+  }
+
+  /** Every Edge request carries the compiled runtime identity so a relay can require the exact client/runtime pair. */
+  #edgeFetch(request: Request): Promise<Response> {
+    const headers = new Headers(request.headers);
+    if (this.#runtimeId !== undefined) headers.set("X-Cantelop-Session-Runtime", this.#runtimeId);
+    return this.#connection.fetch(edgeRequest(new Request(request, { headers })));
   }
 
   environment(): AppEnvironment {
@@ -53,7 +65,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
       const id = options.id ?? messageID();
       const envelope = validateCommand({ protocolVersion: 2, id, workspace: null, session: null, command });
       let result: unknown;
-      try { result = await requestJSON(request => this.#connection.fetch(edgeRequest(request)), appCommandPath(command.type),
+      try { result = await requestJSON(request => this.#edgeFetch(request), appCommandPath(command.type),
         { method: "POST", body: envelope, ...(options.signal ? { signal: options.signal } : {}) }); }
       catch (error) { throw submissionError(error, id, options.signal); }
       if (!record(result) || result.protocolVersion !== 2 || result.id !== id) throw new RemoteAppError("invalid_environment_response", 0, id);
@@ -63,12 +75,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
 
   workspace(input: WorkspaceSelector): WorkspaceRef<Message, Event, Reply, View> {
     const connection = this.#connection;
-    const runtimeId = this.#runtimeId;
-    const edgeFetch = (request: Request) => {
-      const headers = new Headers(request.headers);
-      if (runtimeId !== undefined) headers.set("X-Cantelop-Session-Runtime", runtimeId);
-      return connection.fetch(edgeRequest(new Request(request, { headers })));
-    };
+    const edgeFetch = (request: Request) => this.#edgeFetch(request);
     function send(envelope: AppCommandEnvelope, signal?: AbortSignal) {
       signal?.throwIfAborted();
       validateCommand(envelope);

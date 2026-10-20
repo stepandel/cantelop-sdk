@@ -1,5 +1,5 @@
 import type { AppCommandEnvelope, AppEnvironmentEnvelope, WorkspaceSelector } from "./integration.js";
-import { ENVIRONMENT_COMMAND_TYPES, validateEnvironmentCommand, type EnvironmentCommand } from "./environment.js";
+import { ENVIRONMENT_COMMAND_TYPES, validateEnvironmentCommand, type EnvironmentCommand } from "./environment-command.js";
 import { isAuthCommand } from "./runtime-command.js";
 import { AUTH_SESSION_ID } from "./native-auth.js";
 
@@ -102,4 +102,16 @@ export function validateCommand(value: unknown): ProtocolEnvelope {
   }
   if (Object.keys(command).some(key => !keys.includes(key))) throw new TypeError("Invalid command fields");
   return { ...value, workspace } as AppCommandEnvelope;
+}
+/** Validate a relayed command as a whole: a bounded JSON POST to the path of the envelope's own command type. */
+export function validateCommandRequest(method: string, url: URL, body: Uint8Array): ProtocolEnvelope {
+  const type = appCommandType(url.pathname);
+  if (method !== "POST" || type === undefined || url.search) throw new TypeError("Invalid command route");
+  if (body.byteLength > MAX_COMMAND_BYTES) throw new TypeError("Command exceeds 1 MiB");
+  let value: unknown;
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)); }
+  catch { throw new TypeError("Invalid command JSON"); }
+  const envelope = validateCommand(value);
+  if (envelope.command.type !== type) throw new TypeError("Command type does not match its path");
+  return envelope;
 }

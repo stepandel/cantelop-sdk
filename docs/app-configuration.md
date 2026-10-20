@@ -131,7 +131,8 @@ await scoped.workspace({ slug: "project" }).resolve();
 ```
 
 `@cantelop/sdk/protocol` exports the versioned command and sync validators for
-services that relay SDK traffic. Validate the path, method, query and envelope;
-authorize account membership and bind server credentials independently. The
+services that relay SDK traffic. `validateCommandRequest(method, url, body)`
+checks the path, method, query, size and envelope together, including that the
+envelope's command type matches its path; authorize account membership and bind server credentials independently. The
 validators do not authenticate a request. Preserve streams, backpressure,
 submission IDs and cancellation, and do not replay an ambiguous mutation.

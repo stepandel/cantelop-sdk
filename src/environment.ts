@@ -1,4 +1,7 @@
 import { RemoteAppError } from "./remote-app.js";
+import type { EnvironmentCommand } from "./environment-command.js";
+
+export { ENVIRONMENT_COMMAND_TYPES, validateEnvironmentCommand, type EnvironmentCommand, type EnvironmentCommandType } from "./environment-command.js";
 
 export interface EnvironmentCommandOptions {
   /** Correlates this request and response. Retried mutations create a new configuration revision. */
@@ -11,26 +14,12 @@ export interface EnvironmentUpdate {
   readonly revision: number;
   readonly status: "pending" | "applied" | "failed";
 }
-export const ENVIRONMENT_COMMAND_TYPES = Object.freeze(["app.environment.set", "app.environment.unset", "app.environment.status"] as const);
-export type EnvironmentCommandType = (typeof ENVIRONMENT_COMMAND_TYPES)[number];
-export type EnvironmentCommand =
-  | { readonly type: "app.environment.set"; readonly name: string; readonly value: string; readonly secret: boolean }
-  | { readonly type: "app.environment.unset"; readonly name: string; readonly secret: boolean }
-  | { readonly type: "app.environment.status"; readonly revision: number };
 export interface AppEnvironment {
   set(name: string, value: string, options?: EnvironmentCommandOptions & { readonly secret?: boolean }): Promise<EnvironmentUpdate>;
   unset(name: string, options?: EnvironmentCommandOptions & { readonly secret?: boolean }): Promise<EnvironmentUpdate>;
   status(revision: number, options?: EnvironmentCommandOptions): Promise<EnvironmentUpdate>;
   /** Wait for Edge and compute configuration to reach this revision. Does not restart existing Sandboxes. */
   wait(revision: number, options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number }): Promise<EnvironmentUpdate>;
-}
-export function validateEnvironmentCommand(command: EnvironmentCommand): void {
-  if (command.type === "app.environment.status") {
-    if (!Number.isSafeInteger(command.revision) || command.revision < 0) throw new TypeError("Invalid environment revision");
-    return;
-  }
-  if (typeof command.name !== "string" || !/^(?!CANTELOP_)[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(command.name) || typeof command.secret !== "boolean") throw new TypeError("Invalid environment name or kind");
-  if (command.type === "app.environment.set" && (typeof command.value !== "string" || command.value.includes("\0") || new TextEncoder().encode(command.value).length > 64 * 1024)) throw new TypeError("Invalid environment value");
 }
 /** `send` validates the command envelope, including the command itself, before transport. */
 export function createAppEnvironment(send: (command: EnvironmentCommand, options?: EnvironmentCommandOptions) => Promise<unknown>): AppEnvironment {

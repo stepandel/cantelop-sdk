@@ -2,7 +2,7 @@
 export {
   CANTELOP_INTEGRATION_PROTOCOL_VERSION, APP_COMMAND_TYPES, WORKSPACE_COMMAND_TYPES,
   APP_COMMAND_PATH_PREFIX, MAX_COMMAND_BYTES, appCommandPath, appCommandType,
-  validateCommand, workspaceSelector, assertSessionID, assertMessageID,
+  validateCommand, validateCommandRequest, workspaceSelector, assertSessionID, assertMessageID,
 } from "./integration-protocol.js";
 export type { AppCommandType, ProtocolEnvelope } from "./integration-protocol.js";
 export {
