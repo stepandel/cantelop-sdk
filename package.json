@@ -1,6 +1,6 @@
 {
   "name": "@cantelop/sdk",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Backend integration and Session runtime SDK for Cantelop applications",
   "license": "MIT",
   "repository": {
@@ -20,6 +20,10 @@
     "access": "public"
   },
   "exports": {
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "import": "./dist/protocol.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"

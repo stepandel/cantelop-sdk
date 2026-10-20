@@ -20,14 +20,28 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
   readonly #sessionRuntime: SessionRuntime<Message, Event, Reply, View>;
   readonly #runtimeId: string | undefined;
   readonly #auth: boolean;
+  readonly #options: AppOptions<Message, Event, Reply, View>;
+  readonly #context: ConfigurationContext;
+  readonly #profile: string | undefined;
 
   get runtime(): SessionRuntime<Message, Event, Reply, View> { return this.#sessionRuntime; }
+  /** Compiled code/contract identity, independent of the physical deployment. */
+  get runtimeId(): string | undefined { return this.#runtimeId; }
+
+  /** Bind this compiled definition to a trusted transport without changing other references. */
+  connect(connection: AppConnection): App<Message, Event, Reply, View> {
+    const { connection: _connection, edgeUrl: _url, accessToken: _token, ...definition } = this.#options;
+    return new App({ ...definition, connection }, this.#context, this.#profile);
+  }
 
   constructor(options: AppOptions<Message, Event, Reply, View>, context: ConfigurationContext, profile?: string) {
     if (!options || typeof options.name !== "string" || !SLUG_PATTERN.test(options.name)) throw new TypeError("A valid App name is required");
     this.#name = options.name;
+    this.#context = context;
+    this.#profile = profile;
     assertSessionRuntime(options.runtime);
     this.#sessionRuntime = Object.freeze({ ...options.runtime });
+    this.#options = Object.freeze({ ...options, runtime: this.#sessionRuntime });
     this.#runtimeId = (options.runtime as unknown as Record<symbol, string>)[RUNTIME_ID];
     this.#connection = resolveEdgeConnection(options, context, profile);
     this.#auth = options.auth !== undefined;
