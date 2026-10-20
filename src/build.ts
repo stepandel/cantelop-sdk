@@ -1,31 +1,36 @@
-import type { AppDeploymentConfiguration } from "./app-definition.js";
 /// <reference types="node" />
-
 /**
- * Build tooling reserved for the Cantelop CLI, not a supported application API.
- * Application authors should use `cantelop dev` and `cantelop deploy`.
- * Compatibility is governed by CANTELOP_CLI_BUILD_PROTOCOL_VERSION.
+ * Build tooling for the Cantelop CLI and the platform.
+ *
+ * Application authors normally use `cantelop dev` and `cantelop deploy` and never call
+ * these builders directly. The one export meant for application code is
+ * `createCantelopCompilerPlugin`, which an App backend adds to its own esbuild pipeline
+ * to strip Sandbox-only dependencies from the definition module. Everything else
+ * (artifact builders, watch mode, database schema helpers, the auth terminal bridge)
+ * is CLI-facing; its compatibility is governed by CANTELOP_CLI_BUILD_PROTOCOL_VERSION.
  * @packageDocumentation
  */
 
 import { spawn } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { compileClientDefinition as readRuntimeDefinition, compileAppDefinitions, RuntimeContractError } from "./compiler.js";
-export { createCantelopCompilerPlugin } from "./compiler.js";
-export { bridgeAuthTerminal } from "./auth-terminal-bridge.js";
-export type { AuthTerminalBridgeOptions } from "./auth-terminal-bridge.js";
 import { fileURLToPath } from "node:url";
-
 import {
   build,
   context as createBuildContext,
   type BuildContext,
   type BuildOptions,
+  type BuildResult,
   type Plugin,
 } from "esbuild";
+import type { AppDeploymentConfiguration } from "./app-definition.js";
+import { compileClientDefinition, compileAppDefinitions, RuntimeContractError } from "./compiler.js";
+import { validateApplicationSchema, type ApplicationDatabaseSchema } from "./database-schema.js";
+import { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";
 
-import type { ApplicationDatabaseSchema } from "./database-schema.js";
+export { createCantelopCompilerPlugin } from "./compiler.js";
+export { bridgeAuthTerminal } from "./auth-terminal-bridge.js";
+export type { AuthTerminalBridgeOptions } from "./auth-terminal-bridge.js";
 export { createApplicationSchema, validateApplicationSchema, applicationMigrationSQL, synchronizeApplicationSchema, synchronizeLocalDatabase, DatabaseSchemaError } from "./database-schema.js";
 export type { ApplicationDatabaseSchema, AppliedApplicationMigration } from "./database-schema.js";
 export const CANTELOP_DATABASE_SCHEMA_PROTOCOL_VERSION = 1;
@@ -36,6 +41,11 @@ const SESSION_RUNTIME_MAIN_MODULE = "session-runtime.mjs";
 const SESSION_MANIFEST_FILE = "cantelop-runtime.json";
 const SESSION_RUNTIME_ADAPTER_MODULE = fileURLToPath(new URL("./runtime.js", import.meta.url));
 const SESSION_RUNTIME_STARTUP_STATE_KEY = "dev.cantelop.sdk.session-runtime-startup.v1";
+const SCHEMA_GENERATOR_MODULE = fileURLToPath(new URL("./database-schema.js", import.meta.url));
+const PROTOCOL_EDGE_MODULE = fileURLToPath(new URL("./protocol-edge.js", import.meta.url));
+const MAX_BUILD_MODULE_OUTPUT = 2 * 1024 * 1024;
+/** Sandbox actor protocol spoken by the bundled Session runtime. */
+const SESSION_RUNTIME_PROTOCOL_VERSION = 2;
 
 // The CLI checks this exact protocol before using the build module. Increment
 // it when an incompatible build/watch contract is introduced.
@@ -46,7 +56,7 @@ export const CANTELOP_LOCAL_DATABASE_PROTOCOL_VERSION = 1;
 
 export interface BuildSessionRuntimeOptions {
   readonly definition: string;
-  /** Required when a definition module exports multiple Apps. */
+  /** Selects one App by its `name`; required when the definition module exports several. Not a rename (see buildAppArtifacts' `appName`). */
   readonly app?: string;
   readonly outdir: string;
   /** Manifest/project root; inferred from the Session entrypoint when omitted. */
@@ -57,9 +67,9 @@ export interface SessionRuntimeManifest extends AppDeploymentConfiguration {
   readonly schema_version: 1;
   readonly kind: "cantelop-session-runtime";
   readonly main_module: "session-runtime.mjs";
-  readonly cli_build_protocol_version: 6;
-  readonly runtime_protocol_version: 2;
-  readonly integration_protocol_version: 2;
+  readonly cli_build_protocol_version: typeof CANTELOP_CLI_BUILD_PROTOCOL_VERSION;
+  readonly runtime_protocol_version: typeof SESSION_RUNTIME_PROTOCOL_VERSION;
+  readonly integration_protocol_version: typeof CANTELOP_INTEGRATION_PROTOCOL_VERSION;
   readonly session_runtime_id: string;
   readonly app_name: string;
   /** Advertised only after coordinated actor scheduling, attribution and projection support. */
@@ -83,6 +93,7 @@ export interface LocalBuildEvent {
 
 export interface WatchLocalProjectOptions {
   readonly sessionDefinition: string;
+  /** Selects one App by its `name`; required when the definition module exports several. */
   readonly app?: string;
   readonly sessionRuntimeOutdir: string;
   readonly projectRoot?: string;
@@ -95,7 +106,7 @@ export interface LocalProjectWatcher {
 
 export interface BuildEdgeApiOptions {
   readonly definition: string;
-  /** Required when a definition module exports multiple Apps. */
+  /** Selects one App by its `name`; required when the definition module exports several. */
   readonly app?: string;
   readonly outdir: string;
   /** Local CLI only: a numeric loopback Session bridge origin. */
@@ -105,13 +116,14 @@ export interface EdgeApiArtifact {
   readonly directory: string;
   readonly mainModule: string;
   readonly manifestFile: string;
-  readonly manifest: Readonly<{
+  readonly manifest: Readonly<AppDeploymentConfiguration & {
     schema_version: 1;
     kind: "cantelop-protocol-edge";
     main_module: "worker.mjs";
-    cli_build_protocol_version: 6;
-    integration_protocol_version: 2;
+    cli_build_protocol_version: typeof CANTELOP_CLI_BUILD_PROTOCOL_VERSION;
+    integration_protocol_version: typeof CANTELOP_INTEGRATION_PROTOCOL_VERSION;
     session_runtime_id: string;
+    app_name: string;
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
     /** The Worker also accepts a rotated-out token until the paired expiry passes. */
     optional_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN_PREVIOUS", "CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT"];
@@ -125,10 +137,10 @@ export interface EdgeApiArtifact {
 
 /** Generates the protocol-owned App Worker; there is no customer API entrypoint. */
 export async function buildEdgeApi(options: BuildEdgeApiOptions): Promise<EdgeApiArtifact> {
-  return writeEdgeApi(await readRuntimeDefinition(path.resolve(options.definition), options.app), options);
+  return writeEdgeApi(await compileClientDefinition(path.resolve(options.definition), options.app), options);
 }
 
-type CompiledApp = Awaited<ReturnType<typeof readRuntimeDefinition>>;
+type CompiledApp = Awaited<ReturnType<typeof compileClientDefinition>>;
 
 async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions): Promise<EdgeApiArtifact> {
   const outdir = path.resolve(options.outdir);
@@ -141,7 +153,6 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
   }
   await mkdir(outdir, { recursive: true });
   const mainModule = path.join(outdir, "worker.mjs");
-  const adapter = fileURLToPath(new URL("./protocol-edge.js", import.meta.url));
   const workerOptions = {
     runtimeId: runtime.definition.id,
     appName: runtime.definition.name,
@@ -150,7 +161,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
     ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }),
   };
   await build({
-    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(adapter)};\nimport ingress from "cantelop:webhooks";\nexport default createProtocolWorker({ ...${JSON.stringify(workerOptions)}, ...ingress });`, resolveDir: outdir },
+    stdin: { contents: `import { createProtocolWorker } from ${JSON.stringify(PROTOCOL_EDGE_MODULE)};\nimport ingress from "cantelop:webhooks";\nexport default createProtocolWorker({ ...${JSON.stringify(workerOptions)}, ...ingress });`, resolveDir: outdir },
     bundle: true, platform: "browser", format: "esm", target: "es2022", outfile: mainModule, logLevel: "silent",
     plugins: [{ name: "cantelop-webhook-artifact", setup(builder) {
       builder.onResolve({ filter: /^cantelop:webhooks$/ }, () => ({ path: "webhooks", namespace: "cantelop" }));
@@ -159,7 +170,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
   });
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
     schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
-    cli_build_protocol_version: 6, integration_protocol_version: 2, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
+    cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION, integration_protocol_version: CANTELOP_INTEGRATION_PROTOCOL_VERSION, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
     ...(runtime.definition.environment === undefined ? {} : { environment: runtime.definition.environment }),
     ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
@@ -185,7 +196,7 @@ function evaluateBuildModule(source: string): Promise<unknown> {
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk;
-      if (stdout.length > 2 * 1024 * 1024) { child.kill("SIGKILL"); reject(new Error("build module output exceeds 2 MiB")); }
+      if (stdout.length > MAX_BUILD_MODULE_OUTPUT) { child.kill("SIGKILL"); reject(new Error("build module output exceeds 2 MiB")); }
     });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-2048); });
     child.on("error", reject);
@@ -210,20 +221,20 @@ function evaluateBuildModule(source: string): Promise<unknown> {
   });
 }
 
-async function writeSessionManifest(outdir: string, schemaPath: string, runtimeId: string, appName: string, configuration: AppDeploymentConfiguration & { readonly auth?: true }): Promise<SessionRuntimeManifest> {
-  const databaseSchema = await buildDatabaseSchema(schemaPath);
+/** The schema is built by the caller (once per build or schema change) and shared by every App manifest. */
+async function writeSessionManifest(outdir: string, databaseSchema: ApplicationDatabaseSchema | undefined, definition: CompiledApp["definition"]): Promise<SessionRuntimeManifest> {
   const manifest: SessionRuntimeManifest = Object.freeze({
     schema_version: 1,
     kind: "cantelop-session-runtime",
     main_module: SESSION_RUNTIME_MAIN_MODULE,
     cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION,
-    runtime_protocol_version: 2,
-    integration_protocol_version: 2,
-    session_runtime_id: runtimeId,
-    app_name: appName,
-    ...(configuration.environment === undefined ? {} : { environment: configuration.environment }),
-    ...(configuration.dockerfile === undefined ? {} : { dockerfile: configuration.dockerfile }),
-    capabilities: Object.freeze({ steering: true, messageCancellation: true, durableView: true, ...(configuration.auth ? { authTerminal: true } : {}) }),
+    runtime_protocol_version: SESSION_RUNTIME_PROTOCOL_VERSION,
+    integration_protocol_version: CANTELOP_INTEGRATION_PROTOCOL_VERSION,
+    session_runtime_id: definition.id,
+    app_name: definition.name,
+    ...(definition.environment === undefined ? {} : { environment: definition.environment }),
+    ...(definition.dockerfile === undefined ? {} : { dockerfile: definition.dockerfile }),
+    capabilities: Object.freeze({ steering: true, messageCancellation: true, durableView: true, ...(definition.auth ? { authTerminal: true } : {}) }),
     ...(databaseSchema === undefined ? {} : { database_schema: databaseSchema }),
   });
   await writeFile(path.join(outdir, SESSION_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8" });
@@ -239,12 +250,13 @@ export async function buildSessionRuntime(
   options: BuildSessionRuntimeOptions,
 ): Promise<SessionRuntimeArtifact> {
   const definitionPath = path.resolve(options.definition);
-  return writeSessionRuntime(await readRuntimeDefinition(definitionPath, options.app, { webhooks: false }), definitionPath, options);
+  const compiled = await compileClientDefinition(definitionPath, options.app, { webhooks: false });
+  const databaseSchema = await buildDatabaseSchema(await projectSchemaPath(compiled.entrypoint, options.projectRoot));
+  return writeSessionRuntime(compiled, definitionPath, options, databaseSchema);
 }
 
-async function writeSessionRuntime(compiled: CompiledApp, definitionPath: string, options: BuildSessionRuntimeOptions): Promise<SessionRuntimeArtifact> {
-  let runtime = compiled;
-  const entrypoint = runtime.entrypoint;
+async function writeSessionRuntime(compiled: CompiledApp, definitionPath: string, options: BuildSessionRuntimeOptions, databaseSchema: ApplicationDatabaseSchema | undefined): Promise<SessionRuntimeArtifact> {
+  const entrypoint = compiled.entrypoint;
   const outdir = path.resolve(options.outdir);
   if (entrypoint === outdir || path.dirname(entrypoint) === outdir) {
     throw new TypeError(
@@ -254,10 +266,9 @@ async function writeSessionRuntime(compiled: CompiledApp, definitionPath: string
   await mkdir(outdir, { recursive: true });
 
   const mainModule = path.join(outdir, SESSION_RUNTIME_MAIN_MODULE);
-  // One-shot builds reuse the definition compiled above instead of recompiling in onLoad.
-  await build(sessionRuntimeBuildOptions(definitionPath, mainModule, value => { runtime = value; }, async () => compiled));
-  const schemaPath = await projectSchemaPath(runtime.entrypoint, options.projectRoot);
-  const manifest = await writeSessionManifest(outdir, schemaPath, runtime.definition.id, runtime.definition.name, runtime.definition);
+  // One-shot builds reuse the definition compiled by the caller instead of recompiling in onLoad.
+  await build(sessionRuntimeBuildOptions(definitionPath, mainModule, () => {}, async () => compiled));
+  const manifest = await writeSessionManifest(outdir, databaseSchema, compiled.definition);
   return Object.freeze({
     directory: outdir, mainModule,
     manifestFile: path.join(outdir, SESSION_MANIFEST_FILE), manifest,
@@ -329,19 +340,26 @@ export async function watchLocalProject(
   options: WatchLocalProjectOptions,
 ): Promise<LocalProjectWatcher> {
   const sessionDefinition = path.resolve(options.sessionDefinition);
-  let runtime = await readRuntimeDefinition(sessionDefinition, options.app, { webhooks: false });
+  const compile = () => compileClientDefinition(sessionDefinition, options.app, { webhooks: false });
+  let runtime = await compile();
   let buildingRuntime = runtime;
-  const sessionEntrypoint = runtime.entrypoint;
+  // The session-runtime context's first load reuses this definition; later loads recompile.
+  let initialDefinition: Promise<CompiledApp> | undefined = Promise.resolve(runtime);
+  const loadDefinition = () => { const pending = initialDefinition ?? compile(); initialDefinition = undefined; return pending; };
   const sessionRuntimeOutdir = path.resolve(options.sessionRuntimeOutdir);
   await mkdir(sessionRuntimeOutdir, { recursive: true });
-  const schemaPath = await projectSchemaPath(sessionEntrypoint, options.projectRoot);
+  const schemaPath = await projectSchemaPath(runtime.entrypoint, options.projectRoot);
+  const schemaWatched = await exists(schemaPath);
+  // Evaluated once per schema change; runtime rebuilds reuse the last valid schema.
+  let databaseSchema: ApplicationDatabaseSchema | undefined;
+  const writeManifest = () => writeSessionManifest(sessionRuntimeOutdir, databaseSchema, runtime.definition);
   const contexts: BuildContext[] = [];
   try {
-    if (await exists(schemaPath)) {
-      contexts.push(await watchedContext("database-schema", {
-        entryPoints: [schemaPath], bundle: true, platform: "node", format: "esm", write: false,
-        logLevel: "silent",
-      }, options.onBuild, async () => writeSessionManifest(sessionRuntimeOutdir, schemaPath, runtime.definition.id, runtime.definition.name, runtime.definition)));
+    if (schemaWatched) {
+      contexts.push(await watchedContext("database-schema", schemaBundleOptions(schemaPath), options.onBuild, async result => {
+        databaseSchema = await evaluateSchemaBundle(result.outputFiles?.[0]?.text);
+        await writeManifest();
+      }));
     }
     contexts.push(
       await watchedContext(
@@ -350,10 +368,15 @@ export async function watchLocalProject(
           sessionDefinition,
           path.join(sessionRuntimeOutdir, SESSION_RUNTIME_MAIN_MODULE),
           value => { buildingRuntime = value; },
-          () => readRuntimeDefinition(sessionDefinition, options.app, { webhooks: false }),
+          loadDefinition,
         ),
         options.onBuild,
-        async () => { runtime = buildingRuntime; return writeSessionManifest(sessionRuntimeOutdir, schemaPath, runtime.definition.id, runtime.definition.name, runtime.definition); },
+        async () => {
+          runtime = buildingRuntime;
+          // Without a watched schema, a schema created later is picked up on the next runtime build.
+          if (!schemaWatched) databaseSchema = await buildDatabaseSchema(schemaPath);
+          return writeManifest();
+        },
       ),
     );
   } catch (error) {
@@ -371,7 +394,7 @@ async function watchedContext(
   component: LocalBuildComponent,
   options: BuildOptions,
   onBuild: (event: LocalBuildEvent) => void,
-  finalize?: () => Promise<unknown>,
+  finalize?: (result: BuildResult) => Promise<unknown>,
 ): Promise<BuildContext> {
   let initial = true;
   let resolveInitial!: () => void;
@@ -387,7 +410,7 @@ async function watchedContext(
         let error = result.errors.map((value) => value.text).join("\n");
         if (error === "" && finalize !== undefined) {
           try {
-            await finalize();
+            await finalize(result);
           } catch (failure) {
             error = failure instanceof Error ? failure.message : String(failure);
           }
@@ -430,24 +453,36 @@ async function projectSchemaPath(entrypoint: string, projectRoot?: string): Prom
     if (path.dirname(directory) === directory) return path.join(path.dirname(path.resolve(entrypoint)), "db/schema.ts");
   }
 }
-/** Discovered automatically from the project root; absence opts out of managed application schemas. */
-export async function buildDatabaseSchema(entrypoint = path.resolve("db/schema.ts")): Promise<ApplicationDatabaseSchema | undefined> {
-  if (!await exists(entrypoint)) return undefined;
-  const bundle = await build({
-    stdin: { contents: `import * as schema from ${JSON.stringify(path.resolve(entrypoint))};\nglobalThis.__cantelopBuildSchema = schema;`,
-      resolveDir: path.dirname(path.resolve(entrypoint)), loader: "ts" },
+/** Bundles the developer schema module so its exports can be evaluated outside this process. */
+function schemaBundleOptions(entrypoint: string): BuildOptions {
+  const resolved = path.resolve(entrypoint);
+  return {
+    stdin: { contents: `import * as schema from ${JSON.stringify(resolved)};\nglobalThis.__cantelopBuildSchema = schema;`, resolveDir: path.dirname(resolved), loader: "ts" },
     bundle: true, format: "esm", platform: "node", target: "es2022", write: false, logLevel: "silent",
-  });
-  const source = bundle.outputFiles?.[0]?.text;
+  };
+}
+
+/** Evaluates a bundled schema module in a child process and validates the resulting artifact. */
+async function evaluateSchemaBundle(source: string | undefined): Promise<ApplicationDatabaseSchema> {
   if (!source) throw new Error("database schema produced no module");
-  const generator = fileURLToPath(new URL("./database-schema.js", import.meta.url));
-  const result = await evaluateBuildModule(`${source}\nimport { createApplicationSchema } from ${JSON.stringify(generator)};\nconst artifact = await createApplicationSchema(globalThis.__cantelopBuildSchema);\nprocess.stdout.write("\\n${BUILD_ARTIFACT_MARKER}" + JSON.stringify(artifact) + "\\n", () => process.exit(0));`);
-  const { validateApplicationSchema } = await import("./database-schema.js");
+  const result = await evaluateBuildModule(`${source}\nimport { createApplicationSchema } from ${JSON.stringify(SCHEMA_GENERATOR_MODULE)};\nconst artifact = await createApplicationSchema(globalThis.__cantelopBuildSchema);\nprocess.stdout.write("\\n${BUILD_ARTIFACT_MARKER}" + JSON.stringify(artifact) + "\\n", () => process.exit(0));`);
   return validateApplicationSchema(result);
 }
 
+/** Discovered automatically from the project root; absence opts out of managed application schemas. */
+export async function buildDatabaseSchema(entrypoint = path.resolve("db/schema.ts")): Promise<ApplicationDatabaseSchema | undefined> {
+  if (!await exists(entrypoint)) return undefined;
+  const bundle = await build(schemaBundleOptions(entrypoint));
+  return evaluateSchemaBundle(bundle.outputFiles?.[0]?.text);
+}
+
 /** Generate a backend client module with the Sandbox dependency graph removed. */
-export async function buildBackendClient(options: { readonly definition: string; readonly outdir: string; readonly appName?: string }) {
+export async function buildBackendClient(options: {
+  readonly definition: string;
+  readonly outdir: string;
+  /** Override the literal deployment name of a single App without rewriting its source. */
+  readonly appName?: string;
+}) {
   return writeBackendClient(await compileAppDefinitions(path.resolve(options.definition), { webhooks: false, ...(options.appName === undefined ? {} : { appName: options.appName }) }), options);
 }
 
@@ -481,12 +516,14 @@ export async function buildAppArtifacts(options: {
   // Compile once so every artifact shares one consistent App identity.
   const definitionPath = path.resolve(options.definition);
   const compiled = await compileAppDefinitions(definitionPath, options.appName === undefined ? {} : { appName: options.appName });
+  // Every App shares the definition's project, so the schema is built once for all of them.
+  const databaseSchema = await buildDatabaseSchema(await projectSchemaPath(definitionPath, options.projectRoot));
   const apps = [];
   for (const app of compiled.apps) {
     const outdir = path.join(path.resolve(options.outdir), app.definition.name);
     const runtimeDefinition = { ...app, backendSource: compiled.backendSource, watchFiles: compiled.watchFiles };
     const edge = await writeEdgeApi(runtimeDefinition, { definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "edge"), ...(options.runtimeOrigin === undefined ? {} : { runtimeOrigin: options.runtimeOrigin }) });
-    const runtime = await writeSessionRuntime(runtimeDefinition, definitionPath, { definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "runtime"), ...(options.projectRoot === undefined ? {} : { projectRoot: options.projectRoot }) });
+    const runtime = await writeSessionRuntime(runtimeDefinition, definitionPath, { definition: options.definition, app: app.definition.name, outdir: path.join(outdir, "runtime") }, databaseSchema);
     apps.push({ name: app.definition.name, edge, runtime });
   }
   const backend = await writeBackendClient(compiled, { definition: options.definition, outdir: path.join(path.resolve(options.outdir), "backend") });

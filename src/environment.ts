@@ -1,4 +1,9 @@
-import { RemoteAppError } from "./remote-app.js";
+import { RemoteAppError } from "./transport.js";
+import { MAX_REQUEST_TIMEOUT_MS, type ENVIRONMENT_COMMAND_TYPES } from "./integration-protocol.js";
+
+const DEFAULT_WAIT_TIMEOUT_MS = 120_000;
+const FIRST_POLL_DELAY_MS = 250;
+const MAX_POLL_DELAY_MS = 5_000;
 
 export interface EnvironmentCommandOptions {
   /** Correlates this request and response. Retried mutations create a new configuration revision. */
@@ -11,7 +16,6 @@ export interface EnvironmentUpdate {
   readonly revision: number;
   readonly status: "pending" | "applied" | "failed";
 }
-export const ENVIRONMENT_COMMAND_TYPES = Object.freeze(["app.environment.set", "app.environment.unset", "app.environment.status"] as const);
 export type EnvironmentCommandType = (typeof ENVIRONMENT_COMMAND_TYPES)[number];
 export type EnvironmentCommand =
   | { readonly type: "app.environment.set"; readonly name: string; readonly value: string; readonly secret: boolean }
@@ -23,14 +27,6 @@ export interface AppEnvironment {
   status(revision: number, options?: EnvironmentCommandOptions): Promise<EnvironmentUpdate>;
   /** Wait for Edge and compute configuration to reach this revision. Does not restart existing Sandboxes. */
   wait(revision: number, options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number }): Promise<EnvironmentUpdate>;
-}
-export function validateEnvironmentCommand(command: EnvironmentCommand): void {
-  if (command.type === "app.environment.status") {
-    if (!Number.isSafeInteger(command.revision) || command.revision < 0) throw new TypeError("Invalid environment revision");
-    return;
-  }
-  if (typeof command.name !== "string" || !/^(?!CANTELOP_)[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(command.name) || typeof command.secret !== "boolean") throw new TypeError("Invalid environment name or kind");
-  if (command.type === "app.environment.set" && (typeof command.value !== "string" || command.value.includes("\0") || new TextEncoder().encode(command.value).length > 64 * 1024)) throw new TypeError("Invalid environment value");
 }
 /** `send` validates the command envelope, including the command itself, before transport. */
 export function createAppEnvironment(send: (command: EnvironmentCommand, options?: EnvironmentCommandOptions) => Promise<unknown>): AppEnvironment {
@@ -46,22 +42,27 @@ export function createAppEnvironment(send: (command: EnvironmentCommand, options
     unset: (name, options = {}) => request({ type: "app.environment.unset", name, secret: options.secret ?? false }, options),
     status: (revision, options) => request({ type: "app.environment.status", revision }, options),
     async wait(revision, options = {}) {
-      const timeoutMs = options.timeoutMs ?? 120_000;
-      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw new TypeError("Invalid environment wait timeout");
+      const timeoutMs = options.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_REQUEST_TIMEOUT_MS) throw new TypeError("Invalid environment wait timeout");
       const signal = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(options.signal ? [options.signal] : [])]);
-      for (let delay = 250; ; delay = Math.min(delay * 2, 5_000)) {
+      for (let delay = FIRST_POLL_DELAY_MS; ; delay = Math.min(delay * 2, MAX_POLL_DELAY_MS)) {
         signal.throwIfAborted();
         const result = await api.status(revision, { signal });
         if (result.status === "failed") throw new RemoteAppError("environment_update_failed", 503);
         if (result.status === "applied") return result;
-        await new Promise<void>((resolve, reject) => {
-          const abort = () => { clearTimeout(timer); reject(signal.reason); };
-          const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, delay);
-          signal.addEventListener("abort", abort, { once: true });
-          if (signal.aborted) abort();
-        });
+        await delayUnlessAborted(delay, signal);
       }
     },
   };
   return Object.freeze(api);
+}
+
+/** Resolves after `ms`, or rejects with the signal's reason; never leaves a listener behind. */
+function delayUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, ms);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }

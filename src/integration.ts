@@ -6,12 +6,15 @@ import type { WorkspaceDatabase } from "./database.js";
 import type { AppAuth, AuthCommand } from "./native-auth.js";
 import type { MessageRef, SessionRequestOptions, Workspace } from "./resources.js";
 import type { WorkspaceSync, WorkspaceSyncOptions } from "./sync.js";
-import type { WorkspaceCommandType } from "./integration-protocol.js";
+import type { CANTELOP_INTEGRATION_PROTOCOL_VERSION, WorkspaceCommandType } from "./integration-protocol.js";
 
-/** Exactly one canonical ID or App-scoped slug. */
-export type WorkspaceSelector =
+/** Exactly one canonical ID or slug. */
+type IdentitySelector =
   | { readonly id: string; readonly slug?: never }
   | { readonly slug: string; readonly id?: never };
+
+/** Exactly one canonical Workspace ID or App-scoped slug. */
+export type WorkspaceSelector = IdentitySelector;
 
 export interface IntegrationSessionOptions {
   readonly id?: string;
@@ -27,9 +30,7 @@ export interface AppConnection {
 }
 
 /** Select an App by identity; its connection is resolved from runtime/CLI configuration. */
-export type AppSelector =
-  | { readonly id: string; readonly slug?: never }
-  | { readonly slug: string; readonly id?: never };
+export type AppSelector = IdentitySelector;
 
 /** Shared connection context; independent of any App or runtime. */
 export interface CantelopClientOptions {
@@ -167,7 +168,7 @@ export type SessionCommand<Message = unknown> =
   | { readonly type: "stream"; readonly after?: SessionEventCursor };
 
 export type AppCommandEnvelope<Message = unknown> = {
-  readonly protocolVersion: 2;
+  readonly protocolVersion: typeof CANTELOP_INTEGRATION_PROTOCOL_VERSION;
   /** Submission identity for dispatch/steer/request; command identity otherwise. */
   readonly id: string;
   readonly workspace: WorkspaceSelector;
@@ -177,7 +178,7 @@ export type AppCommandEnvelope<Message = unknown> = {
 );
 /** App-scoped environment commands carry no Workspace or Session; kept apart so `AppCommandEnvelope.workspace` stays non-null. */
 export type AppEnvironmentEnvelope = {
-  readonly protocolVersion: 2;
+  readonly protocolVersion: typeof CANTELOP_INTEGRATION_PROTOCOL_VERSION;
   readonly id: string;
   readonly workspace: null;
   readonly session: null;

@@ -24,6 +24,9 @@ try {
     { cwd: root, maxBuffer: 1024 * 1024 },
   );
   const [pack] = JSON.parse(stdout);
+  // The packed protocol versions must match this build; the literal values are pinned by the unit tests.
+  const { CANTELOP_CLI_BUILD_PROTOCOL_VERSION } = await import("../dist/build.js");
+  const { CANTELOP_INTEGRATION_PROTOCOL_VERSION } = await import("../dist/index.js");
   assert.equal(pack.name, "@cantelop/sdk");
   assert.equal(pack.version, manifest.version);
   assert.ok(pack.size > 0);
@@ -80,7 +83,7 @@ try {
     'import * as build from "@cantelop/sdk/build";',
     'import * as sessionSDK from "@cantelop/sdk/session";',
     'import * as runtime from "@cantelop/sdk/runtime";',
-    'assert.equal(build.CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 6);',
+    `assert.equal(build.CANTELOP_CLI_BUILD_PROTOCOL_VERSION, ${CANTELOP_CLI_BUILD_PROTOCOL_VERSION});`,
     'assert.equal(typeof build.watchLocalProject, "function");',
     'assert.equal(typeof sdk.CantelopClient, "function");',
     'assert.deepEqual(Object.keys(runtime).sort(), ["createSessionDatabase", "createSessionRuntimeHandler", "serveSessionRuntime"]);',
@@ -187,7 +190,7 @@ try {
     'await session.cancel();',
     '// @ts-expect-error Cancellation targets the active run, not a message.',
     'session.cancel(receipt.id);',
-    'const command: AppCommandEnvelope<{ prompt: string }> = { protocolVersion: 2, id: receipt.id, workspace: { slug: "customer" }, session: { id: session.id }, command: { type: "steer", message: { prompt: "focus" } } };',
+    `const command: AppCommandEnvelope<{ prompt: string }> = { protocolVersion: ${CANTELOP_INTEGRATION_PROTOCOL_VERSION}, id: receipt.id, workspace: { slug: "customer" }, session: { id: session.id }, command: { type: "steer", message: { prompt: "focus" } } };`,
     'const view = await session.view();',
     'const updatedAt: Date = view.updatedAt;',
     'const entries: string[] = view.state.entries;',
@@ -216,7 +219,7 @@ try {
     'import assert from "node:assert/strict";',
     'import { writeFile } from "node:fs/promises";',
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "@cantelop/sdk";',
-    'assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 2);',
+    `assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, ${CANTELOP_INTEGRATION_PROTOCOL_VERSION});`,
     'const runtime = { receive() {} };',
 
     'let calls = 0;',
@@ -225,7 +228,7 @@ try {
     '  assert.equal(new URL(request.url).pathname, "/commands/dispatch");',
     '  const body = await request.json();',
     '  assert.equal(body.workspace.id, "wsp_0123456789abcdef0123456789abcdef");',
-    '  return Response.json({ protocolVersion: 2, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });',
+    `  return Response.json({ protocolVersion: ${CANTELOP_INTEGRATION_PROTOCOL_VERSION}, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });`,
     '} } });',
     'assert.equal(app.name, "first-agent");',
     'const session = app.workspace({ id: "wsp_0123456789abcdef0123456789abcdef" }).session({ keepAliveSeconds: 0 });',
@@ -241,7 +244,7 @@ try {
     '  assert.ok(["dispatch", "steer"].map(type => `https://packed-app.cantelop.dev/commands/${type}`).includes(request.url));',
     '  assert.equal(request.headers.get("authorization"), "Bearer packed-integration-token");',
     '  const body = await request.json();',
-    '  return Response.json({ protocolVersion: 2, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });',
+    `  return Response.json({ protocolVersion: ${CANTELOP_INTEGRATION_PROTOCOL_VERSION}, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });`,
     '};',
     'const automatic = new CantelopClient().app({ name: "packed-app", runtime }).workspace({ slug: "customer" }).session();',
     'assert.equal((await automatic.dispatch({ prompt: "configured" })).state, "accepted");',
@@ -253,7 +256,7 @@ try {
   assert.equal(artifactManifest.kind, "cantelop-session-runtime");
   assert.equal(artifactManifest.schema_version, 1);
   assert.equal("routes" in artifactManifest, false);
-  assert.equal(artifactManifest.cli_build_protocol_version, 6);
+  assert.equal(artifactManifest.cli_build_protocol_version, CANTELOP_CLI_BUILD_PROTOCOL_VERSION);
   process.stdout.write(`Qualified ${pack.filename} (${paths.length} files)\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
