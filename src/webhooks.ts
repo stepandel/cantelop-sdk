@@ -19,14 +19,21 @@ export interface WebhookRoute<Message = unknown, Event = never, Reply = never, V
 export type WebhookRoutes<Message = unknown, Event = never, Reply = never, View = unknown> =
   Readonly<Record<string, WebhookRoute<Message, Event, Reply, View>>>;
 
-/** Exact paths under the reserved webhook prefix; no general-purpose router. */
-export function validateWebhookRoutes(value: WebhookRoutes<any, any, any, any> | undefined): WebhookRoutes<any, any, any, any> {
+const WEBHOOK_PATH = /^\/webhooks\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
+const WEBHOOK_METHODS: ReadonlySet<unknown> = new Set(["GET", "POST"]);
+
+/** An exact path under the reserved webhook prefix and a supported method; no general-purpose router. */
+export function isValidWebhookRoute(path: string, method: unknown): method is WebhookRoute["method"] {
+  return WEBHOOK_PATH.test(path) && WEBHOOK_METHODS.has(method);
+}
+
+export function validateWebhookRoutes<Message, Event, Reply, View>(value: WebhookRoutes<Message, Event, Reply, View> | undefined): WebhookRoutes<Message, Event, Reply, View> {
   if (value === undefined) return Object.freeze({});
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Invalid App webhooks");
-  const routes: Record<string, WebhookRoute<any, any, any, any>> = {};
+  const routes: Record<string, WebhookRoute<Message, Event, Reply, View>> = {};
   for (const [path, route] of Object.entries(value)) {
-    if (!/^\/webhooks\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(path) || !route || typeof route !== "object" || Array.isArray(route) ||
-        Object.keys(route).some(key => !["method", "handle"].includes(key)) || !["GET", "POST"].includes(route.method) || typeof route.handle !== "function") throw new TypeError("Invalid App webhook route");
+    if (!route || typeof route !== "object" || Array.isArray(route) || Object.keys(route).some(key => key !== "method" && key !== "handle") ||
+        !isValidWebhookRoute(path, route.method) || typeof route.handle !== "function") throw new TypeError("Invalid App webhook route");
     routes[path] = Object.freeze({ method: route.method, handle: route.handle });
   }
   return Object.freeze(routes);

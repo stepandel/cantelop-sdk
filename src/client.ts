@@ -1,5 +1,6 @@
 import { App } from "./app.js";
-import { captureConfigurationContext, type ConfigurationContext } from "./app-config.js";
+import { captureConfigurationContext, normalizeAppOptions, type ConfigurationContext } from "./app-config.js";
+import { resolveEdgeConnection } from "./edge-connection.js";
 import type { AppOptions, CantelopClientOptions } from "./integration.js";
 
 /** Shared connection context for any number of named Apps. */
@@ -16,9 +17,10 @@ export class CantelopClient {
   }
 
   app<Message = unknown, Event = never, Reply = never, View = unknown>(options: AppOptions<Message, Event, Reply, View>): App<Message, Event, Reply, View> {
-    if (this.#names.has(options?.name)) throw new TypeError(`Duplicate App name: ${options.name}`);
-    const app = new App<Message, Event, Reply, View>(options, this.#context, this.#profile);
-    this.#names.add(app.name);
+    const normalized = normalizeAppOptions(options);
+    if (this.#names.has(normalized.name)) throw new TypeError(`Duplicate App name: ${normalized.name}`);
+    const app = new App(normalized, resolveEdgeConnection(normalized, this.#context, this.#profile));
+    this.#names.add(normalized.name);
     return app;
   }
 }

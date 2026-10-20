@@ -1,15 +1,18 @@
-import { validateWebhookRoutes } from "./webhooks.js";
+import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { isRecord } from "./shared.js";
-import { validateAppDeploymentConfiguration } from "./app-definition.js";
-import type { AppSelector, AppOptions } from "./integration.js";
+import { validateAppDeploymentConfiguration, type AppDeploymentConfiguration } from "./app-definition.js";
+import type { AppConnection, AppSelector, AppOptions } from "./integration.js";
 import { SLUG_PATTERN } from "./integration-protocol.js";
 import { isAppAuth } from "./native-auth.js";
+import { assertSessionRuntime, RUNTIME_ID, type SessionRuntime } from "./session-runtime-contract.js";
 
 /** Reserved CLI/runtime injection point. Never includes control-plane login credentials. */
 export const APP_CONFIGURATION_CONTEXT_KEY = "dev.cantelop.sdk.app-config.v1";
-const MAX_CONFIG_BYTES = 1024 * 1024;
+/** Bound on one integration configuration document, wherever it is read from. */
+export const MAX_CONFIG_BYTES = 1024 * 1024;
 const APP_ID = /^app_[0-9a-f]{32}$/;
-const APP_SLUG = SLUG_PATTERN;
+const RUNTIME_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,127}$/;
+const encoder = new TextEncoder();
 
 export class AppConfigurationError extends Error {
   constructor(readonly code: "app_configuration_missing" | "app_configuration_invalid" | "app_not_configured" | "app_credentials_expired") {
@@ -51,20 +54,53 @@ function invalid(): never { throw new AppConfigurationError("app_configuration_i
 function selector(value: unknown): AppSelector {
   if (!isRecord(value) || Object.keys(value).length !== 1) return invalid();
   if (typeof value.id === "string" && APP_ID.test(value.id)) return { id: value.id };
-  if (typeof value.slug === "string" && APP_SLUG.test(value.slug)) return { slug: value.slug };
+  if (typeof value.slug === "string" && SLUG_PATTERN.test(value.slug)) return { slug: value.slug };
   return invalid();
 }
-export function assertAppOptions(value: AppOptions<any, any, any, any>): void {
-  if (!isRecord(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "homepage", "auth", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
-  validateAppDeploymentConfiguration(value);
-  validateWebhookRoutes(value.webhooks);
-  if (value.homepage !== undefined && typeof value.homepage !== "function") throw new TypeError("Invalid App homepage");
-  if (value.auth !== undefined && !isAppAuth(value.auth)) throw new TypeError("App auth requires status, logout and terminal functions");
-  if (value.connection !== undefined) {
-    if (typeof value.connection.fetch !== "function" || value.edgeUrl !== undefined || value.accessToken !== undefined) throw new TypeError("An App connection cannot be combined with other transport configuration");
-  } else if (value.edgeUrl !== undefined || value.accessToken !== undefined) {
-    if (typeof value.edgeUrl !== "string" || typeof value.accessToken !== "string") throw new TypeError("Explicit App transport requires an Edge URL and token");
+/** Validated, frozen `cantelop.app({...})` options. Produced once per App by normalizeAppOptions. */
+export interface NormalizedAppOptions<Message = unknown, Event = never, Reply = never, View = unknown> extends AppDeploymentConfiguration {
+  readonly name: string;
+  readonly runtime: SessionRuntime<Message, Event, Reply, View>;
+  /** Compiler-assigned identity carried by compiled backends and the Edge Worker. */
+  readonly runtimeId?: string;
+  /** The App declares auth (a provider, or the compiled-away marker). */
+  readonly auth: boolean;
+  readonly webhooks: WebhookRoutes<Message, Event, Reply, View>;
+  readonly homepage?: HomepageHandler<Message, Event, Reply, View>;
+  readonly connection?: AppConnection;
+  readonly edgeUrl?: string;
+  readonly accessToken?: string;
+}
+
+const APP_OPTION_KEYS: ReadonlySet<string> = new Set(["name", "runtime", "webhooks", "homepage", "auth", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"]);
+
+/** The single validation point for App options; callers reuse the frozen result instead of re-checking. */
+export function normalizeAppOptions<Message, Event, Reply, View>(options: AppOptions<Message, Event, Reply, View>): NormalizedAppOptions<Message, Event, Reply, View> {
+  if (!options || typeof options.name !== "string" || !SLUG_PATTERN.test(options.name)) throw new TypeError("A valid App name is required");
+  assertSessionRuntime(options.runtime);
+  if (!isRecord(options) || Object.keys(options).some(key => !APP_OPTION_KEYS.has(key))) throw new TypeError("Invalid App options");
+  const deployment = validateAppDeploymentConfiguration(options);
+  const webhooks = validateWebhookRoutes(options.webhooks);
+  if (options.homepage !== undefined && typeof options.homepage !== "function") throw new TypeError("Invalid App homepage");
+  if (options.auth !== undefined && !isAppAuth(options.auth)) throw new TypeError("App auth requires status, logout and terminal functions");
+  if (options.connection !== undefined) {
+    if (typeof options.connection.fetch !== "function" || options.edgeUrl !== undefined || options.accessToken !== undefined) throw new TypeError("An App connection cannot be combined with other transport configuration");
+  } else if (options.edgeUrl !== undefined || options.accessToken !== undefined) {
+    if (typeof options.edgeUrl !== "string" || typeof options.accessToken !== "string") throw new TypeError("Explicit App transport requires an Edge URL and token");
   }
+  const runtimeId: unknown = Reflect.get(options.runtime, RUNTIME_ID);
+  return Object.freeze({
+    name: options.name,
+    runtime: Object.freeze({ ...options.runtime }),
+    ...(typeof runtimeId === "string" ? { runtimeId } : {}),
+    auth: options.auth !== undefined,
+    webhooks,
+    ...(options.homepage === undefined ? {} : { homepage: options.homepage }),
+    ...deployment,
+    ...(options.connection === undefined ? {} : { connection: options.connection }),
+    ...(options.edgeUrl === undefined ? {} : { edgeUrl: options.edgeUrl }),
+    ...(options.accessToken === undefined ? {} : { accessToken: options.accessToken }),
+  });
 }
 
 export function parseAppConfiguration(value: unknown): AppConfigurationDocument {
@@ -74,12 +110,12 @@ export function parseAppConfiguration(value: unknown): AppConfigurationDocument 
     if (!name || !isRecord(profile) || !Array.isArray(profile.apps) || profile.apps.length > 1000) return invalid();
     const ids = new Set<string>(), slugs = new Set<string>();
     const apps = profile.apps.map((app): ConfiguredApp => {
-      if (!isRecord(app) || typeof app.id !== "string" || !APP_ID.test(app.id) || typeof app.slug !== "string" || !APP_SLUG.test(app.slug) || typeof app.accessToken !== "string" || !app.accessToken.trim() || /[\r\n]/.test(app.accessToken)) return invalid();
+      if (!isRecord(app) || typeof app.id !== "string" || !APP_ID.test(app.id) || typeof app.slug !== "string" || !SLUG_PATTERN.test(app.slug) || typeof app.accessToken !== "string" || !app.accessToken.trim() || /[\r\n]/.test(app.accessToken)) return invalid();
       if (ids.has(app.id) || slugs.has(app.slug)) return invalid();
       ids.add(app.id); slugs.add(app.slug);
       if (app.edgeUrl !== undefined && typeof app.edgeUrl !== "string") return invalid();
       if (app.expiresAt !== undefined && (typeof app.expiresAt !== "string" || !Number.isFinite(Date.parse(app.expiresAt)))) return invalid();
-      if (app.runtimeId !== undefined && (typeof app.runtimeId !== "string" || !/^[a-z0-9][a-z0-9._:-]{0,127}$/.test(app.runtimeId))) return invalid();
+      if (app.runtimeId !== undefined && (typeof app.runtimeId !== "string" || !RUNTIME_ID_PATTERN.test(app.runtimeId))) return invalid();
       return Object.freeze({ id: app.id, slug: app.slug, accessToken: app.accessToken,
         ...(app.edgeUrl === undefined ? {} : { edgeUrl: app.edgeUrl as string }),
         ...(app.runtimeId === undefined ? {} : { runtimeId: app.runtimeId as string }),
@@ -91,7 +127,7 @@ export function parseAppConfiguration(value: unknown): AppConfigurationDocument 
   return Object.freeze({ schemaVersion: 1, activeProfile: value.activeProfile, profiles: Object.freeze(profiles) });
 }
 function parseJSON(text: string): AppConfigurationDocument {
-  if (new TextEncoder().encode(text).byteLength > MAX_CONFIG_BYTES) return invalid();
+  if (encoder.encode(text).byteLength > MAX_CONFIG_BYTES) return invalid();
   try { return parseAppConfiguration(JSON.parse(text)); } catch { return invalid(); }
 }
 
@@ -114,7 +150,7 @@ export async function resolveAppConfiguration(options: { readonly id?: string; r
   if (context.injected !== undefined) documents.push(context.injected);
   if (context.env.CANTELOP_APP_CONFIG !== undefined) documents.push(parseJSON(context.env.CANTELOP_APP_CONFIG));
   const envID = context.env.CANTELOP_APP_ID, envSlug = context.env.CANTELOP_APP_SLUG;
-  if (envID !== undefined && !APP_ID.test(envID) || envSlug !== undefined && !APP_SLUG.test(envSlug)) return invalid();
+  if (envID !== undefined && !APP_ID.test(envID) || envSlug !== undefined && !SLUG_PATTERN.test(envSlug)) return invalid();
   const environmentSelector = envID !== undefined ? { id: envID } : envSlug !== undefined ? { slug: envSlug } : undefined;
   const profileName = options.profile ?? context.env.CANTELOP_PROFILE;
   if (profileName !== undefined && !profileName) return invalid();

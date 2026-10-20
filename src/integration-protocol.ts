@@ -1,10 +1,31 @@
 import type { AppCommandEnvelope, AppEnvironmentEnvelope, WorkspaceSelector } from "./integration.js";
 import { isRecord, MESSAGE_ID_PATTERN, WORKSPACE_ID_PATTERN } from "./shared.js";
-import { ENVIRONMENT_COMMAND_TYPES, validateEnvironmentCommand, type EnvironmentCommand } from "./environment.js";
+import type { EnvironmentCommand } from "./environment.js";
 import { isAuthCommand } from "./runtime-command.js";
 import { AUTH_SESSION_ID } from "./native-auth.js";
 
 export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
+/** Default and maximum time a request command waits for its reply. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+export const MAX_REQUEST_TIMEOUT_MS = 300_000;
+/** Longest idle window a Session may keep its Sandbox (seven days). */
+export const MAX_KEEP_ALIVE_SECONDS = 604_800;
+/** Bound on one encoded command envelope. */
+export const MAX_COMMAND_BYTES = 1024 * 1024;
+const MAX_ENVIRONMENT_VALUE_BYTES = 64 * 1024;
+const ENVIRONMENT_NAME_PATTERN = /^(?!CANTELOP_)[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const encoder = new TextEncoder();
+
+export const ENVIRONMENT_COMMAND_TYPES = Object.freeze(["app.environment.set", "app.environment.unset", "app.environment.status"] as const);
+export function validateEnvironmentCommand(command: EnvironmentCommand): void {
+  if (command.type === "app.environment.status") {
+    if (!Number.isSafeInteger(command.revision) || command.revision < 0) throw new TypeError("Invalid environment revision");
+    return;
+  }
+  if (typeof command.name !== "string" || !ENVIRONMENT_NAME_PATTERN.test(command.name) || typeof command.secret !== "boolean") throw new TypeError("Invalid environment name or kind");
+  if (command.type === "app.environment.set" && (typeof command.value !== "string" || command.value.includes("\0") || encoder.encode(command.value).byteLength > MAX_ENVIRONMENT_VALUE_BYTES)) throw new TypeError("Invalid environment value");
+}
 /** Each command has its own path so every layer between backend and Edge can see the operation. */
 export const APP_COMMAND_PATH_PREFIX = "/commands/";
 export const WORKSPACE_COMMAND_TYPES = Object.freeze(["workspace.resolve", "workspace.database", "workspace.inspect", "workspace.delete"] as const);
@@ -22,15 +43,14 @@ export function appCommandType(pathname: string): AppCommandType | undefined {
   const type = pathname.slice(APP_COMMAND_PATH_PREFIX.length);
   return (APP_COMMAND_TYPES as readonly string[]).includes(type) ? type as AppCommandType : undefined;
 }
-export const MAX_COMMAND_BYTES = 1024 * 1024;
 /** Shared by App names and App-scoped Workspace slugs. */
 export const SLUG_PATTERN = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 export function assertMessageID(id: unknown): asserts id is string {
   if (typeof id !== "string" || !MESSAGE_ID_PATTERN.test(id)) throw new TypeError("Invalid Cantelop Message ID");
 }
 export function assertKeepAlive(value: unknown): void {
-  if (value !== undefined && (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 604800)) {
-    throw new TypeError("keepAliveSeconds must be an integer between 0 and 604800");
+  if (value !== undefined && (!Number.isInteger(value) || (value as number) < 0 || (value as number) > MAX_KEEP_ALIVE_SECONDS)) {
+    throw new TypeError(`keepAliveSeconds must be an integer between 0 and ${MAX_KEEP_ALIVE_SECONDS}`);
   }
 }
 export function workspaceSelector(value: unknown): WorkspaceSelector {
@@ -43,16 +63,26 @@ export function workspaceSelector(value: unknown): WorkspaceSelector {
   return Object.freeze({ slug: value.slug });
 }
 export function assertSessionID(id: unknown): asserts id is string {
-  if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) throw new TypeError("Invalid Cantelop Session ID");
+  if (typeof id !== "string" || !SESSION_ID_PATTERN.test(id)) throw new TypeError("Invalid Cantelop Session ID");
 }
 export function assertCursor(value: unknown): void {
   if (!isRecord(value) || typeof value.streamId !== "string" || !/^[0-9a-f]{32}$/.test(value.streamId) ||
       !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 0 || Object.keys(value).some(key => !["streamId", "sequence"].includes(key))) throw new TypeError("Invalid event cursor");
 }
+function assertTimeout(value: unknown): void {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > MAX_REQUEST_TIMEOUT_MS) throw new TypeError("Invalid timeoutMs");
+}
+/** Serialize once and validate the encoded form, which is exactly what Edge receives. */
+export function encodeCommand(envelope: ProtocolEnvelope): string {
+  const json = JSON.stringify(envelope);
+  if (encoder.encode(json).byteLength > MAX_COMMAND_BYTES) throw new TypeError("Command exceeds 1 MiB");
+  validateCommand(JSON.parse(json));
+  return json;
+}
 export type ProtocolEnvelope = AppCommandEnvelope | AppEnvironmentEnvelope;
 /** Validate untrusted Edge input before any private routing or provisioning. */
 export function validateCommand(value: unknown): ProtocolEnvelope {
-  if (!isRecord(value) || value.protocolVersion !== 2 || Object.keys(value).some(key => !["protocolVersion", "id", "workspace", "session", "command"].includes(key))) throw new TypeError("Invalid command envelope");
+  if (!isRecord(value) || value.protocolVersion !== CANTELOP_INTEGRATION_PROTOCOL_VERSION || Object.keys(value).some(key => !["protocolVersion", "id", "workspace", "session", "command"].includes(key))) throw new TypeError("Invalid command envelope");
   assertMessageID(value.id);
   if (isRecord(value.command) && (ENVIRONMENT_COMMAND_TYPES as readonly unknown[]).includes(value.command.type)) {
     if (value.workspace !== null || value.session !== null) throw new TypeError("App environment commands require null Workspace and Session");
@@ -79,14 +109,14 @@ export function validateCommand(value: unknown): ProtocolEnvelope {
         assertKeepAlive(command.keepAliveSeconds);
         keys = ["type", "message", "keepAliveSeconds"];
         if (command.type === "request") {
-          if (!Number.isSafeInteger(command.timeoutMs) || (command.timeoutMs as number) < 1 || (command.timeoutMs as number) > 300000) throw new TypeError("Invalid timeoutMs");
+          assertTimeout(command.timeoutMs);
           keys.push("timeoutMs");
         }
         break;
       case "auth":
         if (value.session.id !== AUTH_SESSION_ID) throw new TypeError("Auth requires the reserved Session");
         if (!isAuthCommand(command.auth)) throw new TypeError("Invalid auth command");
-        if (!Number.isSafeInteger(command.timeoutMs) || (command.timeoutMs as number) < 1 || (command.timeoutMs as number) > 300000) throw new TypeError("Invalid timeoutMs");
+        assertTimeout(command.timeoutMs);
         assertKeepAlive(command.keepAliveSeconds);
         keys = ["type", "auth", "timeoutMs", "keepAliveSeconds"];
         break;
