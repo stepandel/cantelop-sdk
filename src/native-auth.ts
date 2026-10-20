@@ -49,6 +49,14 @@ export const AUTH_TERMINAL_PROTOCOL = "cantelop-terminal.v1";
 export const LOGIN_ID_PATTERN = /^lgn_[0-9a-f]{32}$/;
 export const TERMINAL_ID_PATTERN = /^trm_[0-9a-f]{32}$/;
 export const TERMINAL_TICKET_PATTERN = /^[0-9a-f]{64}$/;
+/** Sandbox runtime routes the platform relays a browser terminal through. */
+export const AUTH_TERMINAL_PATH = "/__cantelop/v2/runtime/auth/terminals";
+export type AuthTerminalOperation = "attach" | "input" | "resize";
+export function authTerminalPath(terminalId: string, operation: AuthTerminalOperation): string {
+  return `${AUTH_TERMINAL_PATH}/${terminalId}/${operation}`;
+}
+/** Carries the terminal ticket on every platform → Sandbox terminal route call. */
+export const TERMINAL_TICKET_HEADER = "x-cantelop-terminal-ticket";
 /** Marks a compiled-away provider in backend and Edge builds. */
 export const COMPILED_AUTH = Symbol.for("dev.cantelop.sdk.compiled-auth.v1");
 
