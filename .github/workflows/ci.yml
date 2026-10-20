@@ -19,10 +19,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: native/go.mod
+      - uses: oven-sh/setup-bun@v2
       - run: corepack enable
       # Build once: every later step runs against this dist.
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm build:release
       - run: pnpm test:built
+      - run: bun test test/bun/subprocess.test.mjs
       - run: pnpm check:examples:built
       - run: pnpm check:package --prebuilt

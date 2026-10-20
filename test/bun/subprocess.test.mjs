@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
-import { runSubprocess } from '../examples/supervised-activity/subprocess.mjs';
-import { createSessionRuntimeHandler } from '../dist/runtime.js';
+import { runSubprocess } from '../../examples/supervised-activity/subprocess.mjs';
+import { createSessionRuntimeHandler } from '../../dist/runtime.js';
 const sandbox='sbx-'+'1'.repeat(32), message='msg_'+'2'.repeat(32);
 const pause=()=>new Promise(r=>setTimeout(r,5));
 const until=async fn=>{for(let i=0;i<400;i++){if(await fn())return;await pause();}assert.fail('condition not reached');};
@@ -62,7 +62,7 @@ for(const scenario of ['startup failure','unexpected exit','stdout and stderr','
 
 
 test('Bun SDK process death makes inspection unreachable', {skip:!process.versions.bun,timeout:10000}, async t => {
- const runtime=new URL('../dist/runtime.js',import.meta.url).href;
+ const runtime=new URL('../../dist/runtime.js',import.meta.url).href;
  const code=`import {createServer} from 'node:http';
  import {createSessionRuntimeHandler} from ${JSON.stringify(runtime)};
  const server=createServer(createSessionRuntimeHandler({receive(){return new Promise(()=>{})}},{sandboxId:${JSON.stringify(sandbox)}}));
