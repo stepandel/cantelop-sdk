@@ -1005,3 +1005,28 @@ test("activity scheduling capabilities close with intake while queued work keeps
   assert.equal(queuedContext.signal.aborted, false);
   release();
 });
+
+test("closing the runtime answers open long polls instead of waiting for them", async () => {
+  const previous = process.env.CANTELOP_INTERNAL_PORT;
+  const reservation = createServer();
+  await listen(reservation);
+  const port = reservation.address().port;
+  await close(reservation);
+  process.env.CANTELOP_INTERNAL_PORT = String(port);
+  try {
+    const runtime = serveSessionRuntime(behaviour(async () => undefined));
+    await runtime.ready;
+    const received = new Promise(resolve => runtime.server.once("request", resolve));
+    const poll = fetch(`http://127.0.0.1:${port}/__cantelop/v2/runtime/events?after=0`);
+    await received;
+    const started = Date.now();
+    await runtime.close();
+    assert.ok(Date.now() - started < 5_000, "close waited for the long poll window");
+    const response = await poll;
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: { code: "runtime_closing" } });
+  } finally {
+    if (previous === undefined) delete process.env.CANTELOP_INTERNAL_PORT;
+    else process.env.CANTELOP_INTERNAL_PORT = previous;
+  }
+});
