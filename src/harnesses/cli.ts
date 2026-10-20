@@ -1,8 +1,9 @@
 /// <reference types="node" />
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { writeDurableJson } from "./durable-file.js";
 import { TurnQueue } from "./queue.js";
 import type { SessionHarness, SessionHarnessWorkContext } from "../session.js";
 
@@ -65,15 +66,14 @@ export class ConversationStore {
     })();
   }
   save(state: Conversation): Promise<void> {
-    const encoded = JSON.stringify(state);
-    this.writes = this.writes.then(async () => {
-      const directory = dirname(this.path);
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      const temporary = this.path + "." + randomUUID() + ".tmp";
-      await writeFile(temporary, encoded, { mode: 0o600 });
-      await rename(temporary, this.path);
+    const snapshot = structuredClone(state);
+    const next = this.writes.then(async () => {
+      await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+      await writeDurableJson(this.path, snapshot);
     });
-    return this.writes;
+    // A failed write rejects its caller without rejecting every later save.
+    this.writes = next.catch(() => undefined);
+    return next;
   }
 }
 

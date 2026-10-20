@@ -9,7 +9,7 @@ test('an incomplete SDK installation reports its own missing adapter without a C
   const root = await mkdtemp(join(tmpdir(), 'sdk-missing-adapter-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'package.json'), '{"type":"module"}');
-  for (const name of ['sync-node.js', 'sync.js']) {
+  for (const name of ['sync-node.js', 'sync.js', 'shared.js']) {
     await copyFile(new URL(`../dist/${name}`, import.meta.url), join(root, name));
   }
   const { startSync } = await import(pathToFileURL(join(root, 'sync-node.js')));

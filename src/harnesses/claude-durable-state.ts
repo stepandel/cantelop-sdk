@@ -64,6 +64,8 @@ function decode(value: any): DurableClaudeState {
 /** Single-owner state transactions, including a recoverable publication outbox. */
 export class DurableClaudeStore {
   private operations: Promise<unknown> = Promise.resolve()
+  /** Set once a durable write fails; see persist(). */
+  private fenced?: { reason: unknown }
   private current?: DurableClaudeState
   private opening?: Promise<void> | undefined
   readonly path: string
@@ -105,23 +107,38 @@ export class DurableClaudeStore {
       state.revision++
       if (!Number.isSafeInteger(state.revision)) throw new Error('Claude revision exhausted')
       if (state.outbox.length >= 256) throw new Error('Claude publication capacity')
-      state.outbox.push({ revision: state.revision, view: claudeView(state), events: structuredClone(events).map(event => event.type === 'claude' || event.type === 'claude.fragment' ? { ...event, revision: state.revision } : event) })
-      await writeDurableJson(this.path, state)
-      this.current = state
+      state.outbox.push({ revision: state.revision, view: claudeView(state), events: events.map(event => event.type === 'claude' || event.type === 'claude.fragment' ? { ...event, revision: state.revision } : event) })
+      await this.persist(state)
     })
   }
   acknowledge(revision: number): Promise<void> {
     return this.serialize(async () => {
       const state = this.draft()
       state.outbox = state.outbox.filter(p => p.revision > revision)
-      await writeDurableJson(this.path, state)
-      this.current = state
+      await this.persist(state)
     })
   }
+  /**
+   * A failed write fences every later operation: the rename may have landed
+   * before the failure, so disk can be ahead of memory, and committing again
+   * would reuse a revision for a different publication. Failures before any
+   * write (a throwing mutation, a full outbox) reject only their own operation.
+   */
+  private async persist(state: DurableClaudeState): Promise<void> {
+    try {
+      await writeDurableJson(this.path, state)
+    } catch (error) {
+      this.fenced = { reason: error }
+      throw error
+    }
+    this.current = state
+  }
   private serialize(work: () => Promise<void>): Promise<void> {
-    const next = this.operations.then(work)
-    this.operations = next
-    void next.catch(() => undefined)
+    const next = this.operations.then(() => {
+      if (this.fenced) throw this.fenced.reason
+      return work()
+    })
+    this.operations = next.catch(() => undefined)
     return next
   }
 }

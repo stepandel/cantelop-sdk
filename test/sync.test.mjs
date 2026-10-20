@@ -176,3 +176,13 @@ test('path and method grammar rejects escaping and ambiguous operations',()=>{
   assert.equal(validSyncRequest('GET',new URLSearchParams('op=scan')),true);assert.equal(validSyncRequest('PUT',new URLSearchParams('op=scan')),false);
   assert.equal(validSyncRequest('PUT',new URLSearchParams('op=write&path=a&base=missing&base=missing')),false);
 });
+test('an unchanged pass leaves the persisted baseline untouched',async t=>{
+  const f=await fixture(t);await writeFile(path.join(f.root,'local'),'one');
+  const sync=await f.start();await sync.ready();
+  const stateFiles=async()=>{const found=[];for(const entry of await readdir(f.state,{recursive:true,withFileTypes:true}))if(entry.isFile()&&entry.name.endsWith('.json'))found.push(path.join(entry.parentPath,entry.name));return found;};
+  const [file]=await stateFiles();assert.ok(file,'sync baseline was not persisted');
+  const written=(await stat(file)).mtimeMs;
+  await sync.flush();assert.equal((await stat(file)).mtimeMs,written);
+  await writeFile(path.join(f.root,'local'),'two');await sync.flush();
+  assert.notEqual((await stat(file)).mtimeMs,written);
+});
