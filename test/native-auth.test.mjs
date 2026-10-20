@@ -222,9 +222,9 @@ process.stdin.on('data', key => { const all = read(); all.openrouter = { type: '
 test("every example image ships the same login PTY helper", async () => {
   const { readFile } = await import("node:fs/promises");
   const read = example => readFile(new URL(`../examples/${example}/runtime/login-pty.py`, import.meta.url), "utf8");
-  const reference = await readFile(new URL("../dist/harnesses/claude/login-pty.py", import.meta.url), "utf8");
+  const reference = await readFile(new URL("../assets/login-pty.py", import.meta.url), "utf8");
   for (const example of ["codex", "opencode"]) {
-    assert.equal(await read(example), reference, `${example}/runtime/login-pty.py differs from the anthropic copy`);
+    assert.equal(await read(example), reference, `${example}/runtime/login-pty.py differs from assets/login-pty.py`);
     assert.match(await readFile(new URL(`../examples/${example}/docker/Dockerfile`, import.meta.url), "utf8"), /COPY runtime\/login-pty\.py \/opt\/app\/login-pty\.py/);
   }
 });

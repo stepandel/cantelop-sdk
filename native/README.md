@@ -4,10 +4,11 @@ The SDK builds this private executable into `dist/native/<os>-<arch>/sync-helper
 Release packages contain macOS and Linux executables for arm64 and x64. Registry
 consumers need neither Go nor the Cantelop CLI, even with install scripts disabled.
 Source builds require Go 1.26.2 or newer. `pnpm build` builds the host executable;
-`node scripts/build-sync-helper.mjs --all` builds all release targets without CGO.
-The npm `prepare` lifecycle builds every release target so source installs,
-`npm pack`, and `npm publish` retain all four binaries. Package qualification
-runs that lifecycle before checking the tarball.
+`pnpm build:release` builds all release targets in parallel without CGO.
+The npm `prepare` lifecycle runs the same release build so source installs and
+`npm pack` retain all four binaries. `pnpm check:package` runs that lifecycle
+before checking the tarball; CI passes `--prebuilt` to qualify its existing
+release build instead and publishes the qualified tarball.
 
 `platform/` is a source snapshot of the filesystem implementation and its Go
 dependencies from `stepandel/cantelop` commit
@@ -32,8 +33,7 @@ Do not put a local checkout path or platform credentials in a release build.
 Run the adapter and copied filesystem regression tests with:
 
 ```sh
-cd native
-go test ./... github.com/stepandel/cantelop/fire-fuse/workspacesync github.com/stepandel/cantelop/fire-fuse/syncprotocol
+pnpm test:native
 ```
 
 The adapter's pipe and loopback protocol matches the existing CLI adapter. The

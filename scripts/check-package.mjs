@@ -3,17 +3,24 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import { parseArgs, promisify } from "node:util";
+import { SYNC_HELPER_TARGETS } from "./build-sync-helper.mjs";
 
 const runCommand = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
 const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+// --prebuilt qualifies the existing `pnpm build:release` output instead of
+// running the npm prepare lifecycle again; --out keeps the qualified tarball so
+// release automation publishes exactly what was tested.
+const { values: flags } = parseArgs({ options: { prebuilt: { type: "boolean" }, out: { type: "string" } } });
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-package-"));
+const packDestination = flags.out ? path.resolve(flags.out) : temporary;
+if (flags.out) await mkdir(packDestination, { recursive: true });
 
 try {
   const { stdout } = await runCommand(
     "npm",
-    ["pack", "--json", "--foreground-scripts=false", "--pack-destination", temporary],
+    ["pack", "--json", "--foreground-scripts=false", ...(flags.prebuilt ? ["--ignore-scripts"] : []), "--pack-destination", packDestination],
     { cwd: root, maxBuffer: 1024 * 1024 },
   );
   const [pack] = JSON.parse(stdout);
@@ -21,7 +28,7 @@ try {
   assert.equal(pack.version, manifest.version);
   assert.ok(pack.size > 0);
   const paths = pack.files.map(({ path: file }) => file);
-  for (const target of ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64']) {
+  for (const target of SYNC_HELPER_TARGETS) {
     const binary = pack.files.find(file => file.path === `dist/native/${target}/sync-helper`);
     assert.ok(binary, `${target} sync helper is not packed`);
     assert.ok(binary.mode & 0o111, `${target} sync helper is not executable`);
@@ -55,7 +62,7 @@ try {
   await writeFile(path.join(consumer, "package.json"), '{"private":true,"type":"module"}\n');
   await runCommand(
     "npm",
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", path.join(temporary, pack.filename)],
+    ["install", "--ignore-scripts", "--no-audit", "--no-fund", path.join(packDestination, pack.filename)],
     { cwd: consumer, maxBuffer: 1024 * 1024 },
   );
   await writeFile(path.join(consumer, "definition.mjs"), [
@@ -150,7 +157,6 @@ try {
     'CantelopClient();',
     '// App is the typed Workspace/Session owner.',
     'type TypedApp = import("@cantelop/sdk").App<unknown>;',
-    'new CantelopClient().app({ name: "first-agent", runtime, connection });',
     'new CantelopClient().app({ name: "first-agent", runtime, connection });',
     '// @ts-expect-error App selectors require exactly one ID or slug.',
     'new CantelopClient().app({ name: "first-agent", runtime, id: "app_0123456789abcdef0123456789abcdef", slug: "support-agent" });',

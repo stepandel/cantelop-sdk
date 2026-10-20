@@ -26,6 +26,5 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm build
       - name: Test native filesystem guarantees
-        working-directory: native
-        run: go test ./... github.com/stepandel/cantelop/fire-fuse/workspacesync github.com/stepandel/cantelop/fire-fuse/syncprotocol
+        run: pnpm test:native
       - run: node --test test/sync.test.mjs

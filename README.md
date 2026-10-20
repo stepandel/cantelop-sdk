@@ -291,6 +291,7 @@ A view read never opens a Workspace or activates a Sandbox. A missing projection
 pnpm install --frozen-lockfile
 pnpm check
 pnpm test
+pnpm test:native
 pnpm check:examples
 pnpm check:package
 pnpm test:bun

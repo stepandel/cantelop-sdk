@@ -1,0 +1,28 @@
+name: SDK CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/go.mod
+      - run: corepack enable
+      # Build once: every later step runs against this dist.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm build:release
+      - run: pnpm test:built
+      - run: pnpm check:examples:built
+      - run: pnpm check:package --prebuilt
