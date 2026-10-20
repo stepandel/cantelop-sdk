@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { STOP_GRACE_MS, stopWithGrace } from "../process-stop.js";
 import { writeDurableJson } from "./durable-file.js";
 import { TurnQueue } from "./queue.js";
 import type { SessionHarness, SessionHarnessWorkContext } from "../session.js";
@@ -23,8 +24,35 @@ export interface NativeTurn {
 }
 export interface NativeOptions { workspace: string; sessionId: string; binary: string; model?: string }
 
+/** Largest serialized native event published whole; larger events are fragmented below the 64 KiB output frame limit. */
+export const NATIVE_EVENT_MAX_BYTES = 48_000;
+const NATIVE_FRAGMENT_CHARS = 8000;
+/** Largest single JSONL line, or pending partial line, read from a native CLI. */
+const NATIVE_LINE_MAX_BYTES = 4 * 1024 * 1024;
+/** Largest whole-output (`json`/`text`) response read from a native CLI. */
+const NATIVE_SNAPSHOT_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Splits an oversized native event into ordered fragments sharing one event ID.
+ * Returns undefined when the event fits in one output frame.
+ */
+export function fragmentNativeEvent(event: NativeEvent): { eventId: string; index: number; total: number; json: string }[] | undefined {
+  const json = JSON.stringify(event);
+  if (Buffer.byteLength(json) <= NATIVE_EVENT_MAX_BYTES) return undefined;
+  const eventId = randomUUID(), total = Math.ceil(json.length / NATIVE_FRAGMENT_CHARS);
+  return Array.from({ length: total }, (_, index) => ({
+    eventId, index, total, json: json.slice(index * NATIVE_FRAGMENT_CHARS, (index + 1) * NATIVE_FRAGMENT_CHARS),
+  }));
+}
+
+/**
+ * Provider-specific variables layered over the shared native environment, such as a
+ * CLI's own configuration directory. Receives the shared environment it extends.
+ */
+export type NativeEnvironmentHook = (env: Readonly<NodeJS.ProcessEnv>, workspace: string) => NodeJS.ProcessEnv;
+
 /** Only the child receives this environment; host auth/config is never changed. */
-export function nativeEnvironment(workspace: string): NodeJS.ProcessEnv {
+export function nativeEnvironment(workspace: string, provider?: NativeEnvironmentHook): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of ["PATH", "TMPDIR", "LANG", "TERM", "SSL_CERT_FILE", "SSL_CERT_DIR"]) {
     if (process.env[key]) env[key] = process.env[key];
@@ -41,7 +69,7 @@ export function nativeEnvironment(workspace: string): NodeJS.ProcessEnv {
   env.DISABLE_AUTOUPDATER = "1";
   env.DISABLE_UPDATES = "1";
   // No inherited provider API keys, platform tokens, or host auth directories.
-  return env;
+  return provider ? { ...env, ...provider(env, workspace) } : env;
 }
 
 interface Conversation { id?: string; resumable: boolean }
@@ -105,8 +133,7 @@ export async function runJsonProcess(options: {
   };
   const stop = () => {
     if (exited || escalation) return;
-    signalGroup("SIGTERM");
-    escalation = setTimeout(() => signalGroup("SIGKILL"), 1000);
+    escalation = stopWithGrace(signalGroup, { graceMs: STOP_GRACE_MS, exited: () => exited });
   };
   const done = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     child.once("error", reject);
@@ -118,7 +145,9 @@ export async function runJsonProcess(options: {
   child.stdin.on("error", () => undefined);
   child.stderr.resume(); // Native diagnostics may contain credentials; never publish stderr.
   child.stdout.setEncoding("utf8");
-  let pending = "";
+  const whole = options.format === "json" || options.format === "text";
+  // Byte counts are kept incrementally so a large response is never re-measured per chunk.
+  let pending = "", pendingBytes = 0;
   const line = async (text: string) => {
     if (!text.trim()) return;
     const event: unknown = JSON.parse(text);
@@ -131,20 +160,25 @@ export async function runJsonProcess(options: {
       child.stdin.write(text, error => error ? reject(error) : resolve());
     }), () => child.stdin.end());
     else child.stdin.end(turn.text);
-    for await (const chunk of child.stdout) {
+    for await (const chunk of child.stdout as AsyncIterable<string>) {
+      // Earlier text held no newline, so only this chunk can complete a line.
+      let newline = pending.length;
       pending += chunk;
-      if (options.format === "json" || options.format === "text") {
-        if (Buffer.byteLength(pending) > 16 * 1024 * 1024) throw new Error("Native snapshot exceeds limit");
+      pendingBytes += Buffer.byteLength(chunk);
+      if (whole) {
+        if (pendingBytes > NATIVE_SNAPSHOT_MAX_BYTES) throw new Error("Native snapshot exceeds limit");
         continue;
       }
-      let newline: number;
-      while ((newline = pending.indexOf("\n")) >= 0) {
+      while ((newline = pending.indexOf("\n", newline)) >= 0) {
         const text = pending.slice(0, newline);
         pending = pending.slice(newline + 1);
-        if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error("Native output frame exceeds limit");
+        newline = 0;
+        const bytes = Buffer.byteLength(text);
+        pendingBytes -= bytes + 1;
+        if (bytes > NATIVE_LINE_MAX_BYTES) throw new Error("Native output frame exceeds limit");
         await line(text);
       }
-      if (Buffer.byteLength(pending) > 4 * 1024 * 1024) throw new Error("Native output frame exceeds limit");
+      if (pendingBytes > NATIVE_LINE_MAX_BYTES) throw new Error("Native output frame exceeds limit");
     }
     if (options.format !== "text") await line(pending);
     const outcome = await done;
@@ -184,12 +218,9 @@ export abstract class CliHarness implements SessionHarness<{ type: "prompt"; pro
     return this.execute({
       text: message.prompt, signal: work.signal,
       emit: async event => {
-        const json = JSON.stringify(event);
-        if (Buffer.byteLength(json) <= 48_000) { await work.output.send(event); return; }
-        const eventId = randomUUID(), total = Math.ceil(json.length / 8000);
-        for (let index = 0; index < total; index++) {
-          await work.output.send({ type: "native.fragment", eventId, index, total, json: json.slice(index * 8000, (index + 1) * 8000) });
-        }
+        const fragments = fragmentNativeEvent(event);
+        if (!fragments) { await work.output.send(event); return; }
+        for (const fragment of fragments) await work.output.send({ type: "native.fragment", ...fragment });
       },
     });
   }
