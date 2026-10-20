@@ -7,12 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { createClaudeRuntime } from '../dist/harnesses/claude.js';
 import { createSessionRuntimeHandler } from '../dist/runtime.js';
 import { applyClaudeSessionChange } from '../dist/harnesses/claude-protocol.js';
+import { close, listen, until } from './helpers.mjs';
 
 // Explicit native qualification: no paid model calls or host credentials.
 const nativeBinary=process.env.CANTELOP_TEST_CLAUDE_BINARY;
-const listen=server=>new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
-const close=server=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);});
-async function until(predicate){const end=Date.now()+15000;while(!await predicate()){assert.ok(Date.now()<end,'qualification timed out');await new Promise(r=>setTimeout(r,10));}}
+const qualified = predicate => until(predicate, { timeoutMs: 15_000, intervalMs: 10, message: 'qualification timed out' });
 
 test('pinned Claude integrates native steering, durable views, stopped reads and exact resume through the actor protocol and simulated platform collector', {skip:!nativeBinary,timeout:45000}, async t=>{
   const root=await mkdtemp('/tmp/claude-native-integration-');t.after(()=>rm(root,{recursive:true,force:true}));
@@ -63,17 +62,17 @@ test('pinned Claude integrates native steering, durable views, stopped reads and
     async function send(payload,type='dispatch'){
       const id='msg_'+(++commandSequence).toString(16).padStart(32,'0');
       const admission=await call('/__cantelop/v2/messages',{method:'POST',body:JSON.stringify({session:{id:sessionId,workspace_id:workspaceId,keep_alive_seconds:300},message:{id,payload:{__cantelop_command:2,type,message:payload}},reply:true})});assert.equal(admission.status,202,await admission.text());
-      await until(async()=>{if(collectorFailure)throw collectorFailure;return ['succeeded','failed'].includes((await(await call('/__cantelop/v2/messages/'+id)).json()).state);});
+      await qualified(async()=>{if(collectorFailure)throw collectorFailure;return ['succeeded','failed'].includes((await(await call('/__cantelop/v2/messages/'+id)).json()).state);});
       const reply=await(await call('/__cantelop/v2/messages/'+id+'/reply')).json();assert.ok(reply.reply,JSON.stringify(reply));return reply.reply;
     }
-    return {send,async stop(){await until(async()=>{if(collectorFailure)throw collectorFailure;return (await(await call('/__cantelop/v2/runtime')).json()).quiescent;});collecting=false;await collect;await close(server);if(collectorFailure)throw collectorFailure;}};
+    return {send,async stop(){await qualified(async()=>{if(collectorFailure)throw collectorFailure;return (await(await call('/__cantelop/v2/runtime')).json()).quiescent;});collecting=false;await collect;await close(server);if(collectorFailure)throw collectorFailure;}};
   }
   let current=await actor();
   try{
     const first=await current.send({type:'input',id:'first',text:'FIRST_NATIVE_INPUT'});assert.equal(first.type,'input.status');
-    await until(async()=>{try{await readFile(join(root,'tool-started'));return true;}catch{return false;}});
+    await qualified(async()=>{try{await readFile(join(root,'tool-started'));return true;}catch{return false;}});
     const steer=await current.send({type:'steer',id:'second',text:'SECOND_NATIVE_INPUT'},'steer');assert.equal(steer.runId,first.runId);
-    await until(()=>latest?.state.run?.status==='completed');
+    await qualified(()=>latest?.state.run?.status==='completed');
     assert.ok(requests[1].messages.some(m=>JSON.stringify(m).includes('SECOND_NATIVE_INPUT')));
     assert.equal(latest.state.inputs.filter(i=>i.status==='completed').length,2);
     assert.deepEqual(logical,latest.state);
@@ -83,7 +82,7 @@ test('pinned Claude integrates native steering, durable views, stopped reads and
     assert.deepEqual(latest.state,persisted);
     after=0;collecting=true;collectorFailure=undefined;current=await actor();
     const continued=await current.send({type:'input',id:'third',text:'CONTINUE_NATIVE_INPUT'});assert.equal(continued.type,'input.status');
-    await until(()=>latest?.state.inputs.find(i=>i.id==='third')?.status==='completed'&&latest.state.run.status==='completed');
+    await qualified(()=>latest?.state.inputs.find(i=>i.id==='third')?.status==='completed'&&latest.state.run.status==='completed');
     assert.equal(latest.state.conversationId,persisted.conversationId);
     assert.ok(requests.at(-1).messages.some(m=>JSON.stringify(m).includes('QUALIFIED_NATIVE_ANSWER')));
     assert.deepEqual(logical,latest.state);

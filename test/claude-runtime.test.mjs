@@ -6,6 +6,7 @@ import { createClaudeRuntime, ClaudeAuthenticationRequired } from '../dist/harne
 import { DurableClaudeStore } from '../dist/harnesses/claude-durable-state.js';
 import { InMemoryActivity } from '../dist/activity.js';
 import { applyClaudeSessionChange } from '../dist/harnesses/claude-protocol.js';
+import { until } from './helpers.mjs';
 
 class FakeClaude {
   runs = [];
@@ -33,10 +34,6 @@ class FakeClaude {
     if(context.signal.aborted)abort();
     this.runs.push(run);return run;
   };
-}
-async function until(predicate) {
-  const end=Date.now()+4000;
-  while(!predicate()){assert.ok(Date.now()<end,'timed out');await new Promise(r=>setTimeout(r,5));}
 }
 function harness(root,native,settings={},faults={}){
   const behaviour=createClaudeRuntime({workspace:root,permissionMode:'dontAsk',settingSources:[],...settings},native.create);

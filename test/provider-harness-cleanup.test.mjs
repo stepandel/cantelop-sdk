@@ -5,23 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { deferred, nextTurn as tick, until } from "./helpers.mjs";
 
 const moduleDirectory = await mkdtemp(join(tmpdir(), "provider-harness-modules-"));
 after(() => rm(moduleDirectory, { recursive: true, force: true }));
 let moduleSequence = 0;
-const tick = () => new Promise(resolve => setImmediate(resolve));
-function deferred() {
-  let resolve;
-  const promise = new Promise(done => { resolve = done; });
-  return { promise, resolve };
-}
-async function until(predicate) {
-  const deadline = Date.now() + 2000;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error("condition timed out");
-    await tick();
-  }
-}
 
 // Exercise adapter boundaries without invoking a provider or a model.
 async function harness(name, state, lifetime = new AbortController().signal) {

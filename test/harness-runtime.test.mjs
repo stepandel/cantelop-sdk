@@ -2,22 +2,10 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
 import { createSessionRuntimeHandler } from "../dist/runtime.js";
+import { deferred, nextTurn as tick, until } from "./helpers.mjs";
 
 const sandboxId = "sbx-" + "a".repeat(32);
 const authSessionId = "cantelop-native-auth-wsp_" + "b".repeat(32);
-const tick = () => new Promise(resolve => setImmediate(resolve));
-function deferred() {
-  let resolve;
-  const promise = new Promise(done => { resolve = done; });
-  return { promise, resolve };
-}
-async function until(predicate) {
-  const deadline = Date.now() + 5000;
-  while (!await predicate()) {
-    if (Date.now() > deadline) throw new Error("condition timed out");
-    await tick();
-  }
-}
 async function fixture(t, runtime, sessionId = "chat", options = {}) {
   const server = createServer(createSessionRuntimeHandler(runtime, { sandboxId, ...options }));
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
