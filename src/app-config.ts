@@ -1,4 +1,5 @@
 import { validateWebhookRoutes } from "./webhooks.js";
+import { isRecord } from "./shared.js";
 import { validateAppDeploymentConfiguration } from "./app-definition.js";
 import type { AppSelector, AppOptions } from "./integration.js";
 import { SLUG_PATTERN } from "./integration-protocol.js";
@@ -46,16 +47,15 @@ export interface ConfigurationContext {
   readonly loadLocal?: () => Promise<{ document?: AppConfigurationDocument }>;
 }
 
-function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function invalid(): never { throw new AppConfigurationError("app_configuration_invalid"); }
 function selector(value: unknown): AppSelector {
-  if (!record(value) || Object.keys(value).length !== 1) return invalid();
+  if (!isRecord(value) || Object.keys(value).length !== 1) return invalid();
   if (typeof value.id === "string" && APP_ID.test(value.id)) return { id: value.id };
   if (typeof value.slug === "string" && APP_SLUG.test(value.slug)) return { slug: value.slug };
   return invalid();
 }
 export function assertAppOptions(value: AppOptions<any, any, any, any>): void {
-  if (!record(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "homepage", "auth", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
+  if (!isRecord(value) || Object.keys(value).some(key => !["name", "runtime", "webhooks", "homepage", "auth", "environment", "dockerfile", "connection", "edgeUrl", "accessToken"].includes(key))) throw new TypeError("Invalid App options");
   validateAppDeploymentConfiguration(value);
   validateWebhookRoutes(value.webhooks);
   if (value.homepage !== undefined && typeof value.homepage !== "function") throw new TypeError("Invalid App homepage");
@@ -68,13 +68,13 @@ export function assertAppOptions(value: AppOptions<any, any, any, any>): void {
 }
 
 export function parseAppConfiguration(value: unknown): AppConfigurationDocument {
-  if (!record(value) || value.schemaVersion !== 1 || typeof value.activeProfile !== "string" || !value.activeProfile || !record(value.profiles) || !Object.hasOwn(value.profiles, value.activeProfile)) return invalid();
+  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.activeProfile !== "string" || !value.activeProfile || !isRecord(value.profiles) || !Object.hasOwn(value.profiles, value.activeProfile)) return invalid();
   const profiles: Record<string, AppConfigurationDocument["profiles"][string]> = Object.create(null);
   for (const [name, profile] of Object.entries(value.profiles)) {
-    if (!name || !record(profile) || !Array.isArray(profile.apps) || profile.apps.length > 1000) return invalid();
+    if (!name || !isRecord(profile) || !Array.isArray(profile.apps) || profile.apps.length > 1000) return invalid();
     const ids = new Set<string>(), slugs = new Set<string>();
     const apps = profile.apps.map((app): ConfiguredApp => {
-      if (!record(app) || typeof app.id !== "string" || !APP_ID.test(app.id) || typeof app.slug !== "string" || !APP_SLUG.test(app.slug) || typeof app.accessToken !== "string" || !app.accessToken.trim() || /[\r\n]/.test(app.accessToken)) return invalid();
+      if (!isRecord(app) || typeof app.id !== "string" || !APP_ID.test(app.id) || typeof app.slug !== "string" || !APP_SLUG.test(app.slug) || typeof app.accessToken !== "string" || !app.accessToken.trim() || /[\r\n]/.test(app.accessToken)) return invalid();
       if (ids.has(app.id) || slugs.has(app.slug)) return invalid();
       ids.add(app.id); slugs.add(app.slug);
       if (app.edgeUrl !== undefined && typeof app.edgeUrl !== "string") return invalid();

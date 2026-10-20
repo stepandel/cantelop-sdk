@@ -1,8 +1,8 @@
 import { assertRuntimeID } from "./session-runtime-contract.js";
+import { EDGE_ORIGIN } from "./shared.js";
 import { AppConfigurationError, resolveAppConfiguration, assertAppOptions, type ConfigurationContext } from "./app-config.js";
 import type { AppConnection, AppOptions } from "./integration.js";
 
-export const EDGE_ORIGIN = "https://edge.cantelop.internal";
 
 
 /** Assigns the logical Edge origin to requests before they leave the SDK. */

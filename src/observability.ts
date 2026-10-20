@@ -1,6 +1,7 @@
 /// <reference types="node" />
 
 import type { ActivityLifecycle } from "./activity.js";
+import { abortReason } from "./shared.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 
@@ -127,7 +128,7 @@ export class RuntimeObservationBuffer {
     if (after < this.acknowledged) throw new RangeError("cursor_expired");
     if (acknowledge) this.acknowledge(after);
     while (true) {
-      if (signal?.aborted) throw abortReason(signal);
+      if (signal?.aborted) throw abortReason(signal, "Runtime observation read cancelled");
       const available = this.observations
         .filter((observation) => observation.cursor > after)
         .slice(0, MAX_BATCH_OBSERVATIONS);
@@ -168,7 +169,7 @@ export class RuntimeObservationBuffer {
       };
       const abort = () => {
         cleanup();
-        reject(abortReason(signal!));
+        reject(abortReason(signal!, "Runtime observation read cancelled"));
       };
       const cleanup = () => {
         this.readers.delete(ready);
@@ -281,6 +282,3 @@ function randomHex(bytes: number): string {
   return /^0+$/.test(value) ? randomHex(bytes) : value;
 }
 
-function abortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException("Runtime observation read cancelled", "AbortError");
-}

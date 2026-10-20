@@ -1,3 +1,5 @@
+import { abortReason } from "./shared.js";
+
 const MAX_PENDING_EVENTS = 256;
 const MAX_PENDING_BYTES = 1024 * 1024;
 const MAX_EVENT_BYTES = 64 * 1024;
@@ -79,7 +81,7 @@ export class SessionOutputBuffer {
     if (after < this.acknowledged) throw new RangeError("cursor_expired");
     if (acknowledge) this.acknowledge(after);
     while (true) {
-      if (signal?.aborted) throw abortReason(signal);
+      if (signal?.aborted) throw abortReason(signal, "Session output read cancelled");
       const available = this.events
         .filter((event) => event.cursor > after)
         .slice(0, MAX_BATCH_EVENTS);
@@ -117,7 +119,7 @@ export class SessionOutputBuffer {
       };
       const abort = () => {
         cleanup();
-        reject(abortReason(signal!));
+        reject(abortReason(signal!, "Session output read cancelled"));
       };
       const cleanup = () => {
         this.readers.delete(ready);
@@ -151,6 +153,3 @@ function encodeEvent(event: unknown): string {
   return encoded;
 }
 
-function abortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException("Session output read cancelled", "AbortError");
-}

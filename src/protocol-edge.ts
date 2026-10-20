@@ -1,11 +1,12 @@
 import {encodeRuntimeCommand} from "./runtime-command.js";
+import { isRecord, RUNTIME_ORIGIN, WORKSPACE_ID_PATTERN } from "./shared.js";
 import { App } from "./app.js";
 import { validateAppDeploymentConfiguration, type AppEnvironmentDeclaration } from "./app-definition.js";
 import { RUNTIME_ID } from "./session-runtime-contract.js";
 import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
 import type { SessionCommand, WorkspaceSelector } from "./integration.js";
-import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand, type ProtocolEnvelope } from "./integration-protocol.js";
+import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, validateCommand, type ProtocolEnvelope } from "./integration-protocol.js";
 import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
 import { MAX_SYNC_FILE_BYTES, SYNC_PUBLIC_ROUTE, validSyncRequest } from "./sync.js";
 
@@ -34,7 +35,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
   assertRuntimeID(options?.runtimeId);
   const runtimeId = options.runtimeId;
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
-  const origin = options.runtimeOrigin ?? "https://runtime.cantelop.internal";
+  const origin = options.runtimeOrigin ?? RUNTIME_ORIGIN;
   const routes = validateWebhookRoutes(options.webhooks);
   const environment = validateAppDeploymentConfiguration({ environment: options.environment ?? {} }).environment ?? {};
   if (options.homepage !== undefined && typeof options.homepage !== "function") throw new TypeError("Invalid App homepage");
@@ -62,7 +63,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         if (response.status === 204) return Response.json({ protocolVersion: 2, id: envelope.id });
         const value = await readPlatformJSON(response);
         if (!response.ok) return Response.json(value, { status: response.status });
-        if (!record(value)) throw new EdgeFailure("invalid_platform_response", 502);
+        if (!isRecord(value)) throw new EdgeFailure("invalid_platform_response", 502);
         return Response.json({ ...value, protocolVersion: 2 }, { status: response.status });
       }
       if (workspace === null) {
@@ -78,7 +79,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         if (!response.ok) return response;
         // Only metadata crosses back, whatever else the platform includes.
         const value = await readPlatformJSON(response);
-        if (!record(value) || !Number.isSafeInteger(value.revision) || !["pending", "applied", "failed"].includes(value.status as string)) throw new EdgeFailure("invalid_platform_response", 502);
+        if (!isRecord(value) || !Number.isSafeInteger(value.revision) || !["pending", "applied", "failed"].includes(value.status as string)) throw new EdgeFailure("invalid_platform_response", 502);
         return Response.json({ protocolVersion: 2, id: envelope.id, revision: value.revision, status: value.status }, { headers: { "Cache-Control": "private, no-store" } });
       }
       async function resolveWorkspace(): Promise<string> {
@@ -87,7 +88,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         const response = await invoke("/__cantelop/v1/workspaces/open", "POST", { slug: workspace.slug });
         if (!response.ok) throw await remoteFailure(response);
         const value = await readPlatformJSON(response);
-        if (!record(value) || typeof value.id !== "string" || !/^wsp_[0-9a-f]{32}$/.test(value.id) || value.slug !== workspace.slug) throw new EdgeFailure("invalid_platform_response", 502);
+        if (!isRecord(value) || typeof value.id !== "string" || !WORKSPACE_ID_PATTERN.test(value.id) || value.slug !== workspace.slug) throw new EdgeFailure("invalid_platform_response", 502);
         return value.id;
       }
       if (session === null) {
@@ -125,7 +126,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           });
           if (submission.type !== "auth" || !response.ok) return response;
           const value = await readPlatformJSON(response);
-          if (!record(value) || !record(value.reply)) throw new EdgeFailure("invalid_platform_response", 502);
+          if (!isRecord(value) || !isRecord(value.reply)) throw new EdgeFailure("invalid_platform_response", 502);
           if (value.reply.type !== "terminal") return Response.json(value);
           if (typeof value.reply.terminalId !== "string" || !TERMINAL_ID_PATTERN.test(value.reply.terminalId)) throw new EdgeFailure("invalid_platform_response", 502);
           // The browser connects here directly, so the App backend never relays terminal bytes.
@@ -151,7 +152,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           });
           if (!response.ok) return response;
           const result = await readPlatformJSON(response);
-          if (!record(result) || !record(result.reply)) throw new EdgeFailure("invalid_platform_response", 502);
+          if (!isRecord(result) || !isRecord(result.reply)) throw new EdgeFailure("invalid_platform_response", 502);
           return Response.json({ ...result.reply, protocolVersion: 2 });
         }
         case "status": {
@@ -349,6 +350,6 @@ async function readPlatformJSON(response: Response): Promise<unknown> {
 }
 async function remoteFailure(response: Response): Promise<EdgeFailure> {
   const value = await readPlatformJSON(response);
-  return new EdgeFailure(record(value) && record(value.error) && typeof value.error.code === "string" ? value.error.code : "workspace_resolution_failed", response.status);
+  return new EdgeFailure(isRecord(value) && isRecord(value.error) && typeof value.error.code === "string" ? value.error.code : "workspace_resolution_failed", response.status);
 }
 function failure(code: string, status: number): Response { return Response.json({ error: { code } }, { status }); }

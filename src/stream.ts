@@ -1,6 +1,7 @@
 import type { SessionEvent, SessionStreamOptions } from "./integration.js";
+import { isRecord, MESSAGE_ID_PATTERN, RUNTIME_ORIGIN } from "./shared.js";
 import { RemoteAppError } from "./remote-app.js";
-import { assertCursor, record } from "./integration-protocol.js";
+import { assertCursor } from "./integration-protocol.js";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const encoder = new TextEncoder();
@@ -21,7 +22,7 @@ export async function* streamSessionEvents<Event>(
   let body: ReadableStream<Uint8Array> | null = null;
   try {
     controller.signal.throwIfAborted();
-    const url = new URL("https://runtime.cantelop.internal/events");
+    const url = new URL("/events", RUNTIME_ORIGIN);
     if (cursor !== undefined) {
       url.searchParams.set("stream_id", cursor.streamId);
       url.searchParams.set("after", String(cursor.sequence));
@@ -57,7 +58,7 @@ export async function* streamSessionEvents<Event>(
           let document: unknown;
           try { document = JSON.parse(data.join("\n")); } catch { throw invalidStream(); }
           if (eventType === "error") {
-            const code = record(document) && typeof document.code === "string" && document.code ? document.code : "event_stream_failed";
+            const code = isRecord(document) && typeof document.code === "string" && document.code ? document.code : "event_stream_failed";
             throw new RemoteAppError(code, 200);
           }
           if (eventType !== "" && eventType !== "message") throw invalidStream();
@@ -137,9 +138,9 @@ async function* readLines(body: ReadableStream<Uint8Array>, signal: AbortSignal)
 }
 
 function readEvent<Event>(value: unknown, id: string, sessionId: string): SessionEvent<Event> {
-  if (!record(value) || typeof value.stream_id !== "string" || !/^[0-9a-f]{32}$/.test(value.stream_id) ||
+  if (!isRecord(value) || typeof value.stream_id !== "string" || !/^[0-9a-f]{32}$/.test(value.stream_id) ||
       !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 1 || value.session_id !== sessionId ||
-      typeof value.message_id !== "string" || !/^msg_[0-9a-f]{32}$/.test(value.message_id) ||
+      typeof value.message_id !== "string" || !MESSAGE_ID_PATTERN.test(value.message_id) ||
       typeof value.created_at !== "string" || !("data" in value) || id !== `${value.stream_id}:${value.sequence}`) throw invalidStream();
   const createdAt = new Date(value.created_at);
   if (!Number.isFinite(createdAt.valueOf())) throw invalidStream();

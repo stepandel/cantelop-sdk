@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import type { Readable, Writable } from "node:stream";
+import { WORKSPACE_ID_PATTERN } from "./shared.js";
 import type { SessionIdentity } from "./resources.js";
 
 /**
@@ -28,7 +29,6 @@ export type AuthResult =
 export const AUTH_SESSION_ID = "cantelop-native-auth";
 /** Auth commands keep no idle window: runtime quiescence alone holds the Sandbox while a login or unsubmitted code attempt exists. */
 export const AUTH_KEEP_ALIVE_SECONDS = 0;
-const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 /** Logical Session IDs are App-wide, so each Workspace needs its own stable auth actor. */
 export function workspaceAuthSessionID(workspaceId: string): string {
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) throw new TypeError("Invalid auth Workspace ID");
