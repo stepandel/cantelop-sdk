@@ -40,7 +40,7 @@ function compiledRuntime<Message, Event, Reply, View>(runtimeId: string): Sessio
 export function createProtocolWorker<Message = unknown, Event = never, Reply = never, View = unknown>(options: ProtocolEdgeOptions<Message, Event, Reply, View>) {
   assertRuntimeID(options?.runtimeId);
   const runtimeId = options.runtimeId;
-  const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
+  const defaultRuntimeFetch = options.fetch ?? ((request: Request) => fetch(request));
   const origin = options.runtimeOrigin ?? RUNTIME_ORIGIN;
   // Validated once per Worker; each request only binds its own connection to this App definition.
   const app: NormalizedAppOptions<Message, Event, Reply, View> | undefined = options.appName ? Object.freeze({
@@ -55,7 +55,7 @@ export function createProtocolWorker<Message = unknown, Event = never, Reply = n
   const routes = app?.webhooks ?? validateWebhookRoutes(options.webhooks);
   const environment = app?.environment ?? validateAppDeploymentConfiguration({ environment: options.environment ?? {} }).environment ?? {};
   if (!app && (Object.keys(routes).length || options.homepage !== undefined)) throw new TypeError("Webhook App name is required");
-  async function commands(request: Request, bindings: Readonly<Record<string, unknown>>, publicOrigin = new URL(request.url).origin): Promise<Response> {
+  async function commands(request: Request, bindings: Readonly<Record<string, unknown>>, publicOrigin = new URL(request.url).origin, runtimeFetch = defaultRuntimeFetch): Promise<Response> {
     try {
       const url = new URL(request.url);
       const type = appCommandType(url.pathname);
@@ -181,7 +181,15 @@ export function createProtocolWorker<Message = unknown, Event = never, Reply = n
     }
   }
   return Object.freeze({
-    async fetch(request: Request, bindings: Readonly<Record<string, unknown>> = {}): Promise<Response> {
+    async fetch(request: Request, bindings: Readonly<Record<string, unknown>> = {}, context?: {
+      props?: { CANTELOP_RUNTIME?: { fetch(request: Request): Promise<Response> } };
+    }): Promise<Response> {
+      // The platform supplies a capability per invocation. Never retain it in module state.
+      const capability = context?.props?.CANTELOP_RUNTIME;
+      if ((capability !== undefined || bindings.CANTELOP_FLEET_EXECUTION_VERSION === "1") && typeof capability?.fetch !== "function") {
+        return failure("fleet_runtime_unavailable", 503);
+      }
+      const runtimeFetch = capability ? (target: Request) => capability.fetch(target) : defaultRuntimeFetch;
       const path = new URL(request.url).pathname;
       const sync = SYNC_PUBLIC_ROUTE.exec(path);
       if (sync) {
@@ -227,7 +235,7 @@ export function createProtocolWorker<Message = unknown, Event = never, Reply = n
           const publicOrigin = new URL(request.url).origin;
           // Commands from this handler are served by this Worker with the current request's bindings.
           const connection: AppConnection = {
-            fetch: command => commands(command, bindings, publicOrigin),
+            fetch: command => commands(command, bindings, publicOrigin, runtimeFetch),
             ...(typeof bindings.CANTELOP_LOCAL_DATABASE_ORIGIN === "string" ? { localDatabaseOrigin: bindings.CANTELOP_LOCAL_DATABASE_ORIGIN } : {}),
           };
           const webhookRequest = await boundedWebhookRequest(request);
@@ -246,7 +254,7 @@ export function createProtocolWorker<Message = unknown, Event = never, Reply = n
       }
       try { await authenticate(request, bindings); }
       catch (error) { return error instanceof EdgeFailure ? failure(error.code, error.status) : failure("unauthorized", 401); }
-      return commands(request, bindings);
+      return commands(request, bindings, undefined, runtimeFetch);
     },
   });
 }

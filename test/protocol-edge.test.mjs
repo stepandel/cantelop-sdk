@@ -180,6 +180,7 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
     const artifact = await buildEdgeApi({ definition, outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
     assert.equal(artifact.manifest.kind, 'cantelop-protocol-edge');
     assert.equal(artifact.manifest.integration_protocol_version, 2);
+    assert.equal(artifact.manifest.fleet_execution_protocol_version, 1);
     assert.deepEqual(artifact.manifest.optional_bindings, ['CANTELOP_INTEGRATION_TOKEN_PREVIOUS', 'CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT']);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, 'utf8')), artifact.manifest);
     const worker = (await import(pathToFileURL(artifact.mainModule).href)).default;
@@ -252,4 +253,25 @@ test('auth actors reuse the canonical Workspace across selectors and remain dist
   }
   assert.deepEqual(sessions.map(session => session.id), [workspaceId, workspaceId, otherId, otherId, workspaceId].map(id => `cantelop-native-auth-${id}`));
   assert.deepEqual(sessions.map(session => session.workspace_id), [workspaceId, workspaceId, otherId, otherId, workspaceId]);
+});
+
+
+test('Fleet runtime capabilities are request-local and required for Fleet execution', async () => {
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', fetch() { throw new Error('unscoped runtime access'); } });
+  const fleetBindings = { ...bindings, CANTELOP_FLEET_EXECUTION_VERSION: '1' };
+  const body = { ...envelope({ type: 'workspace.resolve' }), session: null };
+  assert.equal((await worker.fetch(request(body), fleetBindings)).status, 503);
+  const results = await Promise.all(Array.from({ length: 24 }, async (_, scope) => {
+    const response = await worker.fetch(request(body), fleetBindings, { props: { CANTELOP_RUNTIME: {
+      async fetch(target) {
+        assert.equal(new URL(target.url).pathname, '/__cantelop/v1/workspaces/open');
+        await new Promise(resolve => setTimeout(resolve, scope % 4));
+        return Response.json({ id: workspaceId, slug: 'customer', scope });
+      },
+    } } });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).scope, scope);
+    return scope;
+  }));
+  assert.equal(results.length, 24);
 });

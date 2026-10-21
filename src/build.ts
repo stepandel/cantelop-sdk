@@ -122,6 +122,7 @@ export interface EdgeApiArtifact {
     main_module: "worker.mjs";
     cli_build_protocol_version: typeof CANTELOP_CLI_BUILD_PROTOCOL_VERSION;
     integration_protocol_version: typeof CANTELOP_INTEGRATION_PROTOCOL_VERSION;
+    fleet_execution_protocol_version: 1;
     session_runtime_id: string;
     app_name: string;
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
@@ -169,7 +170,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
     } }],
   });
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
-    schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
+    schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs", fleet_execution_protocol_version: 1,
     cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION, integration_protocol_version: CANTELOP_INTEGRATION_PROTOCOL_VERSION, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
     ...(runtime.definition.environment === undefined ? {} : { environment: runtime.definition.environment }),
     ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
