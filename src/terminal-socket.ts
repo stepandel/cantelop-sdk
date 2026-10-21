@@ -10,6 +10,9 @@ const MAX_BUFFERED_BYTES = 1024 * 1024;
 export interface TerminalSocket {
   send(data: Uint8Array): void;
   close(code?: number): void;
+  /** Stops reading client frames, including already-received ones, until resume(). */
+  pause(): void;
+  resume(): void;
 }
 
 export interface TerminalSocketHandlers {
@@ -35,7 +38,7 @@ export function acceptTerminalSocket(request: IncomingMessage, socket: Duplex, h
   socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\nSec-WebSocket-Protocol: ${protocol}\r\nCache-Control: no-store\r\n\r\n`);
   let pending: Buffer = head.length ? Buffer.from(head) : Buffer.alloc(0);
   let fragments: Buffer[] = [], fragmentOpcode = 0, fragmentBytes = 0;
-  let open = true;
+  let open = true, paused = false;
   const finish = () => {
     if (!open) return;
     open = false;
@@ -61,7 +64,7 @@ export function acceptTerminalSocket(request: IncomingMessage, socket: Duplex, h
     handlers.closed();
   };
   const parse = () => {
-    while (open) {
+    while (open && !paused) {
       if (pending.length < 2) return;
       const first = pending[0]!, second = pending[1]!;
       const fin = (first & 0x80) !== 0, opcode = first & 0x0f, masked = (second & 0x80) !== 0;
@@ -109,5 +112,16 @@ export function acceptTerminalSocket(request: IncomingMessage, socket: Duplex, h
   socket.on("close", finish);
   socket.on("end", finish);
   if (pending.length) queueMicrotask(parse);
-  return Object.freeze({ send: (data: Uint8Array) => frame(0x2, data), close });
+  const pause = () => {
+    if (!open || paused) return;
+    paused = true;
+    socket.pause();
+  };
+  const resume = () => {
+    if (!open || !paused) return;
+    paused = false;
+    socket.resume();
+    queueMicrotask(parse);
+  };
+  return Object.freeze({ send: (data: Uint8Array) => frame(0x2, data), close, pause, resume });
 }

@@ -3,7 +3,7 @@ export type {
   HandlingMessageStatus, MessageRef, MessageStatus, MessageExecution,
   SessionIdentity, SessionRequestOptions, Workspace, UnknownMessageStatus,
 } from "./resources.js";
-export { RemoteAppError } from "./remote-app.js";
+export { RemoteAppError } from "./transport.js";
 export { CantelopClient } from "./client.js";
 export type {
   AppConnection, AppSelector, AppOptions, CantelopClientOptions, IntegrationSessionOptions,

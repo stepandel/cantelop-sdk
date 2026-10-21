@@ -1,13 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InMemoryActivity } from "../dist/activity.js";
+import { deferred, nextTurn as tick } from "./helpers.mjs";
 
-const tick = () => new Promise(resolve => setImmediate(resolve));
-function deferred() {
-  let resolve;
-  const promise = new Promise(done => { resolve = done; });
-  return { promise, resolve };
-}
 function scheduler() {
   const outputs = [];
   const activity = new InMemoryActivity(() => undefined, async (id, event) => outputs.push({ id, event }));

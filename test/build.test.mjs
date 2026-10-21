@@ -11,6 +11,7 @@ import {
   buildSessionRuntime,
   watchLocalProject,
 } from "../dist/build.js";
+import { until } from "./helpers.mjs";
 
 test("the runtime-only build module declares an incompatible CLI protocol", () => {
   assert.equal(CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 6);
@@ -243,13 +244,7 @@ test("runtime-only schema discovery and watching preserve managed database artif
   assert.equal(await readFile(artifact.manifestFile, "utf8"), previous);
 });
 
-async function waitFor(predicate) {
-  const deadline = Date.now() + 5_000;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error("timed out waiting for incremental build");
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
+const waitFor = predicate => until(predicate, { intervalMs: 25, message: "timed out waiting for incremental build" });
 
 async function reservePort() {
   const server = createServer();

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createWorkspaceDatabase, validateDatabaseCredentials } from "../dist/database.js";
 import { createSessionDatabase } from "../dist/session.js";
-import { createRemoteApp } from "../dist/remote-app.js";
+import { CantelopClient } from "../dist/index.js";
+import { createProtocolWorker } from "../dist/protocol-edge.js";
 const url = "libsql://workspace-cantelop.turso.io";
 function fixture() {
   let now = Date.now(); let resolutions = 0; const clients = [];
@@ -44,17 +45,25 @@ test("credential destinations and expiry are validated", () => {
   }
   assert.throws(()=>validateDatabaseCredentials({...credentials,expiresAt:new Date().toISOString()}));
 });
-test("API Workspace uses the trusted credential route with its canonical ID",async()=>{
-  const workspaceId="wsp_0123456789abcdef0123456789abcdef"; const calls=[];
-  const app=createRemoteApp({fetch:async request=>{
+test("App Workspaces use the trusted credential route with their canonical ID", async () => {
+  const workspaceId = "wsp_0123456789abcdef0123456789abcdef"; const calls = [];
+  const worker = createProtocolWorker({ runtimeId: "test.v1", fetch: async request => {
     calls.push(request);
-    if(request.url.endsWith("/workspaces/open")) return Response.json({id:workspaceId,app_id:"app_0123456789abcdef0123456789abcdef",slug:"default",hostname:"default--agent.cantelop.dev",created_at:"2026-10-05T00:00:00Z",updated_at:"2026-10-05T00:00:00Z"});
-    assert.deepEqual(await request.json(),{workspace_id:workspaceId});
-    return Response.json({url,authToken:"database-token",expiresAt:new Date(Date.now()+900000).toISOString()});
-  }});
-  const workspace=await app.workspaces.open({slug:"default"}); const db=await workspace.database();
-  assert.equal((await db.credentials()).url,url);
-  assert.equal(calls[1].url,"https://runtime.cantelop.internal/__cantelop/v1/workspaces/database/credentials"); db.close();
+    if (request.url.endsWith("/workspaces/open")) return Response.json({ id: workspaceId, app_id: "app_0123456789abcdef0123456789abcdef", slug: "default", hostname: "default--agent.cantelop.dev", created_at: "2026-10-05T00:00:00Z", updated_at: "2026-10-05T00:00:00Z" });
+    assert.deepEqual(await request.json(), { workspace_id: workspaceId });
+    return Response.json({ url, authToken: "database-token", expiresAt: new Date(Date.now() + 900000).toISOString() });
+  } });
+  const app = new CantelopClient().app({ name: "agent", runtime: { receive() {} }, connection: {
+    fetch: request => worker.fetch(new Request(request, { headers: { ...Object.fromEntries(request.headers), Authorization: "Bearer app-token" } }), { CANTELOP_INTEGRATION_TOKEN: "app-token" }),
+  } });
+  const db = await app.workspace({ slug: "default" }).database();
+  assert.equal((await db.credentials()).url, url);
+  assert.deepEqual(calls.map(request => request.url), [
+    "https://runtime.cantelop.internal/__cantelop/v1/workspaces/open",
+    "https://runtime.cantelop.internal/__cantelop/v1/workspaces/database/credentials",
+  ]);
+  assert.ok(calls.every(request => !request.headers.has("Authorization")));
+  db.close();
 });
 test("Session credentials use platform capability without accepting a Workspace selector",async()=>{
   const db=createSessionDatabase({CANTELOP_WORKSPACE_DATABASE_CREDENTIALS_URL:"https://console.cantelop.dev/internal/v1/runtime/database/credentials",CANTELOP_WORKSPACE_DATABASE_ACCESS_TOKEN:"sandbox-only"},async(url,init)=>{

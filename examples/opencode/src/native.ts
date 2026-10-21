@@ -1,38 +1,53 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConversationStore, nativeEnvironment, runJsonProcess, CliHarness, type NativeOptions, type NativeTurn } from "../../native-harness/cli.ts";
+import { ConversationStore, nativeEnvironment, runJsonProcess, writeDurableJson, CliHarness, type NativeOptions, type NativeTurn } from "@cantelop/sdk/harnesses/native";
 
 /** Stock CLI with native export/import; the live SQLite database stays on local disk. */
 export class NativeOpenCode extends CliHarness {
   private readonly store: ConversationStore;
   private readonly snapshot: string;
   private environment: Promise<NodeJS.ProcessEnv> | undefined;
+  /** The current turn, including its export; local data outlives it. */
+  private running: Promise<unknown> = Promise.resolve();
   constructor(private readonly options: NativeOptions, lifetime?: AbortSignal) {
     super(lifetime);
     this.store = new ConversationStore(options.workspace, "opencode", options.sessionId);
     this.snapshot = join(options.workspace, ".cantelop", "native-harness", "opencode", createHash("sha256").update(options.sessionId).digest("hex") + ".export.json");
+    // The local database is disposable once the incarnation ends: its last turn already exported it.
+    lifetime?.addEventListener("abort", () => { void this.dispose(); }, { once: true });
+  }
+  private async dispose(): Promise<void> {
+    await this.running;
+    const env = await this.environment?.catch(() => undefined);
+    if (env?.XDG_DATA_HOME) await rm(env.XDG_DATA_HOME, { recursive: true, force: true });
   }
   private initialize(): Promise<NodeJS.ProcessEnv> {
     if (this.environment) return this.environment;
     this.environment = (async () => {
       const env = nativeEnvironment(this.options.workspace);
       const data = await mkdtemp(join(tmpdir(), "cantelop-opencode-"));
-      env.XDG_DATA_HOME = data;
-      await mkdir(join(data, "opencode"), { recursive: true });
-      const auth = join(this.options.workspace, ".local", "share", "opencode");
-      await mkdir(auth, { recursive: true, mode: 0o700 });
-      for (const name of ["auth.json", "mcp-auth.json"]) await symlink(join(auth, name), join(data, "opencode", name));
       try {
-        const snapshot = JSON.parse(await readFile(this.snapshot, "utf8"));
-        if (!snapshot || typeof snapshot.info?.id !== "string") throw new Error("Invalid native OpenCode snapshot");
-        // Import into a fresh local database through the stock CLI. No SQL/schema copying.
-        await this.command(env, ["import", this.snapshot], "text");
+        env.XDG_DATA_HOME = data;
+        await mkdir(join(data, "opencode"), { recursive: true });
+        const auth = join(this.options.workspace, ".local", "share", "opencode");
+        await mkdir(auth, { recursive: true, mode: 0o700 });
+        for (const name of ["auth.json", "mcp-auth.json"]) await symlink(join(auth, name), join(data, "opencode", name));
+        try {
+          const snapshot = JSON.parse(await readFile(this.snapshot, "utf8"));
+          if (!snapshot || typeof snapshot.info?.id !== "string") throw new Error("Invalid native OpenCode snapshot");
+          // Import into a fresh local database through the stock CLI. No SQL/schema copying.
+          await this.command(env, ["import", this.snapshot], "text");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        return env;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        // A retry creates its own directory; do not leave this one behind.
+        await rm(data, { recursive: true, force: true });
+        throw error;
       }
-      return env;
     })();
     // A transient setup failure must not poison every later turn.
     this.environment.catch(() => { this.environment = undefined; });
@@ -46,7 +61,12 @@ export class NativeOpenCode extends CliHarness {
     });
     return result;
   }
-  protected async execute(turn: NativeTurn): Promise<void> {
+  protected execute(turn: NativeTurn): Promise<void> {
+    const run = this.run(turn);
+    this.running = run.catch(() => undefined);
+    return run;
+  }
+  private async run(turn: NativeTurn): Promise<void> {
     turn.signal.throwIfAborted();
     const state = await this.store.load();
     const env = await this.initialize();
@@ -73,9 +93,7 @@ export class NativeOpenCode extends CliHarness {
         try {
           const snapshot = await this.command(env, ["export", state.id], "json");
           if (!snapshot || (snapshot.info as { id?: string } | undefined)?.id !== state.id) throw new Error("Invalid native OpenCode export");
-          const temporary = this.snapshot + "." + randomUUID() + ".tmp";
-          await writeFile(temporary, JSON.stringify(snapshot), { mode: 0o600 });
-          await rename(temporary, this.snapshot);
+          await writeDurableJson(this.snapshot, snapshot);
         } catch (error) {
           // Report the turn's own failure rather than a follow-on export failure.
           if (!turnFailed) throw error;

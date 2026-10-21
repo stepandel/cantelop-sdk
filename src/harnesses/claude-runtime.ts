@@ -2,9 +2,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type { SessionBehaviour, SessionContext, SessionActivationContext, SessionActivityContext, SessionHarnessContext } from '../session.js'
-import { ClaudeAuthenticationRequired, type ClaudeHarnessFactoryOptions } from './claude.js'
-import { ConversationStore, type NativeEvent } from './cli.js'
+import { isRecord } from '../shared.js'
+import { fragmentNativeEvent, type NativeEvent } from './cli.js'
+import { claudeConversationStore } from './claude-launch.js'
 import { ClaudeStreamClosed, createClaudeStream, type ClaudeStream, type ClaudeStreamFactory } from './claude-stream.js'
+import { ClaudeAuthenticationRequired, CLAUDE_ENTRY_MAX_BYTES, CLAUDE_INPUT_MAX_BYTES, CLAUDE_MAX_CONTROLS, CLAUDE_MAX_ENTRIES,
+  CLAUDE_MAX_MESSAGES, isClaudeUUID, type ClaudeHarnessFactoryOptions } from './claude-types.js'
 import { DurableClaudeStore, type DurableClaudeInput, type DurableClaudeState } from './claude-durable-state.js'
 import { claudeView, observeClaude, clip } from './claude-view.js'
 import { validateClaudeSessionConfig, validateClaudeSessionSettings } from './claude-config.js'
@@ -12,6 +15,15 @@ import type { ClaudeSessionCommand as Command, ClaudeSessionEvent as Event, Clau
   ClaudeSessionView as View, ClaudeSessionSettings as Settings } from './claude-protocol.js'
 
 type Context = SessionContext<Command, Event, Reply, View>
+type ControlCommand = Extract<Command, { type: 'reset' | 'cancel' }>
+type InputCommand = Extract<Command, { type: 'input' | 'steer' }>
+
+/** Partial text deltas are committed at most this often; any other event commits immediately. */
+const DELTA_COMMIT_INTERVAL_MS = 250
+/** Inputs one native run accepts, including steering. */
+const RUN_MAX_INPUTS = 32
+/** Application input IDs are opaque, bounded and safe as file and log tokens. */
+const INPUT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 type PublicationContext = Pick<SessionActivityContext<Command, Event, View>, 'output' | 'view'>
 interface ActiveRun {
   id: string
@@ -36,7 +48,7 @@ const pending = (m: DurableClaudeInput) => m.status === 'delivering' || m.status
 const terminal = (m: DurableClaudeInput) => !pending(m) && m.status !== 'accepted'
 /** Control receipts are bounded; the oldest is evicted so cancel and reset always remain available. */
 function pushControl(state: DurableClaudeState, control: DurableClaudeState['controls'][number]): void {
-  if (state.controls.length >= 1000) state.controls.shift()
+  if (state.controls.length >= CLAUDE_MAX_CONTROLS) state.controls.shift()
   state.controls.push(control)
 }
 
@@ -60,12 +72,12 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
       await store.open()
       // Migrate the older runner's authoritative native ID once. New state,
       // including explicit reset, no longer depends on that legacy mapping.
-      const seed = store.snapshot.revision === 0 ? await new ConversationStore(workspace, 'claude', sessionId).load() : undefined
+      const seed = store.snapshot.revision === 0 ? await claudeConversationStore(workspace, sessionId).load() : undefined
       await store.commit(state => {
         if (state.revision === 0) {
           const conversation = seed?.id ? { id: seed.id, resumable: seed.resumable } : defaults.conversation
           if (conversation) {
-            if (!/^[0-9a-f-]{36}$/i.test(conversation.id)) throw new TypeError('Invalid Claude conversation ID')
+            if (!isClaudeUUID(conversation.id)) throw new TypeError('Invalid Claude conversation ID')
             state.conversationId = conversation.id; state.nativeStarted = conversation.resumable
             if (conversation.resumable && !state.entries.length) state.truncated = true
           }
@@ -122,8 +134,8 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
     // Coalesce partial text deltas so streaming does not fsync per token; any
     // other event (including the block stop that follows deltas) commits them.
     run.buffered.push(event)
-    const delta = event.type === 'stream_event' && (event as Record<string, any>).event?.type === 'content_block_delta'
-    const wait = 250 - (Date.now() - run.committedAt)
+    const delta = event.type === 'stream_event' && isRecord(event.event) && event.event.type === 'content_block_delta'
+    const wait = DELTA_COMMIT_INTERVAL_MS - (Date.now() - run.committedAt)
     if (delta && wait > 0) {
       run.timer ??= setTimeout(() => {
         run.timer = undefined
@@ -143,12 +155,9 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
     // complete publication (including stable fragment IDs) before any delivery.
     const events: Event[] = []
     for (const event of batch) {
-      const json = JSON.stringify(event)
-      if (Buffer.byteLength(json) <= 48_000) events.push({ type: 'claude', id: run.id, event })
-      else {
-        const eventId = randomUUID(), total = Math.ceil(json.length / 8000)
-        for (let index = 0; index < total; index++) events.push({ type: 'claude.fragment', id: run.id, eventId, index, total, json: json.slice(index * 8000, (index + 1) * 8000) })
-      }
+      const fragments = fragmentNativeEvent(event)
+      if (!fragments) events.push({ type: 'claude', id: run.id, event })
+      else for (const fragment of fragments) events.push({ type: 'claude.fragment', id: run.id, ...fragment })
     }
     await store.commit(state => {
       for (const event of batch) {
@@ -278,6 +287,106 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
     } })
   }
 
+  /** Cancel and reset are idempotent per message ID: a retry replays the recorded reply. */
+  async function control(context: Context, command: ControlCommand): Promise<void> {
+    const key = JSON.stringify([command.type, command.type === 'cancel' ? command.id ?? null : null])
+    const previous = store.snapshot.controls.find(r => r.id === context.message.id)
+    if (previous) {
+      if (previous.fingerprint !== key) { await fail(context, 'message_id_conflict'); return }
+      if (previous.runId && active?.id === previous.runId) {
+        active.cancelRequested = true; active.controller.abort(); active.stream?.cancel()
+      }
+      await flush(context); context.reply(previous.reply); return
+    }
+    if (command.type === 'reset') await reset(context, key)
+    else await cancel(context, command.id, key)
+  }
+
+  async function reset(context: Context, key: string): Promise<void> {
+    if (active || context.activity.active) { await fail(context, 'run_busy'); return }
+    const conversationId = randomUUID()
+    const reply: Reply = { type: 'session.reset', conversationId }
+    await store.commit(state => {
+      state.conversationId = conversationId; state.nativeStarted = false; state.run = null
+      // Observed history stays visible, but never-delivered input from the old conversation must not run in the new one.
+      for (const m of state.messages) if (m.status === 'accepted') { m.status = 'cancelled'; m.reason = 'session_reset'; delete m.settings }
+      pushControl(state, { id: context.message.id, fingerprint: key, reply })
+    })
+    await flush(context); context.reply(reply)
+  }
+
+  async function cancel(context: Context, id: string | undefined, key: string): Promise<void> {
+    if (id && !store.snapshot.messages.some(m => m.id === id)) { await fail(context, 'message_not_found'); return }
+    const selected = id ? store.snapshot.messages.find(m => m.id === id) : undefined
+    const target = active
+    const requested = !!target && (!selected || selected.runId === target.id && (pending(selected) || selected.status === 'accepted'))
+    // Input whose run has not started is cancelled directly rather than left to execute later.
+    const dormant = !requested && selected?.status === 'accepted'
+    const reply: Reply = { type: 'cancel.accepted', requested: requested || dormant }
+    if (requested) target!.cancelRequested = true
+    await store.commit(state => {
+      if (requested && state.run?.id === target!.id) state.run.status = 'cancelling'
+      if (dormant) {
+        const m = state.messages.find(m => m.id === selected!.id)!
+        m.status = 'cancelled'; m.reason = 'cancelled_before_start'; delete m.settings
+      }
+      pushControl(state, { id: context.message.id, fingerprint: key, reply, ...(requested ? { runId: target!.id } : {}) })
+    })
+    if (requested) { target!.controller.abort(); target!.stream?.cancel() }
+    await flush(context); context.reply(reply)
+  }
+
+  /** Input is idempotent per input ID; a retry with the same text and settings reports the existing input. */
+  async function input(context: Context, command: InputCommand): Promise<void> {
+    if (typeof command.id !== 'string' || !INPUT_ID_PATTERN.test(command.id) ||
+        typeof command.text !== 'string' || !command.text.trim() || Buffer.byteLength(command.text) > CLAUDE_INPUT_MAX_BYTES) {
+      await fail(context, 'invalid_input'); return
+    }
+    const overrides = command.settings === undefined ? {} : validateClaudeSessionSettings(command.settings)
+    const hash = fingerprint(command.text, overrides)
+    const existing = store.snapshot.messages.find(m => m.id === command.id)
+    if (existing) await retryInput(context, existing, hash)
+    else await admitInput(context, command, overrides, hash)
+  }
+
+  async function retryInput(context: Context, existing: DurableClaudeInput, hash: string): Promise<void> {
+    if (existing.fingerprint !== hash) { await fail(context, 'message_id_conflict'); return }
+    await flush(context)
+    if (existing.status === 'accepted') {
+      if (active && active.id === existing.runId) {
+        if (!await deliver(active, existing.id, context)) { await fail(context, 'run_finishing'); return }
+      } else if (!active) start(context)
+    }
+    replyInput(context, store.snapshot.messages.find(m => m.id === existing.id)!)
+  }
+
+  async function admitInput(context: Context, command: InputCommand, overrides: Settings, hash: string): Promise<void> {
+    if (active && ((active.stream && !active.stream.accepting) || active.controller.signal.aborted) || !active && context.activity.active) {
+      await fail(context, 'run_finishing'); return
+    }
+    const target = active
+    const settings = target ? structuredClone({ ...target.settings, ...overrides }) : structuredClone({ ...appSettings, ...overrides })
+    if (target && !isDeepStrictEqual(settings, target.settings)) { await fail(context, 'active_settings_conflict'); return }
+    if (store.snapshot.messages.length >= CLAUDE_MAX_MESSAGES && !store.snapshot.messages.some(terminal)) { await fail(context, 'session_full'); return }
+    if (target && store.snapshot.messages.filter(m => m.runId === target.id).length >= RUN_MAX_INPUTS) { await fail(context, 'run_input_capacity'); return }
+    const runId = target?.id ?? randomUUID()
+    await store.commit(state => {
+      // Retained identities are bounded: evict the oldest finished input to make room.
+      if (state.messages.length >= CLAUDE_MAX_MESSAGES) state.messages.splice(state.messages.findIndex(terminal), 1)
+      state.messages.push({ id: command.id, text: command.text, nativeId: randomUUID(), runId,
+        status: 'accepted', settings, fingerprint: hash })
+      if (state.run?.id === runId) state.run.inputIds.push(command.id)
+      const text = clip(command.text, CLAUDE_ENTRY_MAX_BYTES)
+      if (text !== command.text) state.truncated = true
+      state.entries.push({ id: command.id, runId, role: 'user', text, status: 'completed' })
+      if (state.entries.length > CLAUDE_MAX_ENTRIES) { state.entries.shift(); state.truncated = true }
+    })
+    await flush(context)
+    if (target) { if (!await deliver(target, command.id, context)) { await fail(context, 'run_finishing'); return } }
+    else start(context)
+    replyInput(context, store.snapshot.messages.find(m => m.id === command.id)!)
+  }
+
   return {
     redelivery: true,
     async onActivate(context) {
@@ -289,92 +398,14 @@ export function createClaudeRuntime(options: ClaudeHarnessFactoryOptions = {}, f
     async receive(context) {
       await initialize(context.session.id)
       const command = context.message.payload
-      if (command.type === 'sync') { await flush(context); return }
-      if (command.type === 'snapshot') { await flush(context); context.reply({ type: 'session.state', state: claudeView(store.snapshot) }); return }
-      if (command.type === 'reset' || command.type === 'cancel') {
-        const key = JSON.stringify([command.type, command.type === 'cancel' ? command.id ?? null : null])
-        const previous = store.snapshot.controls.find(r => r.id === context.message.id)
-        if (previous) {
-          if (previous.fingerprint !== key) { await fail(context, 'message_id_conflict'); return }
-          if (previous.runId && active?.id === previous.runId) {
-            active.cancelRequested = true; active.controller.abort(); active.stream?.cancel()
-          }
-          await flush(context); context.reply(previous.reply); return
-        }
-        if (command.type === 'reset') {
-          if (active || context.activity.active) { await fail(context, 'run_busy'); return }
-          const conversationId = randomUUID()
-          const reply: Reply = { type: 'session.reset', conversationId }
-          await store.commit(state => {
-            state.conversationId = conversationId; state.nativeStarted = false; state.run = null
-            // Observed history stays visible, but never-delivered input from the old conversation must not run in the new one.
-            for (const m of state.messages) if (m.status === 'accepted') { m.status = 'cancelled'; m.reason = 'session_reset'; delete m.settings }
-            pushControl(state, { id: context.message.id, fingerprint: key, reply })
-          })
-          await flush(context); context.reply(reply); return
-        }
-        if (command.id && !store.snapshot.messages.some(m => m.id === command.id)) { await fail(context, 'message_not_found'); return }
-        const selected = command.id ? store.snapshot.messages.find(m => m.id === command.id) : undefined
-        const target = active
-        const requested = !!target && (!selected || selected.runId === target.id && (pending(selected) || selected.status === 'accepted'))
-        // Input whose run has not started is cancelled directly rather than left to execute later.
-        const dormant = !requested && selected?.status === 'accepted'
-        const reply: Reply = { type: 'cancel.accepted', requested: requested || dormant }
-        if (requested) target!.cancelRequested = true
-        await store.commit(state => {
-          if (requested && state.run?.id === target!.id) state.run.status = 'cancelling'
-          if (dormant) {
-            const m = state.messages.find(m => m.id === selected!.id)!
-            m.status = 'cancelled'; m.reason = 'cancelled_before_start'; delete m.settings
-          }
-          pushControl(state, { id: context.message.id, fingerprint: key, reply, ...(requested ? { runId: target!.id } : {}) })
-        })
-        if (requested) { target!.controller.abort(); target!.stream?.cancel() }
-        await flush(context); context.reply(reply); return
+      switch (command.type) {
+        case 'sync': await flush(context); return
+        case 'snapshot': await flush(context); context.reply({ type: 'session.state', state: claudeView(store.snapshot) }); return
+        case 'reset': case 'cancel': await control(context, command); return
+        case 'input': case 'steer': await input(context, command); return
+        // Old queue commands must not silently become steering inputs.
+        default: await fail(context, 'unsupported_command')
       }
-      // Old queue commands must not silently become steering inputs.
-      if (command.type !== 'input' && command.type !== 'steer') { await fail(context, 'unsupported_command'); return }
-      if (typeof command.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(command.id) ||
-          typeof command.text !== 'string' || !command.text.trim() || Buffer.byteLength(command.text) > 32 * 1024) {
-        await fail(context, 'invalid_input'); return
-      }
-      const overrides = command.settings === undefined ? {} : validateClaudeSessionSettings(command.settings)
-      const hash = fingerprint(command.text, overrides)
-      const existing = store.snapshot.messages.find(m => m.id === command.id)
-      if (existing) {
-        if (existing.fingerprint !== hash) { await fail(context, 'message_id_conflict'); return }
-        await flush(context)
-        if (existing.status === 'accepted') {
-          if (active && active.id === existing.runId) {
-            if (!await deliver(active, existing.id, context)) { await fail(context, 'run_finishing'); return }
-          } else if (!active) start(context)
-        }
-        replyInput(context, store.snapshot.messages.find(m => m.id === existing.id)!); return
-      }
-      if (active && ((active.stream && !active.stream.accepting) || active.controller.signal.aborted) || !active && context.activity.active) {
-        await fail(context, 'run_finishing'); return
-      }
-      const target = active
-      const settings = target ? structuredClone({ ...target.settings, ...overrides }) : structuredClone({ ...appSettings, ...overrides })
-      if (target && !isDeepStrictEqual(settings, target.settings)) { await fail(context, 'active_settings_conflict'); return }
-      if (store.snapshot.messages.length >= 1000 && !store.snapshot.messages.some(terminal)) { await fail(context, 'session_full'); return }
-      if (active && store.snapshot.messages.filter(m => m.runId === active!.id).length >= 32) { await fail(context, 'run_input_capacity'); return }
-      const runId = target?.id ?? randomUUID()
-      await store.commit(state => {
-        // Retained identities are bounded: evict the oldest finished input to make room.
-        if (state.messages.length >= 1000) state.messages.splice(state.messages.findIndex(terminal), 1)
-        state.messages.push({ id: command.id, text: command.text, nativeId: randomUUID(), runId,
-          status: 'accepted', settings, fingerprint: hash })
-        if (state.run?.id === runId) state.run.inputIds.push(command.id)
-        const text = clip(command.text, 8 * 1024)
-        if (text !== command.text) state.truncated = true
-        state.entries.push({ id: command.id, runId, role: 'user', text, status: 'completed' })
-        if (state.entries.length > 256) { state.entries.shift(); state.truncated = true }
-      })
-      await flush(context)
-      if (target) { if (!await deliver(target, command.id, context)) { await fail(context, 'run_finishing'); return } }
-      else start(context)
-      replyInput(context, store.snapshot.messages.find(m => m.id === command.id)!)
     },
     async onRecover(context) { await initialize(context.session.id); await flush(context); start(context) },
   }

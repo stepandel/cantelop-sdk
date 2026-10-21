@@ -14,6 +14,10 @@ export interface ActivityLifecycle {
 }
 
 const PROVIDER_HOOK_GRACE_MS = 30_000;
+const DEFAULT_ACTIVITY_TIMEOUT_MS = 30 * 60_000;
+/** Bounds each per-activity queue: follow-up messages, queued work and steering. */
+const MAX_QUEUED = 256;
+const MAX_FOLLOWUP_BYTES = 8 * 1024 * 1024;
 
 /** Completion messages buffered by one unit of work and admitted after it settles. */
 export class FollowupMessages<Message> {
@@ -22,7 +26,7 @@ export class FollowupMessages<Message> {
 
   push(payload: Message): void {
     const size = Buffer.byteLength(JSON.stringify(payload) ?? "");
-    if (this.messages.length >= 256 || this.bytes + size > 8 * 1024 * 1024) throw new Error("activity mailbox capacity");
+    if (this.messages.length >= MAX_QUEUED || this.bytes + size > MAX_FOLLOWUP_BYTES) throw new Error("activity mailbox capacity");
     this.bytes += size;
     this.messages.push(payload);
   }
@@ -95,7 +99,7 @@ export class InMemoryActivity<Message, Event, View = unknown> {
   ): Promise<void> {
     this.validate(work, options);
     if (options.priority !== undefined && typeof options.priority !== "boolean") throw new TypeError("Invalid activity priority");
-    if (this.queued.length >= 256) throw new Error("activity queue capacity");
+    if (this.queued.length >= MAX_QUEUED) throw new Error("activity queue capacity");
     let resolve!: () => void;
     let reject!: (reason: unknown) => void;
     const completion = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
@@ -115,7 +119,7 @@ export class InMemoryActivity<Message, Event, View = unknown> {
     const target = this.current;
     if (!target || target.settled || target.controller.signal.aborted) throw new Error("No steerable activity is active");
     if (!target.onSteer) throw new Error("Active activity has no steering adapter");
-    if (target.steeringCount >= 256) throw new Error("activity steering capacity");
+    if (target.steeringCount >= MAX_QUEUED) throw new Error("activity steering capacity");
     target.steeringCount++;
     const delivery = target.steering.then(async () => {
       target.controller.signal.throwIfAborted();
@@ -170,7 +174,7 @@ export class InMemoryActivity<Message, Event, View = unknown> {
 
   private validate(work: SessionActivityFunction<Message, Event, View>, options: SessionActivityOptions<Message>): void {
     if (typeof work !== "function") throw new TypeError("Activity work must be a function");
-    validateTimeout(options.timeoutMs ?? 1_800_000);
+    validateTimeout(options.timeoutMs ?? DEFAULT_ACTIVITY_TIMEOUT_MS);
     if (options.onCancel !== undefined && typeof options.onCancel !== "function") throw new TypeError("Activity onCancel must be a function");
     if (options.onSteer !== undefined && typeof options.onSteer !== "function") throw new TypeError("Activity onSteer must be a function");
   }
@@ -189,7 +193,7 @@ export class InMemoryActivity<Message, Event, View = unknown> {
     observe: (event: ActivityLifecycle) => void,
     reject?: (reason: unknown) => void,
   ): void {
-    const timeout = options.timeoutMs ?? 1_800_000;
+    const timeout = options.timeoutMs ?? DEFAULT_ACTIVITY_TIMEOUT_MS;
     const controller = new AbortController();
     const activity: ActiveActivity<Message> = {
       id: randomUUID(), messageId, observe, controller, messages: new FollowupMessages<Message>(),

@@ -30,12 +30,19 @@ interface Reservation {
   settled: Promise<void>;
   reply?: { value: unknown };
 }
+const MAX_PENDING_BYTES = 8 * 1024 * 1024;
+const MAX_TIMEOUT_MS = 604_800_000;
+/** A caller deadline may exceed the local timeout by this much to absorb clock skew. */
+const DEADLINE_SKEW_MS = 30_000;
+
 /** Reservations and outcomes live until this sandbox retires. Never evict IDs. */
 export class RuntimeMessages {
   private pendingBytes = 0;
   private completionGeneration = 0;
   private readonly completionWaiters = new Set<() => void>();
   private readonly records = new Map<string, Reservation>();
+  /** Unsettled receipts, so work() does not scan every retained record. */
+  private readonly unsettled = new Set<MessageReceipt>();
   constructor(
     readonly sandboxId: string,
     private readonly timeoutMs = 300_000,
@@ -47,7 +54,7 @@ export class RuntimeMessages {
     if (
       !Number.isSafeInteger(timeoutMs) ||
       timeoutMs < 1 ||
-      timeoutMs > 604_800_000
+      timeoutMs > MAX_TIMEOUT_MS
     )
       throw new Error("invalid message execution timeout");
   }
@@ -76,7 +83,7 @@ export class RuntimeMessages {
     }
     if (
       this.records.size >= this.maxMessages ||
-      this.pendingBytes + bytes > 8 * 1024 * 1024
+      this.pendingBytes + bytes > MAX_PENDING_BYTES
     )
       throw new RuntimeProtocolError(429, "mailbox_capacity");
     const now = Date.now();
@@ -85,7 +92,7 @@ export class RuntimeMessages {
     if (
       !Number.isFinite(expires) ||
       expires <= now ||
-      expires > now + this.timeoutMs + 30_000
+      expires > now + this.timeoutMs + DEADLINE_SKEW_MS
     )
       throw new RuntimeProtocolError(400, "invalid_execution_deadline");
     const controller = new AbortController();
@@ -105,6 +112,7 @@ export class RuntimeMessages {
     });
     receipt.generation = delivery.generation;
     this.pendingBytes += bytes;
+    this.unsettled.add(receipt);
     const timer = setTimeout(() => this.cancel(id), expires - now);
     timer.unref();
     const settled = delivery.settled
@@ -118,6 +126,7 @@ export class RuntimeMessages {
       )
       .finally(() => {
         receipt.settled_at = new Date().toISOString();
+        this.unsettled.delete(receipt);
         clearTimeout(timer);
         this.pendingBytes -= bytes;
         this.completionGeneration++;
@@ -152,19 +161,14 @@ export class RuntimeMessages {
     return { generation: this.completionGeneration };
   }
   work() {
-    const active = [...this.records.values()]
-      .map((record) => record.receipt)
-      .filter((receipt) =>
-        ["queued", "running", "cancelling"].includes(receipt.state),
-      );
-    if (!active.length) return null;
-    const deadline = active.map((r) => r.deadline).sort()[0]!;
-    const cancellation_requested_at = active
-      .flatMap((r) =>
-        r.cancellation_requested_at ? [r.cancellation_requested_at] : [],
-      )
-      .sort()[0];
-    return { deadline, cancellation_requested_at };
+    let deadline: string | undefined, cancellation_requested_at: string | undefined;
+    for (const receipt of this.unsettled) {
+      if (!["queued", "running", "cancelling"].includes(receipt.state)) continue;
+      if (deadline === undefined || receipt.deadline < deadline) deadline = receipt.deadline;
+      const requested = receipt.cancellation_requested_at;
+      if (requested && (cancellation_requested_at === undefined || requested < cancellation_requested_at)) cancellation_requested_at = requested;
+    }
+    return deadline === undefined ? null : { deadline, cancellation_requested_at };
   }
   get(id: string): MessageReceipt {
     const record = this.records.get(id);

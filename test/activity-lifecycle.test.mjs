@@ -3,7 +3,7 @@ import test from 'node:test';
 import { InMemoryActivity } from '../dist/activity.js';
 import { createSessionRuntimeHandler } from '../dist/runtime.js';
 import { createServer } from 'node:http';
-const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+import { nextTurn as tick } from './helpers.mjs';
 
 test('activity records start, failure, completion and cooperative cancellation separately', async () => {
  for (const outcome of ['completed', 'failed', 'cancelled']) {

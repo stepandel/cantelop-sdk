@@ -3,25 +3,35 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import { parseArgs, promisify } from "node:util";
+import { SYNC_HELPER_TARGETS } from "./build-sync-helper.mjs";
 
 const runCommand = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
 const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+// --prebuilt qualifies the existing `pnpm build:release` output instead of
+// running the npm prepare lifecycle again; --out keeps the qualified tarball so
+// release automation publishes exactly what was tested.
+const { values: flags } = parseArgs({ options: { prebuilt: { type: "boolean" }, out: { type: "string" } } });
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-sdk-package-"));
+const packDestination = flags.out ? path.resolve(flags.out) : temporary;
+if (flags.out) await mkdir(packDestination, { recursive: true });
 
 try {
   const { stdout } = await runCommand(
     "npm",
-    ["pack", "--json", "--foreground-scripts=false", "--pack-destination", temporary],
+    ["pack", "--json", "--foreground-scripts=false", ...(flags.prebuilt ? ["--ignore-scripts"] : []), "--pack-destination", packDestination],
     { cwd: root, maxBuffer: 1024 * 1024 },
   );
   const [pack] = JSON.parse(stdout);
+  // The packed protocol versions must match this build; the literal values are pinned by the unit tests.
+  const { CANTELOP_CLI_BUILD_PROTOCOL_VERSION } = await import("../dist/build.js");
+  const { CANTELOP_INTEGRATION_PROTOCOL_VERSION } = await import("../dist/index.js");
   assert.equal(pack.name, "@cantelop/sdk");
   assert.equal(pack.version, manifest.version);
   assert.ok(pack.size > 0);
   const paths = pack.files.map(({ path: file }) => file);
-  for (const target of ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64']) {
+  for (const target of SYNC_HELPER_TARGETS) {
     const binary = pack.files.find(file => file.path === `dist/native/${target}/sync-helper`);
     assert.ok(binary, `${target} sync helper is not packed`);
     assert.ok(binary.mode & 0o111, `${target} sync helper is not executable`);
@@ -55,7 +65,7 @@ try {
   await writeFile(path.join(consumer, "package.json"), '{"private":true,"type":"module"}\n');
   await runCommand(
     "npm",
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", path.join(temporary, pack.filename)],
+    ["install", "--ignore-scripts", "--no-audit", "--no-fund", path.join(packDestination, pack.filename)],
     { cwd: consumer, maxBuffer: 1024 * 1024 },
   );
   await writeFile(path.join(consumer, "definition.mjs"), [
@@ -73,11 +83,13 @@ try {
     'import * as build from "@cantelop/sdk/build";',
     'import * as sessionSDK from "@cantelop/sdk/session";',
     'import * as runtime from "@cantelop/sdk/runtime";',
-    'assert.equal(build.CANTELOP_CLI_BUILD_PROTOCOL_VERSION, 6);',
+    `assert.equal(build.CANTELOP_CLI_BUILD_PROTOCOL_VERSION, ${CANTELOP_CLI_BUILD_PROTOCOL_VERSION});`,
     'assert.equal(typeof build.watchLocalProject, "function");',
     'assert.equal(typeof sdk.CantelopClient, "function");',
     'assert.deepEqual(Object.keys(runtime).sort(), ["createSessionDatabase", "createSessionRuntimeHandler", "serveSessionRuntime"]);',
     'await import("@cantelop/sdk/harnesses/claude/protocol");',
+    'const nativeHarness = await import("@cantelop/sdk/harnesses/native");',
+    'for (const name of ["CliHarness", "ConversationStore", "TurnQueue", "loginTerminal", "nativeAuth", "nativeEnvironment", "runAuthCommand", "runJsonProcess", "writeDurableJson"]) assert.equal(typeof nativeHarness[name], "function", name);',
     'const edge = await build.buildEdgeApi({ definition: "./definition.mjs", outdir: "./edge" });',
     'assert.equal(edge.manifest.kind, "cantelop-protocol-edge");',
     'assert.equal((await import(new URL(edge.mainModule, `file://${process.cwd()}/`))).default.fetch instanceof Function, true);',
@@ -106,6 +118,11 @@ try {
     'async function syncProject(workspace: import("@cantelop/sdk").WorkspaceRef<unknown>) { const sync: import("@cantelop/sdk").WorkspaceSync = await workspace.sync({localDirectory:".",ignore:["dist"]}); await sync.ready(); await sync.flush(); const status: import("@cantelop/sdk").WorkspaceSyncStatus = sync.status(); await sync.stop(); return status; }',
     'import { createClaudeHarness, createClaudeRuntime, claudeAuth, claudeDockerfile, NativeClaude, type ClaudeMessage, type ClaudeEvent, type ClaudeHarnessOptions, type ClaudeHarnessFactoryOptions } from "@cantelop/sdk/harnesses/claude";',
     'const claudeApp = new CantelopClient().app<ClaudeMessage, ClaudeEvent>({name:"claude-agent",runtime:{create:createClaudeHarness},auth:claudeAuth,dockerfile:claudeDockerfile});',
+    'import { CliHarness, TurnQueue, nativeEnvironment, type NativeEnvironmentHook, type NativeEvent, type NativeTurn } from "@cantelop/sdk/harnesses/native";',
+    'const codexHome: NativeEnvironmentHook = (env, workspace) => ({ CODEX_HOME: `${workspace}/.codex` });',
+    'class PackedNative extends CliHarness { protected async execute(turn: NativeTurn) { const event: NativeEvent = { type: "env", home: nativeEnvironment("/workspace", codexHome).CODEX_HOME }; await turn.emit(event); } }',
+    'const packedTurns = new TurnQueue<string, NativeEvent>(async () => {});',
+    'void [new PackedNative(), packedTurns.active];',
     'import { ClaudeSessionOutput, validateClaudeSessionConfig, type ClaudeSessionCommand, type ClaudeSessionEvent, type ClaudeSessionReply, type ClaudeSessionView } from "@cantelop/sdk/harnesses/claude/protocol";',
     'const durableClaudeApp = new CantelopClient().app<ClaudeSessionCommand,ClaudeSessionEvent,ClaudeSessionReply,ClaudeSessionView>({name:"durable-claude",runtime:createClaudeRuntime({workspace:"/workspace"}),auth:claudeAuth,dockerfile:claudeDockerfile});',
     'const taskSettings: import("@cantelop/sdk/harnesses/claude/protocol").ClaudeSessionSettings = {allowedTools:["mcp__canvas__*"],mcps:{canvas:{type:"http",url:"https://canvas.example/mcp",headers:{Authorization:"Bearer scoped-token"}}},model:"sonnet",systemPrompt:"Task rules",maxTurns:8};',
@@ -151,7 +168,6 @@ try {
     '// App is the typed Workspace/Session owner.',
     'type TypedApp = import("@cantelop/sdk").App<unknown>;',
     'new CantelopClient().app({ name: "first-agent", runtime, connection });',
-    'new CantelopClient().app({ name: "first-agent", runtime, connection });',
     '// @ts-expect-error App selectors require exactly one ID or slug.',
     'new CantelopClient().app({ name: "first-agent", runtime, id: "app_0123456789abcdef0123456789abcdef", slug: "support-agent" });',
     'const home: import("@cantelop/sdk").HomepageHandler<{prompt:string}> = ({app, request}) => new Response(app.name);',
@@ -174,7 +190,7 @@ try {
     'await session.cancel();',
     '// @ts-expect-error Cancellation targets the active run, not a message.',
     'session.cancel(receipt.id);',
-    'const command: AppCommandEnvelope<{ prompt: string }> = { protocolVersion: 2, id: receipt.id, workspace: { slug: "customer" }, session: { id: session.id }, command: { type: "steer", message: { prompt: "focus" } } };',
+    `const command: AppCommandEnvelope<{ prompt: string }> = { protocolVersion: ${CANTELOP_INTEGRATION_PROTOCOL_VERSION}, id: receipt.id, workspace: { slug: "customer" }, session: { id: session.id }, command: { type: "steer", message: { prompt: "focus" } } };`,
     'const view = await session.view();',
     'const updatedAt: Date = view.updatedAt;',
     'const entries: string[] = view.state.entries;',
@@ -203,7 +219,7 @@ try {
     'import assert from "node:assert/strict";',
     'import { writeFile } from "node:fs/promises";',
     'import { CantelopClient, CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "@cantelop/sdk";',
-    'assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, 2);',
+    `assert.equal(CANTELOP_INTEGRATION_PROTOCOL_VERSION, ${CANTELOP_INTEGRATION_PROTOCOL_VERSION});`,
     'const runtime = { receive() {} };',
 
     'let calls = 0;',
@@ -212,7 +228,7 @@ try {
     '  assert.equal(new URL(request.url).pathname, "/commands/dispatch");',
     '  const body = await request.json();',
     '  assert.equal(body.workspace.id, "wsp_0123456789abcdef0123456789abcdef");',
-    '  return Response.json({ protocolVersion: 2, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });',
+    `  return Response.json({ protocolVersion: ${CANTELOP_INTEGRATION_PROTOCOL_VERSION}, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });`,
     '} } });',
     'assert.equal(app.name, "first-agent");',
     'const session = app.workspace({ id: "wsp_0123456789abcdef0123456789abcdef" }).session({ keepAliveSeconds: 0 });',
@@ -228,7 +244,7 @@ try {
     '  assert.ok(["dispatch", "steer"].map(type => `https://packed-app.cantelop.dev/commands/${type}`).includes(request.url));',
     '  assert.equal(request.headers.get("authorization"), "Bearer packed-integration-token");',
     '  const body = await request.json();',
-    '  return Response.json({ protocolVersion: 2, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });',
+    `  return Response.json({ protocolVersion: ${CANTELOP_INTEGRATION_PROTOCOL_VERSION}, id: body.id, status: "accepted", accepted_at: "2026-10-09T00:00:00Z" });`,
     '};',
     'const automatic = new CantelopClient().app({ name: "packed-app", runtime }).workspace({ slug: "customer" }).session();',
     'assert.equal((await automatic.dispatch({ prompt: "configured" })).state, "accepted");',
@@ -240,7 +256,7 @@ try {
   assert.equal(artifactManifest.kind, "cantelop-session-runtime");
   assert.equal(artifactManifest.schema_version, 1);
   assert.equal("routes" in artifactManifest, false);
-  assert.equal(artifactManifest.cli_build_protocol_version, 6);
+  assert.equal(artifactManifest.cli_build_protocol_version, CANTELOP_CLI_BUILD_PROTOCOL_VERSION);
   process.stdout.write(`Qualified ${pack.filename} (${paths.length} files)\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });

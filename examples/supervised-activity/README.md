@@ -41,5 +41,5 @@ these lifecycle records. A successful launch-message receipt stays successful
 if its activity later fails.
 
 Run `pnpm test` for lifecycle and queue integration coverage, and
-`bun test test/bun-subprocess.test.mjs` for real Bun subprocess and HTTP health
+`bun test test/bun/subprocess.test.mjs` for real Bun subprocess and HTTP health
 coverage. These tests need no provider credentials or OpenCode installation.

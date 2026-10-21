@@ -4,8 +4,7 @@
 import { open } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { AppConfigurationError, parseAppConfiguration, type AppConfigurationDocument } from "./app-config.js";
-const MAX_BYTES = 1024 * 1024;
+import { AppConfigurationError, MAX_CONFIG_BYTES, parseAppConfiguration, type AppConfigurationDocument } from "./app-config.js";
 
 export async function loadNodeAppConfiguration(env: Readonly<Record<string, string | undefined>>): Promise<{ document?: AppConfigurationDocument }> {
   const configured = env.CANTELOP_INTEGRATION_CONFIG;
@@ -20,15 +19,16 @@ export async function loadNodeAppConfiguration(env: Readonly<Record<string, stri
       const handle = await open(profilePath, "r");
       try {
         const stat = await handle.stat();
-        if (!stat.isFile() || stat.size > MAX_BYTES || process.platform !== "win32" && (stat.mode & 0o077) !== 0) throw new AppConfigurationError("app_configuration_invalid");
-        const bytes = new Uint8Array(MAX_BYTES + 1);
+        if (!stat.isFile() || stat.size > MAX_CONFIG_BYTES || process.platform !== "win32" && (stat.mode & 0o077) !== 0) throw new AppConfigurationError("app_configuration_invalid");
+        // One spare byte detects a file that grew after stat; never trust a partial read.
+        const bytes = new Uint8Array(stat.size + 1);
         let length = 0;
         while (length < bytes.length) {
           const result = await handle.read(bytes, length, bytes.length - length, null);
           if (!result.bytesRead) break;
           length += result.bytesRead;
         }
-        if (length > MAX_BYTES) throw new AppConfigurationError("app_configuration_invalid");
+        if (length > stat.size) throw new AppConfigurationError("app_configuration_invalid");
         document = parseAppConfiguration(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length))));
       } finally { await handle.close(); }
     } catch (error) {

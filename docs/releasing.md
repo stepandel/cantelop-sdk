@@ -11,6 +11,7 @@ Run with the pinned package manager and Node.js 22 or newer:
 corepack pnpm install --frozen-lockfile
 corepack pnpm check
 corepack pnpm test
+corepack pnpm test:native
 corepack pnpm check:examples
 corepack pnpm check:package
 ```
@@ -20,7 +21,10 @@ The last command runs the real npm preparation lifecycle to create an ephemeral
 JavaScript and declaration targets in `exports` are present, rejects source and
 test directories, installs the tarball into an empty consumer, imports every
 public entrypoint, and builds matching generated Edge, native runtime and backend client artifacts. It deletes the tarball and
-consumer afterward.
+consumer afterward. Release automation instead builds once with
+`pnpm build:release`, runs `test:built` and `check:examples:built` against that
+build, qualifies it with `check:package --prebuilt --out <dir>`, and publishes
+the kept tarball, so the published bytes are the qualified bytes.
 
 The package version is explicit in `package.json`; release automation must fail
 if the tag is not exactly `sdk-v<version>`. A release commit must contain no

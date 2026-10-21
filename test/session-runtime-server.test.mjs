@@ -7,6 +7,7 @@ import {
   serveSessionRuntime,
 } from "../dist/runtime.js";
 import { InMemoryMailbox } from "../dist/mailbox.js";
+import { close, listen, nextTurn, origin, until } from "./helpers.mjs";
 
 const sandboxID = "sbx-" + "1".repeat(32);
 process.env.CANTELOP_SANDBOX_ID = sandboxID;
@@ -81,7 +82,7 @@ test("a request reply is retained separately from streamed output", async (t) =>
     body: JSON.stringify({ ...messageEnvelope({ check: "auth" }), reply: true }),
   });
   assert.equal(accepted.status, 202);
-  await waitFor(async () => {
+  await until(async () => {
     const status = await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`);
     return (await status.json()).state === "succeeded";
   });
@@ -98,7 +99,7 @@ test("a request without exactly one reply fails", async (t) => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...messageEnvelope({}), reply: true }),
   });
-  await waitFor(async () => {
+  await until(async () => {
     const status = await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`);
     return (await status.json()).state === "failed";
   });
@@ -298,7 +299,7 @@ test("runtime activity keeps the Session active while steer and cancel messages 
     "msg_11111111111111111111111111111111",
     { type: "steer" },
   );
-  await waitFor(() => handled.length === 2);
+  await until(() => handled.length === 2);
   const cancel = send(
     "msg_22222222222222222222222222222222",
     { type: "cancel" },
@@ -306,7 +307,7 @@ test("runtime activity keeps the Session active while steer and cancel messages 
 
   assert.equal((await steer).status, 202);
   assert.equal((await cancel).status, 202);
-  await waitFor(() => handled.length === 4);
+  await until(() => handled.length === 4);
   assert.deepEqual(handled, ["start", "steer", "cancel", "cancelled"]);
   assert.deepEqual(sequences, [1, 2, 3, 4]);
 });
@@ -345,7 +346,7 @@ test("message and activity send capabilities close when their work settles", asy
   );
 
   finishActivity();
-  await waitFor(() => invocation.activity.active === false);
+  await until(() => invocation.activity.active === false);
   assert.throws(
     () => activity.send({ type: "late" }),
     /activity has already settled/,
@@ -395,12 +396,14 @@ test("the platform can wait for generation-fenced runtime quiescence", async (t)
     quiescenceSettled = true;
     return response;
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // A runtime status round trip, not a sleep: the wait must still be open and the runtime busy.
+  const busy = async () => (await (await fetch(`${origin(server)}/__cantelop/v2/runtime`)).json()).quiescent;
+  assert.equal(await busy(), false);
   assert.equal(quiescenceSettled, false);
 
   finishActivity();
-  await waitFor(() => handled.includes("completed"));
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await until(() => handled.includes("completed"));
+  assert.equal(await busy(), false);
   assert.equal(quiescenceSettled, false);
 
   finishSelfMessage();
@@ -443,7 +446,7 @@ test("the mailbox records internal queue timing without exposing a queued state"
   const first = mailbox.enqueue("first", async () => firstReleased);
   const second = mailbox.enqueue("second", async () => undefined);
   assert.equal(mailbox.enqueue("second", async () => undefined), second);
-  await waitFor(() => events.some((event) => event.type === "handling"));
+  await until(() => events.some((event) => event.type === "handling"));
   releaseFirst();
   await Promise.all([first, second]);
 
@@ -486,7 +489,7 @@ test("one Session runtime processes its Session mailbox in FIFO order", async (t
       body: JSON.stringify(messageEnvelope({ type: "message" })),
     },
   );
-  await waitFor(() => started.length === 1);
+  await until(() => started.length === 1);
   const secondMessageId = "msg_fedcba9876543210fedcba9876543210";
   const second = fetch(
     `${origin(server)}/__cantelop/v2/messages`,
@@ -497,12 +500,13 @@ test("one Session runtime processes its Session mailbox in FIFO order", async (t
     },
   );
 
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // Admission answers immediately; the steer must still wait behind the first message.
+  assert.equal((await second).status, 202);
+  await nextTurn();
   assert.deepEqual(started, ["message"]);
   releaseFirst();
   assert.equal((await first).status, 202);
-  assert.equal((await second).status, 202);
-  await waitFor(() => started.length === 2);
+  await until(() => started.length === 2);
   assert.deepEqual(started, ["message", "steer"]);
 });
 
@@ -527,14 +531,14 @@ test("one Session runtime deduplicates a message ID for its activation", async (
   });
 
   const first = request();
-  await waitFor(() => calls === 1);
+  await until(() => calls === 1);
   const duplicate = request();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await duplicate).status, 202);
+  await nextTurn();
   assert.equal(calls, 1);
 
   release();
   assert.equal((await first).status, 202);
-  assert.equal((await duplicate).status, 202);
   const completedDuplicate = await request();
   assert.equal(completedDuplicate.status, 202);
   assert.equal((await completedDuplicate.json()).generation, 1);
@@ -759,22 +763,6 @@ test("serveSessionRuntime rejects an invalid inherited listener descriptor", () 
   }
 });
 
-function listen(server) {
-  return new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-}
-
-function close(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
-  });
-}
-
-function origin(server) {
-  const address = server.address();
-  assert.equal(typeof address, "object");
-  return `http://127.0.0.1:${address.port}`;
-}
-
 function messageEnvelope(payload, sessionId = "thread", id = messageId, observability) {
   return {
     session: {
@@ -796,13 +784,7 @@ function traceContext() {
   };
 }
 
-async function waitFor(predicate) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("condition was not reached");
-}
+
 
 
 test("local and hosted DB credentials preserve in-memory Message admission", async (t) => {
@@ -854,7 +836,7 @@ test("activation restores tracked work once while subsequent intake remains resp
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(envelope),
     });
     assert.equal(response.status, 202);
-    await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${envelope.message.id}`)).json()).state === "succeeded");
+    await until(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${envelope.message.id}`)).json()).state === "succeeded");
   }
   assert.equal(activations, 1);
   assert.deepEqual(received, ["steer", "cancel"]);
@@ -884,7 +866,7 @@ test("failed activation fences later intake in the same incarnation", async (t) 
     });
     assert.equal(response.status, 202);
     let state;
-    await waitFor(async () => ["succeeded", "failed"].includes(state = (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${envelope.message.id}`)).json()).state));
+    await until(async () => ["succeeded", "failed"].includes(state = (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${envelope.message.id}`)).json()).state));
     states.push(state);
   }
   assert.deepEqual(states, ["failed", "failed"]);
@@ -922,10 +904,10 @@ test("activity steering and run cancellation share a responsive runtime process"
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
     });
     assert.equal(response.status, 202);
-    await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(n)}`)).json()).state === "succeeded");
+    await until(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(n)}`)).json()).state === "succeeded");
   };
   await send(101, { type: "dispatch", message: { prompt: "hold" } });
-  await waitFor(() => activeSignal !== undefined);
+  await until(() => activeSignal !== undefined);
   await send(102, { type: "dispatch", message: { prompt: "queued" } });
   await send(103, { type: "steer", message: { prompt: "change direction" } });
   assert.equal(activeSignal.aborted, false);
@@ -933,8 +915,8 @@ test("activity steering and run cancellation share a responsive runtime process"
   await send(104, { type: "cancel" });
   const reply = await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(104)}/reply`)).json();
   assert.equal(reply.reply.state, "requested");
-  await waitFor(() => activeSignal.aborted);
-  await waitFor(() => calls.some(call => call.work === "queued"));
+  await until(() => activeSignal.aborted);
+  await until(() => calls.some(call => call.work === "queued"));
   assert.equal(new Set(calls.map(call => call.pid)).size, 1);
   await send(106, { type: "cancel" });
   assert.equal((await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(106)}/reply`)).json()).reply.state, "idle");
@@ -968,10 +950,10 @@ test("activity queue keeps intake responsive, preserves priority, and runs one h
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
     });
     assert.equal(result.status, 202);
-    await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(n)}`)).json()).state === "succeeded");
+    await until(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${id(n)}`)).json()).state === "succeeded");
   };
   await send(301, { type: "dispatch", message: { prompt: "hold" } });
-  await waitFor(() => signal !== undefined);
+  await until(() => signal !== undefined);
   await send(302, { type: "dispatch", message: { prompt: "ordinary" } });
   await send(303, { type: "steer", message: { prompt: "priority" } });
   assert.deepEqual(received, ["hold", "ordinary", "priority"]);
@@ -979,7 +961,7 @@ test("activity queue keeps intake responsive, preserves priority, and runs one h
   const busy = await (await fetch(`${origin(server)}/__cantelop/v2/runtime`)).json();
   assert.equal(busy.quiescent, false);
   await send(304, { type: "cancel" });
-  await waitFor(() => worked.length === 3);
+  await until(() => worked.length === 3);
   assert.deepEqual(worked, ["hold", "priority", "ordinary"]);
   assert.equal(peak, 1);
 });
@@ -998,10 +980,35 @@ test("activity scheduling capabilities close with intake while queued work keeps
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(messageEnvelope({})),
   });
   assert.equal(response.status, 202);
-  await waitFor(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`)).json()).state === "succeeded");
+  await until(async () => (await (await fetch(`${origin(server)}/__cantelop/v2/messages/${messageId}`)).json()).state === "succeeded");
   assert.throws(() => capability.queue(() => undefined), /invocation.*settled/);
   assert.throws(() => capability.start(() => undefined), /invocation.*settled/);
   assert.throws(() => capability.cancel(), /invocation.*settled/);
   assert.equal(queuedContext.signal.aborted, false);
   release();
+});
+
+test("closing the runtime answers open long polls instead of waiting for them", async () => {
+  const previous = process.env.CANTELOP_INTERNAL_PORT;
+  const reservation = createServer();
+  await listen(reservation);
+  const port = reservation.address().port;
+  await close(reservation);
+  process.env.CANTELOP_INTERNAL_PORT = String(port);
+  try {
+    const runtime = serveSessionRuntime(behaviour(async () => undefined));
+    await runtime.ready;
+    const received = new Promise(resolve => runtime.server.once("request", resolve));
+    const poll = fetch(`http://127.0.0.1:${port}/__cantelop/v2/runtime/events?after=0`);
+    await received;
+    const started = Date.now();
+    await runtime.close();
+    assert.ok(Date.now() - started < 5_000, "close waited for the long poll window");
+    const response = await poll;
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: { code: "runtime_closing" } });
+  } finally {
+    if (previous === undefined) delete process.env.CANTELOP_INTERNAL_PORT;
+    else process.env.CANTELOP_INTERNAL_PORT = previous;
+  }
 });
