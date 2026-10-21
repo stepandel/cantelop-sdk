@@ -1,5 +1,8 @@
 import { RemoteAppError } from "./transport.js";
-import { MAX_REQUEST_TIMEOUT_MS, type ENVIRONMENT_COMMAND_TYPES } from "./integration-protocol.js";
+import { MAX_REQUEST_TIMEOUT_MS } from "./integration-protocol.js";
+
+import type { EnvironmentCommand } from "./environment-command.js";
+export { ENVIRONMENT_COMMAND_TYPES, validateEnvironmentCommand, type EnvironmentCommand, type EnvironmentCommandType } from "./environment-command.js";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 120_000;
 const FIRST_POLL_DELAY_MS = 250;
@@ -16,11 +19,6 @@ export interface EnvironmentUpdate {
   readonly revision: number;
   readonly status: "pending" | "applied" | "failed";
 }
-export type EnvironmentCommandType = (typeof ENVIRONMENT_COMMAND_TYPES)[number];
-export type EnvironmentCommand =
-  | { readonly type: "app.environment.set"; readonly name: string; readonly value: string; readonly secret: boolean }
-  | { readonly type: "app.environment.unset"; readonly name: string; readonly secret: boolean }
-  | { readonly type: "app.environment.status"; readonly revision: number };
 export interface AppEnvironment {
   set(name: string, value: string, options?: EnvironmentCommandOptions & { readonly secret?: boolean }): Promise<EnvironmentUpdate>;
   unset(name: string, options?: EnvironmentCommandOptions & { readonly secret?: boolean }): Promise<EnvironmentUpdate>;

@@ -106,3 +106,33 @@ Roll out the platform's App-scoped environment gateway and redeploy the App with
 SDK 1.4.0 once before using this API. Later environment changes require no build
 or deployment. These APIs manage a deployed App; local `cantelop dev` environment
 configuration continues to come from its local environment file.
+
+
+## Bind a compiled definition to a managed service
+
+`app.runtimeId` exposes the compiler fingerprint (or `undefined` for an
+uncompiled definition). A managed service can use this to require an exact
+client/runtime pair before provisioning or accepting work.
+
+`app.connect({ fetch })` returns a new App with the same compiled runtime,
+auth declaration and environment definition, bound to a trusted transport. The
+original App and previously created Workspace/Session references keep their
+connections. Capture one account/installation in that transport for its whole
+lifetime; a later account switch should construct another App.
+
+```ts
+const installation = await bootstrap({ runtimeId: app.runtimeId });
+const scoped = app.connect({
+  fetch(request) {
+    return relayForInstallation(installation, request);
+  },
+});
+await scoped.workspace({ slug: "project" }).resolve();
+```
+
+`@cantelop/sdk/protocol` exports the versioned command and sync validators for
+services that relay SDK traffic. `validateCommandRequest(method, url, body)`
+checks the path, method, query, size and envelope together, including that the
+envelope's command type matches its path; authorize account membership and bind server credentials independently. The
+validators do not authenticate a request. Preserve streams, backpressure,
+submission IDs and cancellation, and do not replay an ambiguous mutation.

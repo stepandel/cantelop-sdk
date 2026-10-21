@@ -68,6 +68,16 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
 
   get name(): string { return this.#options.name; }
   get runtime(): SessionRuntime<Message, Event, Reply, View> { return this.#options.runtime; }
+  /** Compiled code/contract identity, independent of the physical deployment. */
+  get runtimeId(): string | undefined { return this.#options.runtimeId; }
+
+  /** Reuse the validated definition while replacing only its trusted transport. */
+  connect(connection: AppConnection): App<Message, Event, Reply, View> {
+    if (!connection || typeof connection.fetch !== "function") throw new TypeError("An App connection is required");
+    const { connection: _connection, edgeUrl: _url, accessToken: _token, ...definition } = this.#options;
+    return new App(Object.freeze({ ...definition, connection }), connection);
+  }
+
 
   /** Created by `CantelopClient.app()` (or the Edge Worker) from options validated once by normalizeAppOptions. */
   constructor(options: NormalizedAppOptions<Message, Event, Reply, View>, connection: AppConnection) {
@@ -77,8 +87,7 @@ export class App<Message = unknown, Event = never, Reply = never, View = unknown
   }
 
   environment(): AppEnvironment {
-    // App-scoped commands do not depend on Sandbox runtime compatibility, so they carry no runtime identity.
-    const commands = commandChannel(this.#connection, {});
+    const commands = this.#commands;
     return createAppEnvironment(async (command, options = {}) => {
       options.signal?.throwIfAborted();
       const envelope: AppEnvironmentEnvelope = { protocolVersion: PROTOCOL_VERSION, id: options.id ?? messageID(), workspace: null, session: null, command };

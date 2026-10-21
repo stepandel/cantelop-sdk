@@ -1,6 +1,6 @@
 import type { AppCommandEnvelope, AppEnvironmentEnvelope, WorkspaceSelector } from "./integration.js";
+import { ENVIRONMENT_COMMAND_TYPES, validateEnvironmentCommand, type EnvironmentCommand } from "./environment-command.js";
 import { isRecord, MESSAGE_ID_PATTERN, WORKSPACE_ID_PATTERN } from "./shared.js";
-import type { EnvironmentCommand } from "./environment.js";
 import { isAuthCommand } from "./runtime-command.js";
 import { AUTH_SESSION_ID } from "./native-auth.js";
 
@@ -12,20 +12,10 @@ export const MAX_REQUEST_TIMEOUT_MS = 300_000;
 export const MAX_KEEP_ALIVE_SECONDS = 604_800;
 /** Bound on one encoded command envelope. */
 export const MAX_COMMAND_BYTES = 1024 * 1024;
-const MAX_ENVIRONMENT_VALUE_BYTES = 64 * 1024;
-const ENVIRONMENT_NAME_PATTERN = /^(?!CANTELOP_)[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const encoder = new TextEncoder();
 
-export const ENVIRONMENT_COMMAND_TYPES = Object.freeze(["app.environment.set", "app.environment.unset", "app.environment.status"] as const);
-export function validateEnvironmentCommand(command: EnvironmentCommand): void {
-  if (command.type === "app.environment.status") {
-    if (!Number.isSafeInteger(command.revision) || command.revision < 0) throw new TypeError("Invalid environment revision");
-    return;
-  }
-  if (typeof command.name !== "string" || !ENVIRONMENT_NAME_PATTERN.test(command.name) || typeof command.secret !== "boolean") throw new TypeError("Invalid environment name or kind");
-  if (command.type === "app.environment.set" && (typeof command.value !== "string" || command.value.includes("\0") || encoder.encode(command.value).byteLength > MAX_ENVIRONMENT_VALUE_BYTES)) throw new TypeError("Invalid environment value");
-}
+export { ENVIRONMENT_COMMAND_TYPES, validateEnvironmentCommand } from "./environment-command.js";
 /** Each command has its own path so every layer between backend and Edge can see the operation. */
 export const APP_COMMAND_PATH_PREFIX = "/commands/";
 export const WORKSPACE_COMMAND_TYPES = Object.freeze(["workspace.resolve", "workspace.database", "workspace.inspect", "workspace.delete"] as const);
@@ -129,4 +119,16 @@ export function validateCommand(value: unknown): ProtocolEnvelope {
   }
   if (Object.keys(command).some(key => !keys.includes(key))) throw new TypeError("Invalid command fields");
   return { ...value, workspace } as AppCommandEnvelope;
+}
+/** Validate a relayed command as a whole: a bounded JSON POST to the path of the envelope's own command type. */
+export function validateCommandRequest(method: string, url: URL, body: Uint8Array): ProtocolEnvelope {
+  const type = appCommandType(url.pathname);
+  if (method !== "POST" || type === undefined || url.search) throw new TypeError("Invalid command route");
+  if (body.byteLength > MAX_COMMAND_BYTES) throw new TypeError("Command exceeds 1 MiB");
+  let value: unknown;
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)); }
+  catch { throw new TypeError("Invalid command JSON"); }
+  const envelope = validateCommand(value);
+  if (envelope.command.type !== type) throw new TypeError("Command type does not match its path");
+  return envelope;
 }
