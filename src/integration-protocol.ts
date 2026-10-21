@@ -5,6 +5,8 @@ import { isAuthCommand } from "./runtime-command.js";
 import { AUTH_SESSION_ID } from "./native-auth.js";
 
 export const CANTELOP_INTEGRATION_PROTOCOL_VERSION = 2;
+/** Fleet execution: the platform supplies a request-scoped runtime capability in `props.CANTELOP_RUNTIME`. */
+export const CANTELOP_FLEET_EXECUTION_PROTOCOL_VERSION = 1;
 /** Default and maximum time a request command waits for its reply. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export const MAX_REQUEST_TIMEOUT_MS = 300_000;
