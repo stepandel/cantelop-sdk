@@ -16,8 +16,13 @@ test("the backend integration modules have no native Session runtime dependencie
     "stream.js",
     "integration-protocol.js",
     "index.js",
-    "remote-app.js",
+    "transport.js",
     "resources.js",
+    "app.js",
+    "edge-connection.js",
+    "environment.js",
+    "webhooks.js",
+    "protocol-edge.js",
   ];
 
   for (const file of files) {

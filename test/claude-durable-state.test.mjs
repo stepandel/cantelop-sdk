@@ -82,3 +82,9 @@ test('bounded UTF-8 projections and duplicate change application support reconne
   assert.deepEqual(after,view);assert.equal(applyClaudeSessionChange(after,change),after);
   assert.throws(()=>applyClaudeSessionChange(after,{...change,revision:21}),/Invalid/);
 });
+test('a rejected mutation fails only its own transaction', async t => {
+  const { store } = await fixture(t);
+  await assert.rejects(store.commit(() => { throw new Error('invalid transition'); }), /invalid transition/);
+  await store.commit(s => { s.messages.push(input('next')); });
+  assert.equal(store.state.revision, 1); assert.equal(store.state.messages.length, 1);
+});

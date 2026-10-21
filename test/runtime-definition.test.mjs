@@ -7,6 +7,7 @@ import { CantelopClient } from "../dist/index.js";
 import { createProtocolWorker } from "../dist/protocol-edge.js";
 import { buildEdgeApi, buildSessionRuntime, buildBackendClient, buildAppArtifacts, watchLocalProject } from "../dist/build.js";
 import { compileClientDefinition, compileAppDefinitions } from "../dist/compiler.js";
+import { until } from "./helpers.mjs";
 const clientModule = new URL("../dist/client.js", import.meta.url).pathname;
 const messageId = "msg_" + "1".repeat(32);
 function command(type = "view") { return { protocolVersion: 2, id: messageId, workspace: { slug: "customer" }, session: { id: "chat" }, command: { type } }; }
@@ -162,7 +163,31 @@ test("watch follows imported runtime and type contracts and recovers after inval
   await waitFor(()=>events.length>0);
   assert.equal(events.at(-1).error,undefined);
 });
-async function waitFor(predicate) { const deadline=Date.now()+15000; while(!predicate()){if(Date.now()>deadline)throw Error('Timed out waiting for rebuild');await new Promise(resolve=>setTimeout(resolve,50));} }
+
+test("compiler resolves imports created or restored after a failed cached build", async t => {
+  const { directory, definition } = await project(t);
+  const agent = path.join(directory, "agent.ts");
+  const dependency = path.join(directory, "created.ts");
+  await writeFile(agent, "export function receive() {}");
+  await writeFile(definition, clientSource("receive", 'import { receive } from "./agent.js";'));
+  const initial = await compileClientDefinition(definition);
+
+  await writeFile(agent, 'import { marker } from "./created.js"; export function receive() { console.log(marker); }');
+  await assert.rejects(compileClientDefinition(definition), /Cannot find module '\.\/created\.js'/);
+  await writeFile(dependency, 'export const marker = "created-import-runtime";');
+  const created = await compileClientDefinition(definition);
+  assert.match(created.runtimeModule, /created-import-runtime/);
+  assert.notEqual(created.definition.id, initial.definition.id);
+
+  await rm(dependency);
+  await assert.rejects(compileClientDefinition(definition), /Cannot find module '\.\/created\.js'/);
+  await writeFile(dependency, 'export const marker = "restored-import-runtime";');
+  const restored = await compileClientDefinition(definition);
+  assert.match(restored.runtimeModule, /restored-import-runtime/);
+  assert.notEqual(restored.definition.id, created.definition.id);
+});
+
+const waitFor = predicate => until(predicate, { timeoutMs: 15_000, intervalMs: 50, message: "Timed out waiting for rebuild" });
 
 
 test("discovery accepts any App export name, preserves aliases, and deduplicates the same instance", async t => {

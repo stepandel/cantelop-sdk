@@ -91,7 +91,7 @@ The socket closes when the CLI exits. After that, ask `status()` whether sign-in
 - **Pre-connect output.** Output printed before the browser connects is kept in memory, up to 64 KiB, and delivered once it connects.
 - **Credentials.** They stay with the native CLI in the persistent Workspace, so agent Sessions in the same Workspace share them.
 
-Three examples include providers. Each runs the stock CLI under a small PTY helper with resize support (`runtime/login-pty.py`, via `examples/native-harness/login.ts`):
+Three examples include providers. Each runs the stock CLI under a small PTY helper with resize support (`runtime/login-pty.py`, via `loginTerminal` from `@cantelop/sdk/harnesses/native`):
 
 | Example | Login | Status / logout |
 |---|---|---|

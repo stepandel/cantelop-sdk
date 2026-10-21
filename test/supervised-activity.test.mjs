@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { InMemoryActivity } from '../dist/activity.js';
 import { createSupervisedAgent } from '../examples/supervised-activity/session.mjs';
-const pause=()=>new Promise(r=>setTimeout(r,5));
-const until=async fn=>{for(let i=0;i<100;i++){if(await fn())return;await pause();}assert.fail('condition not reached');};
+import { temporaryDirectory, until } from './helpers.mjs';
 
 test('example persists outcomes, sends output, and queues follow-up prompts during work',async t=>{
- const directory=await mkdtemp(join(tmpdir(),'activity-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+ const directory=await temporaryDirectory(t,'activity-');
  const started=[],output=[],gates=[];let internal=0;
  const behaviour=createSupervisedAgent({outcomeDirectory:directory,run:async(prompt,ctx)=>{
   started.push(prompt);await ctx.output.send({text:prompt});

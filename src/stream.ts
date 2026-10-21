@@ -1,6 +1,7 @@
 import type { SessionEvent, SessionStreamOptions } from "./integration.js";
-import { RemoteAppError } from "./remote-app.js";
-import { assertCursor, record } from "./integration-protocol.js";
+import { isRecord, MESSAGE_ID_PATTERN, RUNTIME_ORIGIN } from "./shared.js";
+import { RemoteAppError } from "./transport.js";
+import { assertCursor } from "./integration-protocol.js";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const encoder = new TextEncoder();
@@ -21,7 +22,7 @@ export async function* streamSessionEvents<Event>(
   let body: ReadableStream<Uint8Array> | null = null;
   try {
     controller.signal.throwIfAborted();
-    const url = new URL("https://runtime.cantelop.internal/events");
+    const url = new URL("/events", RUNTIME_ORIGIN);
     if (cursor !== undefined) {
       url.searchParams.set("stream_id", cursor.streamId);
       url.searchParams.set("after", String(cursor.sequence));
@@ -33,9 +34,11 @@ export async function* streamSessionEvents<Event>(
       let code = "event_subscription_failed";
       // Read errors through the bounded line reader as well; do not buffer an unlimited body.
       let errorBody = "";
+      let errorBytes = 0;
       if (body) for await (const line of readLines(body, controller.signal)) {
-        errorBody += line;
-        if (encoder.encode(errorBody).byteLength > MAX_FRAME_BYTES) throw invalidStream();
+        errorBody += line.text;
+        errorBytes += line.bytes;
+        if (errorBytes > MAX_FRAME_BYTES) throw invalidStream();
       }
       try {
         const error = JSON.parse(errorBody);
@@ -51,13 +54,13 @@ export async function* streamSessionEvents<Event>(
     let data: string[] = [];
     let frameBytes = 0;
     let previous = cursor;
-    for await (const line of readLines(body, controller.signal)) {
+    for await (const { text: line, bytes } of readLines(body, controller.signal)) {
       if (line === "") {
         if (data.length > 0) {
           let document: unknown;
           try { document = JSON.parse(data.join("\n")); } catch { throw invalidStream(); }
           if (eventType === "error") {
-            const code = record(document) && typeof document.code === "string" && document.code ? document.code : "event_stream_failed";
+            const code = isRecord(document) && typeof document.code === "string" && document.code ? document.code : "event_stream_failed";
             throw new RemoteAppError(code, 200);
           }
           if (eventType !== "" && eventType !== "message") throw invalidStream();
@@ -78,7 +81,7 @@ export async function* streamSessionEvents<Event>(
       let value = colon < 0 ? "" : line.slice(colon + 1);
       if (value.startsWith(" ")) value = value.slice(1);
       if (field !== "id" && field !== "event" && field !== "data") continue;
-      frameBytes += encoder.encode(line).byteLength;
+      frameBytes += bytes;
       if (frameBytes > MAX_FRAME_BYTES) throw invalidStream();
       if (field === "data") data.push(value);
       if (field === "event") eventType = value;
@@ -93,7 +96,8 @@ export async function* streamSessionEvents<Event>(
   }
 }
 
-async function* readLines(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<string> {
+/** Yields each line with its UTF-8 size, so callers bound frames without re-encoding. */
+async function* readLines(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<{ readonly text: string; readonly bytes: number }> {
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const abort = () => { void reader.cancel().catch(() => {}); };
@@ -119,7 +123,7 @@ async function* readLines(body: ReadableStream<Uint8Array>, signal: AbortSignal)
         const piece = chunk.slice(start, i);
         pendingBytes += encoder.encode(piece).byteLength;
         if (pendingBytes > MAX_FRAME_BYTES) throw invalidStream();
-        yield pending + piece;
+        yield { text: pending + piece, bytes: pendingBytes };
         pending = ""; pendingBytes = 0; start = i + 1;
         skipLF = char === "\r";
       }
@@ -127,7 +131,7 @@ async function* readLines(body: ReadableStream<Uint8Array>, signal: AbortSignal)
       pendingBytes += encoder.encode(piece).byteLength;
       if (pendingBytes > MAX_FRAME_BYTES) throw invalidStream();
       pending += piece;
-      if (done) { if (pending) yield pending; return; }
+      if (done) { if (pending) yield { text: pending, bytes: pendingBytes }; return; }
     }
   } finally {
     signal.removeEventListener("abort", abort);
@@ -137,9 +141,9 @@ async function* readLines(body: ReadableStream<Uint8Array>, signal: AbortSignal)
 }
 
 function readEvent<Event>(value: unknown, id: string, sessionId: string): SessionEvent<Event> {
-  if (!record(value) || typeof value.stream_id !== "string" || !/^[0-9a-f]{32}$/.test(value.stream_id) ||
+  if (!isRecord(value) || typeof value.stream_id !== "string" || !/^[0-9a-f]{32}$/.test(value.stream_id) ||
       !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 1 || value.session_id !== sessionId ||
-      typeof value.message_id !== "string" || !/^msg_[0-9a-f]{32}$/.test(value.message_id) ||
+      typeof value.message_id !== "string" || !MESSAGE_ID_PATTERN.test(value.message_id) ||
       typeof value.created_at !== "string" || !("data" in value) || id !== `${value.stream_id}:${value.sequence}`) throw invalidStream();
   const createdAt = new Date(value.created_at);
   if (!Number.isFinite(createdAt.valueOf())) throw invalidStream();

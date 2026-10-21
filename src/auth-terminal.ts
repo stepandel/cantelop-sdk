@@ -1,8 +1,12 @@
 /// <reference types="node" />
-import { AuthCodeLogin } from "./auth-code-login.js";
+import { AuthCodeLogin, authStatus } from "./auth-code-login.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { TERMINAL_TICKET_PATTERN, type AppAuth, type AuthCommand, type AuthContext, type AuthResult, type AuthTerminalProcess } from "./native-auth.js";
+import {
+  AUTH_TERMINAL_PATH, TERMINAL_ID_PATTERN, TERMINAL_TICKET_HEADER, TERMINAL_TICKET_PATTERN,
+  type AppAuth, type AuthCommand, type AuthContext, type AuthResult, type AuthTerminalProcess,
+} from "./native-auth.js";
+import { PTY_STOP_GRACE_MS, stopWithGrace } from "./process-stop.js";
 import type { SessionIdentity } from "./resources.js";
 import { RuntimeProtocolError } from "./runtime-messages.js";
 
@@ -14,8 +18,8 @@ const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_BUFFERED_OUTPUT = 1024 * 1024;
 
 /** Platform → Sandbox terminal routes. The platform terminates the browser's WebSocket. */
-export const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/v2\/runtime\/auth\/terminals\/(trm_[0-9a-f]{32})\/(attach|input|resize)$/;
-export const TERMINAL_TICKET_HEADER = "x-cantelop-terminal-ticket";
+export const AUTH_TERMINAL_ROUTE = new RegExp(`^${AUTH_TERMINAL_PATH}/(${TERMINAL_ID_PATTERN.source.slice(1, -1)})/(attach|input|resize)$`);
+export { TERMINAL_TICKET_HEADER };
 
 interface Terminal {
   readonly id: string;
@@ -51,11 +55,7 @@ export class AuthTerminals {
 
   async handle(command: AuthCommand, session: SessionIdentity): Promise<AuthResult> {
     const context: AuthContext = Object.freeze({ signal: this.#lifetime, session, env: this.#env });
-    const status = async (): Promise<AuthResult> => {
-      const authenticated = await this.#auth.status(context);
-      if (typeof authenticated !== "boolean") throw new TypeError("App auth status must return a boolean");
-      return { type: "status", authenticated };
-    };
+    const status = async (): Promise<AuthResult> => ({ type: "status", authenticated: await authStatus(this.#auth, context) });
     if (this.#auth.codeLogin && !this.#codeLogin) this.#codeLogin = new AuthCodeLogin(this.#auth,this.#auth.codeLogin,context,this.#changed);
     switch (command.type) {
       case "login":
@@ -163,8 +163,8 @@ export class AuthTerminals {
 
   #kill(terminal: Terminal): void {
     if (terminal.ended) return;
-    try { terminal.process.kill("SIGTERM"); } catch { /* already exited */ }
-    const force = setTimeout(() => { if (!terminal.ended) try { terminal.process.kill("SIGKILL"); } catch { /* already exited */ } }, 2_000);
+    const signal = (name: NodeJS.Signals) => { try { terminal.process.kill(name); } catch { /* already exited */ } };
+    const force = stopWithGrace(signal, { graceMs: PTY_STOP_GRACE_MS, exited: () => terminal.ended });
     force.unref?.();
     terminal.timers.push(force);
   }

@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm, access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { build } from "esbuild";
-import { buildEdgeApi, buildSessionRuntime, buildAppArtifacts, createCantelopCompilerPlugin } from "../dist/build.js";
+import { buildEdgeApi, buildSessionRuntime, buildAppArtifacts, createCantelopCompilerPlugin, CANTELOP_CLI_BUILD_PROTOCOL_VERSION } from "../dist/build.js";
+import { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "../dist/index.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cantelop-examples-"));
@@ -20,9 +21,9 @@ try {
     });
     for (const input of Object.keys(client.metafile.inputs)) {
       assert.doesNotMatch(input, /dist\/(?:build|runtime|session-runtime-server)\.js$/);
-      assert.doesNotMatch(input, /(?:src|dist)\/harnesses\/(?:cli|login|queue)\.(?:js|ts)$/);
+      assert.doesNotMatch(input, /(?:src|dist)\/harnesses\/(?:cli|login|queue|native|durable-file)\.(?:js|ts)$/);
       assert.doesNotMatch(input, /node_modules\/.*(?:@openai\/(?:agents|codex)|@anthropic-ai|@earendil-works|@opencode-ai)/);
-      assert.doesNotMatch(input, /examples\/(?:harness|native-harness|(?:codex|anthropic|opencode)\/src\/(?:agent|native))/);
+      assert.doesNotMatch(input, /examples\/(?:codex|anthropic|opencode)\/src\/(?:agent|native)/);
     }
     const session = typeof manifest.definition === "string" ? manifest.definition : manifest.definition.entrypoint;
     const artifact = await buildSessionRuntime({
@@ -39,7 +40,7 @@ try {
       assert.doesNotMatch(await readFile(edge.mainModule, "utf8"), /Suggest a concise, helpful next step/);
     }
     assert.equal(edge.manifest.kind, "cantelop-protocol-edge");
-    assert.equal(edge.manifest.integration_protocol_version, 2);
+    assert.equal(edge.manifest.integration_protocol_version, CANTELOP_INTEGRATION_PROTOCOL_VERSION);
     assert.deepEqual(JSON.parse(await readFile(edge.manifestFile, "utf8")), edge.manifest);
     if (["codex", "anthropic", "opencode"].includes(name)) {
       if (name === "anthropic") {
@@ -58,7 +59,7 @@ try {
     }
     assert.equal(artifact.manifest.kind, "cantelop-session-runtime");
     assert.doesNotMatch(await readFile(artifact.mainModule, "utf8"), /class CantelopClient/);
-    assert.equal(artifact.manifest.cli_build_protocol_version, 6);
+    assert.equal(artifact.manifest.cli_build_protocol_version, CANTELOP_CLI_BUILD_PROTOCOL_VERSION);
     assert.equal("routes" in artifact.manifest, false);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, "utf8")), artifact.manifest);
   }

@@ -1,12 +1,13 @@
 import {encodeRuntimeCommand} from "./runtime-command.js";
+import { isRecord, RUNTIME_ORIGIN, WORKSPACE_ID_PATTERN } from "./shared.js";
 import { App } from "./app.js";
+import { normalizeAppOptions, type NormalizedAppOptions } from "./app-config.js";
 import { validateAppDeploymentConfiguration, type AppEnvironmentDeclaration } from "./app-definition.js";
-import { RUNTIME_ID } from "./session-runtime-contract.js";
+import { assertRuntimeID, RUNTIME_ID, type SessionRuntime } from "./session-runtime-contract.js";
 import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
-import { assertRuntimeID } from "./session-runtime-contract.js";
-import type { SessionCommand, WorkspaceSelector } from "./integration.js";
-import { MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, record, validateCommand, type ProtocolEnvelope } from "./integration-protocol.js";
-import { workspaceAuthSessionID, COMPILED_AUTH, TERMINAL_ID_PATTERN } from "./native-auth.js";
+import type { AppConnection, SessionCommand, WorkspaceSelector } from "./integration.js";
+import { CANTELOP_INTEGRATION_PROTOCOL_VERSION as PROTOCOL_VERSION, DEFAULT_REQUEST_TIMEOUT_MS, MAX_COMMAND_BYTES, appCommandType, assertKeepAlive, validateCommand, type ProtocolEnvelope } from "./integration-protocol.js";
+import { workspaceAuthSessionID, TERMINAL_ID_PATTERN } from "./native-auth.js";
 import { MAX_SYNC_FILE_BYTES, SYNC_PUBLIC_ROUTE, validSyncRequest } from "./sync.js";
 
 const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/auth\/workspaces\/(wsp_[0-9a-f]{32})\/terminals\/(trm_[0-9a-f]{32})$/;
@@ -14,11 +15,11 @@ const AUTH_TERMINAL_ROUTE = /^\/__cantelop\/auth\/workspaces\/(wsp_[0-9a-f]{32})
 const TERMINAL_HEADERS = ["Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol"];
 
 /** Internal protocol implementation with optional App webhook ingress. */
-export interface ProtocolEdgeOptions {
+export interface ProtocolEdgeOptions<Message = unknown, Event = never, Reply = never, View = unknown> {
   readonly runtimeId: string;
   readonly appName?: string;
-  readonly webhooks?: WebhookRoutes<any, any, any, any>;
-  readonly homepage?: HomepageHandler<any, any, any, any>;
+  readonly webhooks?: WebhookRoutes<Message, Event, Reply, View>;
+  readonly homepage?: HomepageHandler<Message, Event, Reply, View>;
   readonly environment?: Readonly<Record<string, AppEnvironmentDeclaration>>;
   /** The App declares auth, enabling auth commands and the browser terminal route. */
   readonly auth?: boolean;
@@ -29,16 +30,31 @@ class EdgeFailure extends Error {
   constructor(readonly code: string, readonly status: number) { super(code); }
 }
 
+/** Webhook and homepage handlers receive this App; its runtime executes only in the Sandbox. */
+function compiledRuntime<Message, Event, Reply, View>(runtimeId: string): SessionRuntime<Message, Event, Reply, View> {
+  const runtime = { receive(): never { throw new Error("App runtime executes in the Sandbox"); }, [RUNTIME_ID]: runtimeId };
+  return runtime;
+}
+
 /** The platform supplies App authentication, defaults and trusted outbound routing. */
-export function createProtocolWorker(options: ProtocolEdgeOptions) {
+export function createProtocolWorker<Message = unknown, Event = never, Reply = never, View = unknown>(options: ProtocolEdgeOptions<Message, Event, Reply, View>) {
   assertRuntimeID(options?.runtimeId);
   const runtimeId = options.runtimeId;
   const runtimeFetch = options.fetch ?? ((request: Request) => fetch(request));
-  const origin = options.runtimeOrigin ?? "https://runtime.cantelop.internal";
-  const routes = validateWebhookRoutes(options.webhooks);
-  const environment = validateAppDeploymentConfiguration({ environment: options.environment ?? {} }).environment ?? {};
-  if (options.homepage !== undefined && typeof options.homepage !== "function") throw new TypeError("Invalid App homepage");
-  if ((Object.keys(routes).length || options.homepage) && !options.appName) throw new TypeError("Webhook App name is required");
+  const origin = options.runtimeOrigin ?? RUNTIME_ORIGIN;
+  // Validated once per Worker; each request only binds its own connection to this App definition.
+  const app: NormalizedAppOptions<Message, Event, Reply, View> | undefined = options.appName ? Object.freeze({
+    ...normalizeAppOptions<Message, Event, Reply, View>({
+      name: options.appName, runtime: compiledRuntime(runtimeId),
+      ...(options.webhooks === undefined ? {} : { webhooks: options.webhooks }),
+      ...(options.homepage === undefined ? {} : { homepage: options.homepage }),
+      ...(options.environment === undefined ? {} : { environment: options.environment }),
+    }),
+    auth: options.auth === true,
+  }) : undefined;
+  const routes = app?.webhooks ?? validateWebhookRoutes(options.webhooks);
+  const environment = app?.environment ?? validateAppDeploymentConfiguration({ environment: options.environment ?? {} }).environment ?? {};
+  if (!app && (Object.keys(routes).length || options.homepage !== undefined)) throw new TypeError("Webhook App name is required");
   async function commands(request: Request, bindings: Readonly<Record<string, unknown>>, publicOrigin = new URL(request.url).origin): Promise<Response> {
     try {
       const url = new URL(request.url);
@@ -59,11 +75,11 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         }));
         if (stream) return response;
-        if (response.status === 204) return Response.json({ protocolVersion: 2, id: envelope.id });
+        if (response.status === 204) return Response.json({ protocolVersion: PROTOCOL_VERSION, id: envelope.id });
         const value = await readPlatformJSON(response);
         if (!response.ok) return Response.json(value, { status: response.status });
-        if (!record(value)) throw new EdgeFailure("invalid_platform_response", 502);
-        return Response.json({ ...value, protocolVersion: 2 }, { status: response.status });
+        if (!isRecord(value)) throw new EdgeFailure("invalid_platform_response", 502);
+        return Response.json({ ...value, protocolVersion: PROTOCOL_VERSION }, { status: response.status });
       }
       if (workspace === null) {
         if (command.type !== "app.environment.status") {
@@ -78,8 +94,8 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         if (!response.ok) return response;
         // Only metadata crosses back, whatever else the platform includes.
         const value = await readPlatformJSON(response);
-        if (!record(value) || !Number.isSafeInteger(value.revision) || !["pending", "applied", "failed"].includes(value.status as string)) throw new EdgeFailure("invalid_platform_response", 502);
-        return Response.json({ protocolVersion: 2, id: envelope.id, revision: value.revision, status: value.status }, { headers: { "Cache-Control": "private, no-store" } });
+        if (!isRecord(value) || !Number.isSafeInteger(value.revision) || !["pending", "applied", "failed"].includes(value.status as string)) throw new EdgeFailure("invalid_platform_response", 502);
+        return Response.json({ protocolVersion: PROTOCOL_VERSION, id: envelope.id, revision: value.revision, status: value.status }, { headers: { "Cache-Control": "private, no-store" } });
       }
       async function resolveWorkspace(): Promise<string> {
         if (workspace === null) throw new EdgeFailure("invalid_command", 400);
@@ -87,7 +103,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         const response = await invoke("/__cantelop/v1/workspaces/open", "POST", { slug: workspace.slug });
         if (!response.ok) throw await remoteFailure(response);
         const value = await readPlatformJSON(response);
-        if (!record(value) || typeof value.id !== "string" || !/^wsp_[0-9a-f]{32}$/.test(value.id) || value.slug !== workspace.slug) throw new EdgeFailure("invalid_platform_response", 502);
+        if (!isRecord(value) || typeof value.id !== "string" || !WORKSPACE_ID_PATTERN.test(value.id) || value.slug !== workspace.slug) throw new EdgeFailure("invalid_platform_response", 502);
         return value.id;
       }
       if (session === null) {
@@ -112,10 +128,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
       switch (sessionCommand.type) {
         case "dispatch": case "steer": case "request": case "auth": {
           const submission = sessionCommand;
-          const defaultValue = bindings.CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS;
-          const keepAliveSeconds = submission.keepAliveSeconds ?? (typeof defaultValue === "string" && /^\d+$/.test(defaultValue) ? Number(defaultValue) : defaultValue);
-          try { assertKeepAlive(keepAliveSeconds); if (keepAliveSeconds === undefined) throw new TypeError(); }
-          catch { throw new EdgeFailure("keep_alive_not_configured", 503); }
+          const keepAliveSeconds = resolveKeepAlive(submission.keepAliveSeconds, bindings);
           if (submission.type === "auth" && !options.auth) throw new EdgeFailure("auth_not_configured", 404);
           const workspaceId = await resolveWorkspace();
           const response = await invoke(`/__cantelop/integration/v2/${submission.type === "request" || submission.type === "auth" ? "requests" : "messages"}`, "POST", {
@@ -125,7 +138,7 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           });
           if (submission.type !== "auth" || !response.ok) return response;
           const value = await readPlatformJSON(response);
-          if (!record(value) || !record(value.reply)) throw new EdgeFailure("invalid_platform_response", 502);
+          if (!isRecord(value) || !isRecord(value.reply)) throw new EdgeFailure("invalid_platform_response", 502);
           if (value.reply.type !== "terminal") return Response.json(value);
           if (typeof value.reply.terminalId !== "string" || !TERMINAL_ID_PATTERN.test(value.reply.terminalId)) throw new EdgeFailure("invalid_platform_response", 502);
           // The browser connects here directly, so the App backend never relays terminal bytes.
@@ -134,25 +147,15 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
           return Response.json({ ...value, reply: { ...value.reply, url: url.href } });
         }
         case "cancel": {
-          const cancel = sessionCommand;
-          const value = bindings.CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS;
-          const keepAliveSeconds = cancel.keepAliveSeconds ??
-            (typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value);
-          try {
-            assertKeepAlive(keepAliveSeconds);
-            if (keepAliveSeconds === undefined) throw new TypeError();
-          } catch {
-            throw new EdgeFailure("keep_alive_not_configured", 503);
-          }
           const response = await invoke(scopedPath("/requests"), "POST", {
             message: { id: envelope.id, payload: encodeRuntimeCommand({ type: "cancel" }) },
-            keep_alive_seconds: keepAliveSeconds,
-            timeout_ms: 30_000,
+            keep_alive_seconds: resolveKeepAlive(sessionCommand.keepAliveSeconds, bindings),
+            timeout_ms: DEFAULT_REQUEST_TIMEOUT_MS,
           });
           if (!response.ok) return response;
           const result = await readPlatformJSON(response);
-          if (!record(result) || !record(result.reply)) throw new EdgeFailure("invalid_platform_response", 502);
-          return Response.json({ ...result.reply, protocolVersion: 2 });
+          if (!isRecord(result) || !isRecord(result.reply)) throw new EdgeFailure("invalid_platform_response", 502);
+          return Response.json({ ...result.reply, protocolVersion: PROTOCOL_VERSION });
         }
         case "status": {
           const status = sessionCommand;
@@ -213,21 +216,22 @@ export function createProtocolWorker(options: ProtocolEdgeOptions) {
         return runtimeFetch(new Request(new URL(`/__cantelop/integration/v2/sessions/${workspaceAuthSessionID(terminal[1]!)}/auth/terminals/${terminal[2]}?workspace_id=${terminal[1]}`, origin),
           { method: "GET", headers, redirect: "manual", signal: request.signal }));
       }
-      const homepage = path === "/" ? options.homepage : undefined;
+      const homepage = path === "/" ? app?.homepage : undefined;
       const route = routes[path];
       const handle = homepage ?? route?.handle;
-      if (handle) {
+      if (handle && app) {
         const allow = homepage ? "GET, HEAD" : route!.method;
         if (homepage ? !["GET", "HEAD"].includes(request.method) : request.method !== route!.method) return new Response(null, { status: 405, headers: { Allow: allow } });
         try {
           const env = requestEnvironment(environment, bindings);
-          const runtime = { receive() { throw new Error("App runtime executes in the Sandbox"); }, [RUNTIME_ID]: runtimeId };
-          const app = new App<any, any, any, any>({ name: options.appName!, runtime, ...(options.auth ? { auth: { [COMPILED_AUTH]: true } as never } : {}), connection: {
-            fetch: command => commands(command, bindings, new URL(request.url).origin),
+          const publicOrigin = new URL(request.url).origin;
+          // Commands from this handler are served by this Worker with the current request's bindings.
+          const connection: AppConnection = {
+            fetch: command => commands(command, bindings, publicOrigin),
             ...(typeof bindings.CANTELOP_LOCAL_DATABASE_ORIGIN === "string" ? { localDatabaseOrigin: bindings.CANTELOP_LOCAL_DATABASE_ORIGIN } : {}),
-          } }, { env: {} });
+          };
           const webhookRequest = await boundedWebhookRequest(request);
-          const response = await handle(Object.freeze({ request: webhookRequest, app, env }));
+          const response = await handle(Object.freeze({ request: webhookRequest, app: new App(app, connection), env }));
           if (!(response instanceof Response)) throw new TypeError("Webhook must return a Response");
           if (homepage && request.method === "HEAD") {
             await response.body?.cancel().catch(() => {});
@@ -291,6 +295,14 @@ async function boundedWebhookRequest(request: Request): Promise<Request> {
     return new Request(request, { body });
   } finally { if (!done) await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
+/** The command's keep-alive, else the App's configured default; a Session never runs without one. */
+function resolveKeepAlive(requested: number | undefined, bindings: Readonly<Record<string, unknown>>): number {
+  const configured = bindings.CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS;
+  const keepAliveSeconds = requested ?? (typeof configured === "string" && /^\d+$/.test(configured) ? Number(configured) : configured);
+  try { assertKeepAlive(keepAliveSeconds); } catch { throw new EdgeFailure("keep_alive_not_configured", 503); }
+  if (keepAliveSeconds === undefined) throw new EdgeFailure("keep_alive_not_configured", 503);
+  return keepAliveSeconds as number;
+}
 function workspaceQuery(workspace: WorkspaceSelector): URLSearchParams {
   return new URLSearchParams(workspace.id === undefined ? { workspace_slug: workspace.slug } : { workspace_id: workspace.id });
 }
@@ -349,6 +361,6 @@ async function readPlatformJSON(response: Response): Promise<unknown> {
 }
 async function remoteFailure(response: Response): Promise<EdgeFailure> {
   const value = await readPlatformJSON(response);
-  return new EdgeFailure(record(value) && record(value.error) && typeof value.error.code === "string" ? value.error.code : "workspace_resolution_failed", response.status);
+  return new EdgeFailure(isRecord(value) && isRecord(value.error) && typeof value.error.code === "string" ? value.error.code : "workspace_resolution_failed", response.status);
 }
 function failure(code: string, status: number): Response { return Response.json({ error: { code } }, { status }); }

@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, rm, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { NativeClaudeStream } from '../dist/harnesses/claude-stream.js';
+import { until } from './helpers.mjs';
 
 async function fixture(t) {
   const workspace = await mkdtemp('/tmp/claude-stream-');
@@ -31,10 +32,6 @@ input.on('line',line=>{
   const options = { workspace, binary, sessionId: 'session', conversation: { id: randomUUID(), resumable: false },
     permissionMode: 'dontAsk', settingSources: [], tools: ['Read'], mcps: {} };
   return { workspace, options };
-}
-async function until(predicate) {
-  const deadline = Date.now() + 3000;
-  while (!predicate()) { assert.ok(Date.now() < deadline, 'timed out'); await new Promise(r => setTimeout(r, 5)); }
 }
 
 test('native streaming input steers the same process and completes only after consumed input', async t => {

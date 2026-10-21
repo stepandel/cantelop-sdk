@@ -1,3 +1,5 @@
+import { abortReason } from "./shared.js";
+
 export interface RuntimeQuiescenceSnapshot {
   readonly generation: number;
 }
@@ -50,7 +52,7 @@ export class RuntimeQuiescence {
     if (!Number.isSafeInteger(minimumGeneration) || minimumGeneration < 0) {
       return Promise.reject(new TypeError("Minimum runtime generation must be a non-negative integer"));
     }
-    if (signal?.aborted) return Promise.reject(abortReason(signal));
+    if (signal?.aborted) return Promise.reject(abortReason(signal, "Runtime quiescence wait cancelled"));
     if (this.currentGeneration >= minimumGeneration && this.quiescent) {
       return Promise.resolve(Object.freeze({ generation: this.currentGeneration }));
     }
@@ -65,7 +67,7 @@ export class RuntimeQuiescence {
       if (signal !== undefined) {
         waiter.abort = () => {
           this.finish(waiter);
-          reject(abortReason(signal));
+          reject(abortReason(signal, "Runtime quiescence wait cancelled"));
         };
         signal.addEventListener("abort", waiter.abort, { once: true });
       }
@@ -81,6 +83,3 @@ export class RuntimeQuiescence {
   }
 }
 
-function abortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException("Runtime quiescence wait cancelled", "AbortError");
-}

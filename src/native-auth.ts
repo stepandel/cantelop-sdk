@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import type { Readable, Writable } from "node:stream";
+import { WORKSPACE_ID_PATTERN } from "./shared.js";
 import type { SessionIdentity } from "./resources.js";
 
 /**
@@ -28,7 +29,6 @@ export type AuthResult =
 export const AUTH_SESSION_ID = "cantelop-native-auth";
 /** Auth commands keep no idle window: runtime quiescence alone holds the Sandbox while a login or unsubmitted code attempt exists. */
 export const AUTH_KEEP_ALIVE_SECONDS = 0;
-const WORKSPACE_ID_PATTERN = /^wsp_[0-9a-f]{32}$/;
 /** Logical Session IDs are App-wide, so each Workspace needs its own stable auth actor. */
 export function workspaceAuthSessionID(workspaceId: string): string {
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) throw new TypeError("Invalid auth Workspace ID");
@@ -49,6 +49,14 @@ export const AUTH_TERMINAL_PROTOCOL = "cantelop-terminal.v1";
 export const LOGIN_ID_PATTERN = /^lgn_[0-9a-f]{32}$/;
 export const TERMINAL_ID_PATTERN = /^trm_[0-9a-f]{32}$/;
 export const TERMINAL_TICKET_PATTERN = /^[0-9a-f]{64}$/;
+/** Sandbox runtime routes the platform relays a browser terminal through. */
+export const AUTH_TERMINAL_PATH = "/__cantelop/v2/runtime/auth/terminals";
+export type AuthTerminalOperation = "attach" | "input" | "resize";
+export function authTerminalPath(terminalId: string, operation: AuthTerminalOperation): string {
+  return `${AUTH_TERMINAL_PATH}/${terminalId}/${operation}`;
+}
+/** Carries the terminal ticket on every platform → Sandbox terminal route call. */
+export const TERMINAL_TICKET_HEADER = "x-cantelop-terminal-ticket";
 /** Marks a compiled-away provider in backend and Edge builds. */
 export const COMPILED_AUTH = Symbol.for("dev.cantelop.sdk.compiled-auth.v1");
 

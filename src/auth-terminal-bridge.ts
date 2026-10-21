@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
-import { AUTH_TERMINAL_PROTOCOL, TERMINAL_ID_PATTERN, TERMINAL_TICKET_PATTERN } from "./native-auth.js";
+import { AUTH_TERMINAL_PROTOCOL, TERMINAL_ID_PATTERN, TERMINAL_TICKET_HEADER, TERMINAL_TICKET_PATTERN, authTerminalPath } from "./native-auth.js";
 import { acceptTerminalSocket, refuseUpgrade } from "./terminal-socket.js";
 
 export interface AuthTerminalBridgeOptions {
@@ -13,6 +13,10 @@ export interface AuthTerminalBridgeOptions {
 }
 
 const REASONS: Readonly<Record<number, string>> = { 401: "Unauthorized", 404: "Not Found", 409: "Conflict", 410: "Gone" };
+/** Input posts awaiting the Sandbox before the browser socket stops being read. */
+const MAX_PENDING_INPUTS = 32;
+/** Reading resumes once the backlog drains to this many posts. */
+const RESUME_PENDING_INPUTS = MAX_PENDING_INPUTS / 2;
 
 /**
  * Platform-side relay for the browser's auth terminal: terminates the WebSocket and
@@ -24,11 +28,10 @@ export async function bridgeAuthTerminal(request: IncomingMessage, socket: Duple
   const tickets = offered.filter(value => TERMINAL_TICKET_PATTERN.test(value));
   if (!TERMINAL_ID_PATTERN.test(terminalId) || !offered.includes(AUTH_TERMINAL_PROTOCOL) || tickets.length !== 1) { refuseUpgrade(socket, 401, "Unauthorized"); return; }
   const ticket = tickets[0]!;
-  const route = (operation: string) => `/__cantelop/v2/runtime/auth/terminals/${terminalId}/${operation}`;
-  const headers = { "X-Cantelop-Terminal-Ticket": ticket };
+  const headers = { [TERMINAL_TICKET_HEADER]: ticket };
   const controller = new AbortController();
   let attached: Response;
-  try { attached = await options.fetch(route("attach"), { method: "POST", headers, signal: controller.signal }); }
+  try { attached = await options.fetch(authTerminalPath(terminalId, "attach"), { method: "POST", headers, signal: controller.signal }); }
   catch { refuseUpgrade(socket, 502, "Bad Gateway"); return; }
   if (!attached.ok || !attached.body) {
     await attached.body?.cancel().catch(() => undefined);
@@ -36,15 +39,20 @@ export async function bridgeAuthTerminal(request: IncomingMessage, socket: Duple
     refuseUpgrade(socket, status, REASONS[status] ?? "Bad Gateway");
     return;
   }
-  // Input keeps the user's keystroke order.
+  // Input keeps the user's keystroke order. A slow Sandbox pauses reading the
+  // browser socket, so TCP backpressure bounds the backlog instead of memory.
   let inputs = Promise.resolve();
+  let pending = 0;
   const post = (operation: "input" | "resize", body: Buffer | string) => {
+    if (++pending >= MAX_PENDING_INPUTS) terminal?.pause();
     inputs = inputs.then(async () => {
       if (controller.signal.aborted) return;
-      const response = await options.fetch(route(operation), { method: "POST", headers, body: typeof body === "string" ? body : new Uint8Array(body), signal: controller.signal });
+      const response = await options.fetch(authTerminalPath(terminalId, operation), { method: "POST", headers, body: typeof body === "string" ? body : new Uint8Array(body), signal: controller.signal });
       await response.body?.cancel().catch(() => undefined);
       if (!response.ok && response.status !== 400) throw new Error("terminal input rejected");
-    }).catch(() => { terminal?.close(1011); });
+    }).catch(() => { terminal?.close(1011); }).finally(() => {
+      if (--pending <= RESUME_PENDING_INPUTS) terminal?.resume();
+    });
   };
   const terminal = acceptTerminalSocket(request, socket, head, AUTH_TERMINAL_PROTOCOL, {
     binary: data => post("input", data),

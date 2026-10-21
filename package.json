@@ -52,6 +52,10 @@
     "./harnesses/claude/protocol": {
       "types": "./dist/harnesses/claude-protocol.d.ts",
       "import": "./dist/harnesses/claude-protocol.js"
+    },
+    "./harnesses/native": {
+      "types": "./dist/harnesses/native.d.ts",
+      "import": "./dist/harnesses/native.js"
     }
   },
   "files": [
@@ -59,13 +63,17 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/build-harness-assets.mjs && node scripts/build-sync-helper.mjs",
+    "build": "node scripts/build.mjs",
+    "build:release": "node scripts/build.mjs --all",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm build && node --test test/*.test.mjs",
-    "check:examples": "pnpm build && pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
+    "test": "pnpm build && pnpm test:built",
+    "test:built": "node --test test/*.test.mjs",
+    "test:native": "cd native && go test ./... github.com/stepandel/cantelop/fire-fuse/workspacesync github.com/stepandel/cantelop/fire-fuse/syncprotocol",
+    "check:examples": "pnpm build && pnpm check:examples:built",
+    "check:examples:built": "pnpm --filter './examples/**' --if-present check && node scripts/check-examples.mjs",
     "check:package": "node scripts/check-package.mjs",
-    "test:bun": "pnpm build && bun test test/bun-subprocess.test.mjs",
-    "prepare": "npm run build && node scripts/build-sync-helper.mjs --all"
+    "test:bun": "pnpm build && bun test test/bun/subprocess.test.mjs",
+    "prepare": "node scripts/build.mjs --all"
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",

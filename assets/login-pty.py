@@ -1,6 +1,9 @@
 """PTY for a stock CLI login. Relays bytes only; never records input or output.
 
 fd 0/1 carry terminal bytes. Optional fd 3 carries "COLUMNS ROWS" lines for resizes.
+SIGTERM, SIGINT or EOF on fd 0 stops the login: the CLI's process group gets SIGTERM,
+then SIGKILL after STOP_GRACE_SECONDS. Callers should wait longer than that before
+killing this helper, or the group outlives it.
 """
 import errno
 import fcntl
@@ -11,13 +14,23 @@ import signal
 import struct
 import sys
 import termios
-import time
+
+STOP_GRACE_SECONDS = 1
 
 try:
     os.fstat(3)
     has_control = True
 except OSError:
     has_control = False
+
+# Signals wake the selector through a self-pipe, so the loop blocks instead of
+# polling. Installed before fork so an early child exit cannot be missed.
+wake_read, wake_write = os.pipe()
+os.set_blocking(wake_read, False)
+os.set_blocking(wake_write, False)
+signal.set_wakeup_fd(wake_write)
+signal.signal(signal.SIGCHLD, lambda *_: None)
+
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
 pid = os.fork()
@@ -34,38 +47,50 @@ if pid == 0:
     os.execvp(sys.argv[1], sys.argv[1:])
 
 os.close(slave)
-stopping = None
+# Set once the child is reaped. Until then its PID, and so its group ID, cannot be
+# reused, even after it exits; afterwards the group is never signalled again.
+reaped = False
+stopping = False
+
+
+def signal_group(sig):
+    if reaped:
+        return
+    try:
+        os.killpg(pid, sig)
+    except (ProcessLookupError, PermissionError):
+        # Gone, or (macOS) only the unreaped child is left in the group.
+        pass
+
 
 def terminate(*_):
     global stopping
-    if stopping is None:
-        stopping = time.monotonic()
-        signal.alarm(2)
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+    if not stopping:
+        stopping = True
+        signal_group(signal.SIGTERM)
+        signal.alarm(STOP_GRACE_SECONDS)
+
 
 def force_stop(*_):
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    try:
-        os.waitpid(pid, 0)
-    except ChildProcessError:
-        pass
-    os._exit(1)
+    signal_group(signal.SIGKILL)
+
+
+def exited():
+    # WNOWAIT leaves the child unreaped, so cleanup can still signal its group.
+    return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+
 
 signal.signal(signal.SIGALRM, force_stop)
 signal.signal(signal.SIGTERM, terminate)
 signal.signal(signal.SIGINT, terminate)
 selector = selectors.DefaultSelector()
+selector.register(wake_read, selectors.EVENT_READ)
 selector.register(master, selectors.EVENT_READ)
 selector.register(0, selectors.EVENT_READ)
 if has_control:
     selector.register(3, selectors.EVENT_READ)
 control = b""
+
 
 def resize(data):
     global control
@@ -79,20 +104,19 @@ def resize(data):
             continue
         if 20 <= columns <= 1000 and 5 <= rows <= 500:
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
-            try:
-                os.killpg(pid, signal.SIGWINCH)
-            except ProcessLookupError:
-                pass
+            signal_group(signal.SIGWINCH)
 
-status = None
+
 try:
-    while True:
-        if stopping is not None and time.monotonic() - stopping > 1:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        for key, _ in selector.select(0.05):
+    while not exited():
+        for key, _ in selector.select():
+            if key.fd == wake_read:
+                try:
+                    while os.read(wake_read, 512):
+                        pass
+                except BlockingIOError:
+                    pass
+                continue
             try:
                 data = os.read(key.fd, 4096)
             except OSError as error:
@@ -110,17 +134,13 @@ try:
             target = 1 if key.fd == master else master
             while data:
                 data = data[os.write(target, data):]
-        ended, value = os.waitpid(pid, os.WNOHANG)
-        if ended:
-            status = value
-            break
 finally:
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    if status is None:
-        _, status = os.waitpid(pid, 0)
+    signal.alarm(0)
+    # Whatever the group left running ends with the login. This is the group's
+    # only SIGKILL after exit, and it precedes the reap that frees the ID.
+    signal_group(signal.SIGKILL)
+    _, status = os.waitpid(pid, 0)
+    reaped = True
     os.set_blocking(master, False)
     while True:
         try:

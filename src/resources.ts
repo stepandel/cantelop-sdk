@@ -1,11 +1,4 @@
 import type { WorkspaceDatabase } from "./database.js";
-export interface WorkspaceCreateConfig {
-  readonly slug: string;
-}
-
-export interface WorkspaceOpenConfig {
-  readonly slug: string;
-}
 
 export interface Workspace {
   database(): Promise<WorkspaceDatabase>;
@@ -18,47 +11,30 @@ export interface Workspace {
   readonly archivedAt?: Date;
 }
 
-interface SessionOpenBaseConfig {
-  readonly id?: string;
-  readonly keepAliveSeconds: number;
-}
-
-export interface SessionOpenByIDConfig extends SessionOpenBaseConfig {
-  readonly workspaceId: string;
-  readonly workspaceSlug?: never;
-}
-
-export interface SessionOpenBySlugConfig extends SessionOpenBaseConfig {
-  readonly workspaceId?: never;
-  readonly workspaceSlug: string;
-}
-
-export type SessionOpenConfig = SessionOpenByIDConfig | SessionOpenBySlugConfig;
-
 export interface MessageExecution {
- readonly phase: "sending" | "accepted" | "running" | "cancelling" | "settled" | "retrying" | "recovering" | "quiescent" | "unavailable";
- readonly outcome: "pending" | "succeeded" | "failed" | "timed_out" | "unknown";
- readonly sandboxId: string;
- readonly deadline: Date;
- readonly phaseAt: Date;
- readonly workState: string;
+  readonly phase: "sending" | "accepted" | "running" | "cancelling" | "settled" | "retrying" | "recovering" | "quiescent" | "unavailable";
+  readonly outcome: "pending" | "succeeded" | "failed" | "timed_out" | "unknown";
+  readonly sandboxId: string;
+  readonly deadline: Date;
+  readonly phaseAt: Date;
+  readonly workState: string;
 }
 
 export interface AcceptedMessageStatus {
- readonly execution?: MessageExecution;
+  readonly execution?: MessageExecution;
   readonly state: "accepted";
   readonly acceptedAt: Date;
 }
 
 export interface HandlingMessageStatus {
- readonly execution?: MessageExecution;
+  readonly execution?: MessageExecution;
   readonly state: "handling";
   readonly acceptedAt: Date;
   readonly startedAt: Date;
 }
 
 export interface HandledMessageStatus {
- readonly execution?: MessageExecution;
+  readonly execution?: MessageExecution;
   readonly state: "handled";
   readonly acceptedAt: Date;
   readonly startedAt: Date;
@@ -66,7 +42,7 @@ export interface HandledMessageStatus {
 }
 
 export interface FailedMessageStatus {
- readonly execution?: MessageExecution;
+  readonly execution?: MessageExecution;
   readonly state: "failed";
   readonly acceptedAt: Date;
   readonly startedAt: Date;
@@ -108,33 +84,4 @@ export interface SessionIdentity {
   /** Present when the Session will lazily resolve an App-scoped Workspace slug. */
   readonly workspaceSlug?: string;
   readonly keepAliveSeconds: number;
-}
-
-/** A reference to a Session actor. */
-export interface Session<Message, Reply = unknown> extends SessionIdentity {
-  /**
-   * Releases the current Sandbox and closes event streams, potentially interrupting work.
-   * The Session remains reusable. Rejects if the Session has never been materialized.
-   */
-  stop(): Promise<void>;
-  dispatch(message: Message): Promise<MessageRef>;
-  request(message: Message, options?: SessionRequestOptions): Promise<Reply>;
-  /** Adapts an authenticated App GET route to SSE or an output-only WebSocket. */
-  events(request: Request): Promise<Response>;
-}
-
-export interface WorkspaceService {
-  create(config: WorkspaceCreateConfig): Promise<Workspace>;
-  open(config: WorkspaceOpenConfig): Promise<Workspace>;
-}
-
-export interface SessionService<Input, Reply = unknown> {
-  open(config: SessionOpenByIDConfig): Session<Input, Reply> & { readonly workspaceId: string };
-  open(config: SessionOpenBySlugConfig): Session<Input, Reply> & { readonly workspaceSlug: string };
-}
-
-/** Capabilities of the current App, injected by Cantelop. */
-export interface CantelopApp<Input, Reply = unknown> {
-  readonly workspaces: WorkspaceService;
-  readonly sessions: SessionService<Input, Reply>;
 }

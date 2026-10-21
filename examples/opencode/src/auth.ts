@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { loginTerminal, nativeAuth, runAuthCommand } from "../../native-harness/login.ts";
+import { loginTerminal, nativeAuth, runAuthCommand } from "@cantelop/sdk/harnesses/native";
 import type { AppAuth, AuthContext } from "@cantelop/sdk/session";
+import { OPENCODE_BINARY } from "./environment.ts";
 
 /**
  * Providers this App lets users sign in to. Keep each one only after confirming its
@@ -16,10 +17,13 @@ function provider(context: AuthContext): string {
   return value;
 }
 
+/** The stock binary and Workspace environment every OpenCode auth command runs with. */
+const opencode = (context: AuthContext) => nativeAuth(context, "OPENCODE_PATH", OPENCODE_BINARY);
+
 /** Stock `opencode auth`, pinned to one allowed provider; credentials stay in OpenCode's own file. */
 export const opencodeAuth: AppAuth = {
   async status(context) {
-    const { env } = nativeAuth(context, "OPENCODE_PATH", "/usr/local/bin/opencode");
+    const { env } = opencode(context);
     let credentials: unknown;
     try { credentials = JSON.parse(await readFile(join(env.XDG_DATA_HOME!, "opencode", "auth.json"), "utf8")); }
     catch (error) {
@@ -30,11 +34,11 @@ export const opencodeAuth: AppAuth = {
     return !!credentials && typeof credentials === "object" && Object.hasOwn(credentials, provider(context));
   },
   async logout(context) {
-    const { binary, ...options } = nativeAuth(context, "OPENCODE_PATH", "/usr/local/bin/opencode");
+    const { binary, ...options } = opencode(context);
     await runAuthCommand(binary, ["auth", "logout", provider(context)], options);
   },
   terminal(context) {
-    const { binary, ...options } = nativeAuth(context, "OPENCODE_PATH", "/usr/local/bin/opencode");
+    const { binary, ...options } = opencode(context);
     return loginTerminal(context, binary, ["auth", "login", "--provider", provider(context)], { ...options, directories: [join(options.env.XDG_DATA_HOME!, "opencode")] });
   },
 };

@@ -47,22 +47,23 @@ jobs:
           package_version="$(node -p 'require("./package.json").version')"
           test "${REQUESTED_VERSION}" = "${package_version}"
 
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      # Build once; tests, example checks and package qualification reuse this
+      # dist, and the qualified tarball is the one that gets published.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm build:release
       - name: Qualify native filesystem adapter
-        working-directory: native
-        run: go test ./... github.com/stepandel/cantelop/fire-fuse/workspacesync github.com/stepandel/cantelop/fire-fuse/syncprotocol
-      - run: pnpm test
-      - run: pnpm check:examples
-      - run: pnpm check:package
+        run: pnpm test:native
+      - run: pnpm test:built
+      - run: pnpm check:examples:built
+      - run: pnpm check:package --prebuilt --out "${RUNNER_TEMP}/package"
 
       - name: Publish release candidate
         if: contains(inputs.version, '-')
-        run: npm publish --access public --tag next
+        run: npm publish "${RUNNER_TEMP}"/package/*.tgz --access public --tag next
 
       - name: Publish stable release
         if: ${{ !contains(inputs.version, '-') }}
-        run: npm publish --access public
+        run: npm publish "${RUNNER_TEMP}"/package/*.tgz --access public
 
   github-release:
     needs: publish

@@ -101,7 +101,8 @@ export function classifyRuntimeLogSeverity(
   fallback: LogSeverity,
   source: RuntimeLogSource,
 ): LogSeverity {
-  if (source !== "stderr") return fallback;
+  // Only SDK records are structured; skip parsing ordinary stderr lines.
+  if (source !== "stderr" || !body.startsWith("{") || !body.includes('"cantelop.sdk"')) return fallback;
   try {
     const value = JSON.parse(body) as unknown;
     if (typeof value !== "object" || value === null || Array.isArray(value)) return fallback;

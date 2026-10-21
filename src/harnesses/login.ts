@@ -3,14 +3,18 @@ import { execFile, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { AuthContext, AuthTerminalProcess } from "../session.js";
-import { nativeEnvironment } from "./cli.js";
+import { nativeEnvironment, type NativeEnvironmentHook } from "./cli.js";
 
 const exec = promisify(execFile);
 
-/** The Workspace and stock binary every native auth command runs against. */
-export function nativeAuth(context: AuthContext, binaryVariable: string, defaultBinary: string) {
+/**
+ * The Workspace and stock binary every native auth command runs against. Pass the
+ * provider's environment hook so auth commands see the same configuration
+ * directories as its turns.
+ */
+export function nativeAuth(context: AuthContext, binaryVariable: string, defaultBinary: string, environment?: NativeEnvironmentHook) {
   const workspace = process.cwd();
-  return { workspace, binary: context.env[binaryVariable] ?? defaultBinary, env: nativeEnvironment(workspace) };
+  return { workspace, binary: context.env[binaryVariable] ?? defaultBinary, env: nativeEnvironment(workspace, environment) };
 }
 
 /** Runs a non-interactive auth command; signed-out commands exit non-zero but still report. */
