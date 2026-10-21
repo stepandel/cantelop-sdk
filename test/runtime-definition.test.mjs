@@ -163,6 +163,30 @@ test("watch follows imported runtime and type contracts and recovers after inval
   await waitFor(()=>events.length>0);
   assert.equal(events.at(-1).error,undefined);
 });
+
+test("compiler resolves imports created or restored after a failed cached build", async t => {
+  const { directory, definition } = await project(t);
+  const agent = path.join(directory, "agent.ts");
+  const dependency = path.join(directory, "created.ts");
+  await writeFile(agent, "export function receive() {}");
+  await writeFile(definition, clientSource("receive", 'import { receive } from "./agent.js";'));
+  const initial = await compileClientDefinition(definition);
+
+  await writeFile(agent, 'import { marker } from "./created.js"; export function receive() { console.log(marker); }');
+  await assert.rejects(compileClientDefinition(definition), /Cannot find module '\.\/created\.js'/);
+  await writeFile(dependency, 'export const marker = "created-import-runtime";');
+  const created = await compileClientDefinition(definition);
+  assert.match(created.runtimeModule, /created-import-runtime/);
+  assert.notEqual(created.definition.id, initial.definition.id);
+
+  await rm(dependency);
+  await assert.rejects(compileClientDefinition(definition), /Cannot find module '\.\/created\.js'/);
+  await writeFile(dependency, 'export const marker = "restored-import-runtime";');
+  const restored = await compileClientDefinition(definition);
+  assert.match(restored.runtimeModule, /restored-import-runtime/);
+  assert.notEqual(restored.definition.id, created.definition.id);
+});
+
 const waitFor = predicate => until(predicate, { timeoutMs: 15_000, intervalMs: 50, message: "Timed out waiting for rebuild" });
 
 

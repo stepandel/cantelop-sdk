@@ -23,8 +23,9 @@ export class SessionOutputBuffer {
     if (bytes > MAX_EVENT_BYTES) {
       throw new TypeError(`Session output event exceeds ${MAX_EVENT_BYTES} bytes`);
     }
-    // Append synchronously when there is room, so publish order is call order.
-    if (!this.buffer.hasCapacity(bytes)) await this.buffer.waitForCapacity(bytes, signal);
+    // Other publishers may take capacity before this continuation resumes.
+    // Recheck and append without yielding so the buffer stays bounded.
+    while (!this.buffer.hasCapacity(bytes)) await this.buffer.waitForCapacity(bytes, signal);
     signal?.throwIfAborted();
     return new Promise<void>((resolve, reject) => {
       const abort = () => reject(signal!.reason);

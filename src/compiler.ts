@@ -60,11 +60,14 @@ const EMIT_ONLY_OPTIONS = ["noEmit", "declaration", "emitDeclarationOnly", "decl
  * declaration emit re-parse only files whose text or parse settings changed, as tsc --watch does.
  */
 const sourceFileCache = new Map<string, { readonly key: string; readonly text: string; readonly file: ts.SourceFile }>();
-/** The last program per definition, passed as oldProgram so unchanged structure and resolution are reused. */
+/** The last program per definition, reused with fresh module resolution on every compilation. */
 const previousPrograms = new Map<string, ts.Program>();
 
 function cachingCompilerHost(options: ts.CompilerOptions): ts.CompilerHost {
   const host = ts.createCompilerHost(options);
+  // This host has no filesystem watcher to invalidate failed lookups when files
+  // appear. Re-resolve imports on each build while retaining parsed sources.
+  host.hasInvalidatedResolutions = () => true;
   const parse = host.getSourceFile.bind(host);
   const settings: Record<string, unknown> = { ...options };
   for (const name of EMIT_ONLY_OPTIONS) delete settings[name];
