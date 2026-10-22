@@ -134,13 +134,14 @@ function symbolSource(symbol: symbol): string {
 }
 
 const SDK_DECLARATIONS = {
+  fleet: canonicalPath(fileURLToPath(new URL("./fleet.d.ts", import.meta.url))),
   app: canonicalPath(fileURLToPath(new URL("./app.d.ts", import.meta.url))),
   client: canonicalPath(fileURLToPath(new URL("./client.d.ts", import.meta.url))),
 } as const;
 
 /** True only for the SDK's own App/CantelopClient classes, not look-alikes with the same names. */
-function isSDKType(symbol: ts.Symbol | undefined, name: "App" | "CantelopClient"): boolean {
-  const declarationFile = name === "App" ? SDK_DECLARATIONS.app : SDK_DECLARATIONS.client;
+function isSDKType(symbol: ts.Symbol | undefined, name: "App" | "Fleet" | "CantelopClient"): boolean {
+  const declarationFile = name === "App" ? SDK_DECLARATIONS.app : name === "Fleet" ? SDK_DECLARATIONS.fleet : SDK_DECLARATIONS.client;
   return symbol?.declarations?.some(d => ts.isClassDeclaration(d) && d.name?.text === name && canonicalPath(d.getSourceFile().fileName) === declarationFile) ?? false;
 }
 
@@ -199,7 +200,7 @@ class DefinitionModule {
         const symbol = ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node ? checker.getShorthandAssignmentValueSymbol(node.parent) : checker.getSymbolAtLocation(node);
         const typeSymbol = symbol && checker.getTypeOfSymbolAtLocation(symbol, node).getSymbol();
         if (sandbox && symbol?.declarations?.some(d => ts.isVariableDeclaration(d) && ts.isVariableDeclarationList(d.parent) && ts.isVariableStatement(d.parent.parent) && d.parent.parent.parent === file) &&
-          (isSDKType(typeSymbol, "App") || isSDKType(typeSymbol, "CantelopClient"))) this.fail("App runtime or webhook cannot capture an App or CantelopClient instance");
+          (isSDKType(typeSymbol, "App") || isSDKType(typeSymbol, "Fleet") || isSDKType(typeSymbol, "CantelopClient"))) this.fail("App runtime or webhook cannot capture an App, Fleet or CantelopClient instance");
         for (const d of symbol?.declarations ?? []) {
           if (d.getSourceFile() !== file) continue;
           const statement = this.topStatement(d);
@@ -242,7 +243,7 @@ class DefinitionModule {
     const candidates = new Map<ts.Node, AppCandidate>();
     for (const exported of exports) {
       const symbol = this.resolveSymbol(exported);
-      if (!(symbol.flags & ts.SymbolFlags.Value) || !isSDKType(this.valueType(symbol), "App")) continue;
+      if (!(symbol.flags & ts.SymbolFlags.Value) || !(isSDKType(this.valueType(symbol), "App") || isSDKType(this.valueType(symbol), "Fleet"))) continue;
       appExports.add(symbol);
       let declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
       let expression = declaration && ts.isExportAssignment(declaration) ? declaration.expression
@@ -271,7 +272,7 @@ class DefinitionModule {
     }
     for (const exported of exports) {
       const symbol = this.resolveSymbol(exported);
-      if (!appExports.has(symbol) && (symbol.flags & ts.SymbolFlags.Value) && !isSDKType(this.valueType(symbol), "CantelopClient")) this.fail("Definition modules may only export Apps and their client; put other values in dependency modules");
+      if (!appExports.has(symbol) && (symbol.flags & ts.SymbolFlags.Value) && !isSDKType(this.valueType(symbol), "CantelopClient")) this.fail("Definition modules may only export Apps, Fleets and their client; put other values in dependency modules");
     }
   }
 }
@@ -292,9 +293,9 @@ async function extractApp(module: DefinitionModule, candidate: AppCandidate, sta
   const expression = candidate.expression;
   const statement = module.topStatement(candidate.declaration);
   if (!expression || !ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression) ||
-      expression.expression.name.text !== "app" || !statement || candidate.declaration.getSourceFile() !== file ||
+      !["app", "fleet"].includes(expression.expression.name.text) || !statement || candidate.declaration.getSourceFile() !== file ||
       !isSDKType(checker.getTypeAtLocation(expression.expression.expression).getSymbol(), "CantelopClient")) {
-    return fail("App definitions must call cantelop.app({...}) at module scope");
+    return fail("Definitions must call cantelop.app({...}) or cantelop.fleet({...}) at module scope");
   }
   const argument = expression.arguments[0];
   if (!argument || !ts.isObjectLiteralExpression(argument) || argument.properties.some(p => ts.isSpreadAssignment(p))) return fail("App options must be a static object without spreads");
@@ -376,7 +377,7 @@ async function extractApp(module: DefinitionModule, candidate: AppCandidate, sta
   }
   return {
     statement, backendStatement,
-    app: { definition: { id, name, ...configuration, ...(authProperty ? { auth: true as const } : {}) }, entrypoint: filename, runtimeModule, webhookModule, webhookRoutes, hasHomepage: !!homepageProperty },
+    app: { definition: { id, name, ...(expression.expression.name.text === "fleet" ? { definitionKind: "fleet" as const } : {}), ...configuration, ...(authProperty ? { auth: true as const } : {}) }, entrypoint: filename, runtimeModule, webhookModule, webhookRoutes, hasHomepage: !!homepageProperty },
   };
 }
 
@@ -438,7 +439,7 @@ export async function compileAppDefinitions(filename: string, compileOptions: { 
 
   const exports = module.checker.getExportsOfModule(fileSymbol);
   const { appExports, aliasDeclarations, candidates } = module.discoverApps(exports);
-  if (!candidates.size) return module.fail("Export at least one App defined with cantelop.app({...})");
+  if (!candidates.size) return module.fail("Export at least one App or Fleet defined with cantelop.app({...}) or cantelop.fleet({...})");
   if (compileOptions.appName !== undefined && (!SLUG_PATTERN.test(compileOptions.appName) || candidates.size !== 1))
     return module.fail("appName must be a valid App slug and requires exactly one App definition");
   module.appStatements = new Set([...candidates.keys()].map(node => module.topStatement(node)).filter((s): s is ts.Statement => !!s));

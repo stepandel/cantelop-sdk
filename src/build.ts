@@ -49,7 +49,7 @@ const SESSION_RUNTIME_PROTOCOL_VERSION = 2;
 
 // The CLI checks this exact protocol before using the build module. Increment
 // it when an incompatible build/watch contract is introduced.
-export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 6;
+export const CANTELOP_CLI_BUILD_PROTOCOL_VERSION = 7;
 
 /** Local credentials and HTTP libSQL support required by database-enabled CLI dev. */
 export const CANTELOP_LOCAL_DATABASE_PROTOCOL_VERSION = 1;
@@ -72,6 +72,7 @@ export interface SessionRuntimeManifest extends AppDeploymentConfiguration {
   readonly integration_protocol_version: typeof CANTELOP_INTEGRATION_PROTOCOL_VERSION;
   readonly session_runtime_id: string;
   readonly app_name: string;
+  readonly definition_kind?: "fleet";
   /** Advertised only after coordinated actor scheduling, attribution and projection support. */
   readonly capabilities: Readonly<{ steering: true; messageCancellation: true; durableView: true; authTerminal?: true }>;
   readonly database_schema?: ApplicationDatabaseSchema;
@@ -125,6 +126,7 @@ export interface EdgeApiArtifact {
     fleet_execution_protocol_version: typeof CANTELOP_FLEET_EXECUTION_PROTOCOL_VERSION;
     session_runtime_id: string;
     app_name: string;
+    definition_kind?: "fleet";
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
     /** The Worker also accepts a rotated-out token until the paired expiry passes. */
     /** Fleet installations also set `CANTELOP_FLEET_EXECUTION_VERSION`, requiring `props.CANTELOP_RUNTIME` on every request. */
@@ -173,6 +175,7 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
     schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs", fleet_execution_protocol_version: CANTELOP_FLEET_EXECUTION_PROTOCOL_VERSION,
     cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION, integration_protocol_version: CANTELOP_INTEGRATION_PROTOCOL_VERSION, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
+    ...(runtime.definition.definitionKind === undefined ? {} : { definition_kind: runtime.definition.definitionKind }),
     ...(runtime.definition.environment === undefined ? {} : { environment: runtime.definition.environment }),
     ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
@@ -234,6 +237,7 @@ async function writeSessionManifest(outdir: string, databaseSchema: ApplicationD
     integration_protocol_version: CANTELOP_INTEGRATION_PROTOCOL_VERSION,
     session_runtime_id: definition.id,
     app_name: definition.name,
+    ...(definition.definitionKind === undefined ? {} : { definition_kind: definition.definitionKind }),
     ...(definition.environment === undefined ? {} : { environment: definition.environment }),
     ...(definition.dockerfile === undefined ? {} : { dockerfile: definition.dockerfile }),
     capabilities: Object.freeze({ steering: true, messageCancellation: true, durableView: true, ...(definition.auth ? { authTerminal: true } : {}) }),
@@ -499,7 +503,7 @@ async function writeBackendClient(compiled: Awaited<ReturnType<typeof compileApp
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, source);
   }
-  const manifest = { schema_version: 1, kind: "cantelop-backend-client", apps: compiled.apps.map(app => ({ name: app.definition.name, session_runtime_id: app.definition.id })), main_module: "client.mjs" } as const;
+  const manifest = { schema_version: 1, kind: "cantelop-backend-client", apps: compiled.apps.map(app => ({ name: app.definition.name, session_runtime_id: app.definition.id, ...(app.definition.definitionKind === undefined ? {} : { definition_kind: app.definition.definitionKind }) })), main_module: "client.mjs" } as const;
   const manifestFile = path.join(directory, "cantelop-client.json");
   await writeFile(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
   return { directory, mainModule, declarationFile, manifestFile, manifest };

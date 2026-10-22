@@ -1,3 +1,4 @@
+import { parseConfiguredFleets, type ConfiguredFleet } from "./fleet-config.js";
 import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { isRecord } from "./shared.js";
 import { validateAppDeploymentConfiguration, type AppDeploymentConfiguration } from "./app-definition.js";
@@ -40,6 +41,7 @@ export interface AppConfigurationDocument {
   readonly profiles: Readonly<Record<string, {
     readonly defaultApp?: AppSelector;
     readonly apps: readonly ConfiguredApp[];
+    readonly fleets?: readonly ConfiguredFleet[];
   }>>;
 }
 export interface ConfigurationContext {
@@ -122,7 +124,7 @@ export function parseAppConfiguration(value: unknown): AppConfigurationDocument 
         ...(app.expiresAt === undefined ? {} : { expiresAt: app.expiresAt as string }),
       });
     });
-    profiles[name] = Object.freeze({ apps: Object.freeze(apps), ...(profile.defaultApp === undefined ? {} : { defaultApp: Object.freeze(selector(profile.defaultApp)) }) });
+    profiles[name] = Object.freeze({ apps: Object.freeze(apps), ...(profile.fleets === undefined ? {} : { fleets: parseConfiguredFleets(profile.fleets) }), ...(profile.defaultApp === undefined ? {} : { defaultApp: Object.freeze(selector(profile.defaultApp)) }) });
   }
   return Object.freeze({ schemaVersion: 1, activeProfile: value.activeProfile, profiles: Object.freeze(profiles) });
 }
