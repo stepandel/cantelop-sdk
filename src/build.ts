@@ -26,7 +26,7 @@ import {
 import type { AppDeploymentConfiguration } from "./app-definition.js";
 import { compileClientDefinition, compileAppDefinitions, RuntimeContractError } from "./compiler.js";
 import { validateApplicationSchema, type ApplicationDatabaseSchema } from "./database-schema.js";
-import { CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";
+import { CANTELOP_FLEET_EXECUTION_PROTOCOL_VERSION, CANTELOP_INTEGRATION_PROTOCOL_VERSION } from "./integration-protocol.js";
 
 export { createCantelopCompilerPlugin } from "./compiler.js";
 export { bridgeAuthTerminal } from "./auth-terminal-bridge.js";
@@ -122,11 +122,13 @@ export interface EdgeApiArtifact {
     main_module: "worker.mjs";
     cli_build_protocol_version: typeof CANTELOP_CLI_BUILD_PROTOCOL_VERSION;
     integration_protocol_version: typeof CANTELOP_INTEGRATION_PROTOCOL_VERSION;
+    fleet_execution_protocol_version: typeof CANTELOP_FLEET_EXECUTION_PROTOCOL_VERSION;
     session_runtime_id: string;
     app_name: string;
     required_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN"];
     /** The Worker also accepts a rotated-out token until the paired expiry passes. */
-    optional_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN_PREVIOUS", "CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT"];
+    /** Fleet installations also set `CANTELOP_FLEET_EXECUTION_VERSION`, requiring `props.CANTELOP_RUNTIME` on every request. */
+    optional_bindings: readonly ["CANTELOP_INTEGRATION_TOKEN_PREVIOUS", "CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT", "CANTELOP_FLEET_EXECUTION_VERSION"];
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS";
     webhooks: readonly { readonly path: string; readonly method: "GET" | "POST" }[];
     homepage: boolean;
@@ -169,12 +171,12 @@ async function writeEdgeApi(runtime: CompiledApp, options: BuildEdgeApiOptions):
     } }],
   });
   const manifest: EdgeApiArtifact["manifest"] = Object.freeze({
-    schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs",
+    schema_version: 1, kind: "cantelop-protocol-edge", main_module: "worker.mjs", fleet_execution_protocol_version: CANTELOP_FLEET_EXECUTION_PROTOCOL_VERSION,
     cli_build_protocol_version: CANTELOP_CLI_BUILD_PROTOCOL_VERSION, integration_protocol_version: CANTELOP_INTEGRATION_PROTOCOL_VERSION, session_runtime_id: runtime.definition.id, app_name: runtime.definition.name,
     ...(runtime.definition.environment === undefined ? {} : { environment: runtime.definition.environment }),
     ...(runtime.definition.dockerfile === undefined ? {} : { dockerfile: runtime.definition.dockerfile }),
     required_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN"] as const),
-    optional_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN_PREVIOUS", "CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT"] as const),
+    optional_bindings: Object.freeze(["CANTELOP_INTEGRATION_TOKEN_PREVIOUS", "CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT", "CANTELOP_FLEET_EXECUTION_VERSION"] as const),
     default_keep_alive_binding: "CANTELOP_DEFAULT_KEEP_ALIVE_SECONDS",
     webhooks: Object.freeze(runtime.webhookRoutes.map(route => Object.freeze({ ...route }))),
     homepage: runtime.hasHomepage,

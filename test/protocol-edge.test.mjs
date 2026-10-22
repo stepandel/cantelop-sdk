@@ -180,7 +180,8 @@ test('CLI emits a protocol-owned Worker without an author API entrypoint or cred
     const artifact = await buildEdgeApi({ definition, outdir: directory, runtimeOrigin: 'http://127.0.0.1:8877' });
     assert.equal(artifact.manifest.kind, 'cantelop-protocol-edge');
     assert.equal(artifact.manifest.integration_protocol_version, 2);
-    assert.deepEqual(artifact.manifest.optional_bindings, ['CANTELOP_INTEGRATION_TOKEN_PREVIOUS', 'CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT']);
+    assert.equal(artifact.manifest.fleet_execution_protocol_version, 1);
+    assert.deepEqual(artifact.manifest.optional_bindings, ['CANTELOP_INTEGRATION_TOKEN_PREVIOUS', 'CANTELOP_INTEGRATION_TOKEN_PREVIOUS_EXPIRES_AT', 'CANTELOP_FLEET_EXECUTION_VERSION']);
     assert.deepEqual(JSON.parse(await readFile(artifact.manifestFile, 'utf8')), artifact.manifest);
     const worker = (await import(pathToFileURL(artifact.mainModule).href)).default;
     assert.equal((await worker.fetch(new Request('https://agent.example'), bindings)).status, 401);
@@ -252,4 +253,88 @@ test('auth actors reuse the canonical Workspace across selectors and remain dist
   }
   assert.deepEqual(sessions.map(session => session.id), [workspaceId, workspaceId, otherId, otherId, workspaceId].map(id => `cantelop-native-auth-${id}`));
   assert.deepEqual(sessions.map(session => session.workspace_id), [workspaceId, workspaceId, otherId, otherId, workspaceId]);
+});
+
+
+test('Fleet runtime capabilities are request-local and required for Fleet execution', async () => {
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', fetch() { throw new Error('unscoped runtime access'); } });
+  const fleetBindings = { ...bindings, CANTELOP_FLEET_EXECUTION_VERSION: '1' };
+  const body = { ...envelope({ type: 'workspace.resolve' }), session: null };
+  const missing = await worker.fetch(request(body), fleetBindings);
+  assert.equal(missing.status, 503);
+  assert.deepEqual(await missing.json(), { error: { code: 'fleet_runtime_unavailable' } });
+  const results = await Promise.all(Array.from({ length: 24 }, async (_, scope) => {
+    const response = await worker.fetch(request(body), fleetBindings, { props: { CANTELOP_RUNTIME: {
+      async fetch(target) {
+        assert.equal(new URL(target.url).pathname, '/__cantelop/v1/workspaces/open');
+        await new Promise(resolve => setTimeout(resolve, scope % 4));
+        return Response.json({ id: workspaceId, slug: 'customer', scope });
+      },
+    } } });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).scope, scope);
+    return scope;
+  }));
+  assert.equal(results.length, 24);
+});
+
+test('Fleet markers fail closed only after authentication and routing, and never reach the default fetch', async () => {
+  let ambient = 0, scoped = 0;
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', fetch: async () => { ambient++; return Response.json({}); } });
+  const body = { ...envelope({ type: 'workspace.resolve' }), session: null };
+  const capability = { async fetch() { scoped++; return Response.json({ id: workspaceId, slug: 'customer' }); } };
+  const withVersion = version => version === undefined ? bindings : { ...bindings, CANTELOP_FLEET_EXECUTION_VERSION: version };
+  for (const [version, runtime] of [['1', undefined], [1, undefined], ['2', capability], [undefined, {}], [undefined, null], ['1', { fetch: 'not a function' }]]) {
+    const response = await worker.fetch(request(body), withVersion(version), runtime === undefined ? undefined : { props: { CANTELOP_RUNTIME: runtime } });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: { code: 'fleet_runtime_unavailable' } });
+  }
+  assert.equal((await worker.fetch(request(body, { Authorization: 'Bearer wrong' }), withVersion('1'))).status, 401);
+  assert.equal((await worker.fetch(new Request('https://agent.example/unknown', { method: 'POST', headers: { Authorization: 'Bearer test-app-token' } }), withVersion('1'))).status, 404);
+  assert.equal(scoped, 0);
+  for (const version of [undefined, '1', 1]) assert.equal((await worker.fetch(request(body), withVersion(version), { props: { CANTELOP_RUNTIME: capability } })).status, 200);
+  assert.equal(scoped, 3);
+  assert.equal(ambient, 0);
+});
+
+test('sync, auth terminals and webhook Apps use the request capability, which ends with the invocation', async () => {
+  let cached;
+  const worker = createProtocolWorker({ runtimeId: 'test.v1', appName: 'support', auth: true, fetch() { throw new Error('unscoped runtime access'); },
+    webhooks: { '/webhooks/provider': { method: 'POST', async handle({ app }) {
+      cached = app;
+      await app.workspace({ slug: 'customer' }).session({ id: 'chat' }).dispatch('hello', { id: messageId });
+      return new Response('ok');
+    } } } });
+  const fleet = { ...bindings, CANTELOP_FLEET_EXECUTION_VERSION: '1' };
+  const scoped = () => {
+    const calls = [];
+    return { calls, context: { props: { CANTELOP_RUNTIME: { async fetch(target) {
+      calls.push(new URL(target.url).pathname);
+      if (target.url.includes('/workspaces/open')) return Response.json({ id: workspaceId, slug: 'customer' });
+      return target.url.endsWith('/messages') ? accepted(messageId) : new Response(null, { status: 204 });
+    } } } } };
+  };
+  const syncRequest = () => new Request(`https://agent.example/__cantelop/sync/workspaces/${workspaceId}?op=scan`, { headers: { Authorization: 'Bearer test-app-token' } });
+  const sync = scoped();
+  assert.equal((await worker.fetch(syncRequest(), fleet, sync.context)).status, 204);
+  assert.deepEqual(sync.calls, [`/__cantelop/integration/v2/workspaces/${workspaceId}/sync`]);
+  assert.equal((await worker.fetch(syncRequest(), fleet)).status, 503);
+
+  const terminalId = 'trm_' + '5'.repeat(32);
+  const upgrade = () => new Request(`https://agent.example/__cantelop/auth/workspaces/${workspaceId}/terminals/${terminalId}`, { headers: { Upgrade: 'websocket', Connection: 'Upgrade' } });
+  const terminal = scoped();
+  assert.equal((await worker.fetch(upgrade(), fleet, terminal.context)).status, 204);
+  assert.deepEqual(terminal.calls, [`/__cantelop/integration/v2/sessions/cantelop-native-auth-${workspaceId}/auth/terminals/${terminalId}`]);
+  const unscoped = await worker.fetch(upgrade(), fleet);
+  assert.equal(unscoped.status, 503);
+  assert.deepEqual(await unscoped.json(), { error: { code: 'fleet_runtime_unavailable' } });
+
+  const hook = scoped();
+  const delivered = await worker.fetch(new Request('https://app.example/webhooks/provider', { method: 'POST', body: '{}' }), fleet, hook.context);
+  assert.equal(await delivered.text(), 'ok');
+  assert.deepEqual(hook.calls, ['/__cantelop/v1/workspaces/open', '/__cantelop/integration/v2/messages']);
+  // An App retained by author code cannot keep using the finished invocation's capability.
+  await assert.rejects(cached.workspace({ slug: 'customer' }).session({ id: 'chat' }).dispatch('later', { id: messageId }));
+  assert.equal(hook.calls.length, 2);
+  assert.equal((await worker.fetch(new Request('https://app.example/webhooks/provider', { method: 'POST', body: '{}' }), fleet)).status, 500);
 });
