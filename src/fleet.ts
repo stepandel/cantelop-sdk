@@ -1,7 +1,7 @@
 import { App } from "./app.js";
 import type { AppOptions, AppConnection } from "./integration.js";
 import type { ConfigurationContext, NormalizedAppOptions } from "./app-config.js";
-import { createEdgeConnection } from "./edge-connection.js";
+import { createEdgeConnection, resolveEdgeConnection } from "./edge-connection.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
 import { isRecord } from "./shared.js";
 import { FleetError, FleetConfigurationError, fleetIdentifier, resolveFleetConfiguration, type ConfiguredFleet } from "./fleet-config.js";
@@ -73,6 +73,16 @@ export class Fleet<Message = unknown, Event = never, Reply = never, View = unkno
   get name(): string { return this.options.name; }
   get runtime(): NormalizedAppOptions<Message, Event, Reply, View>["runtime"] { return this.options.runtime; }
   get runtimeId(): string | undefined { return this.options.runtimeId; }
+  /** Bind the compiled application contract to a service relay, or the selected App profile for self-managed use. */
+  connect(connection?: AppConnection): App<Message, Event, Reply, View> {
+    if (connection !== undefined && (!connection || typeof connection.fetch !== "function")) throw new TypeError("An App connection is required");
+    return new App(this.options, connection ?? resolveEdgeConnection(this.options, this.context, this.profile));
+  }
+  /** Select a service-role profile without mutating this definition or other references. */
+  withProfile(profile: string): Fleet<Message, Event, Reply, View> {
+    if (typeof profile !== "string" || !profile) throw new TypeError("A Fleet profile is required");
+    return new Fleet(this.options, this.context, profile);
+  }
   instance(selector: FleetInstanceSelector): FleetInstance<Message, Event, Reply, View> {
     if (!isRecord(selector) || Object.keys(selector).length !== 1 || !(validKey(selector.externalKey) || fleetIdentifier(selector.id, "ins"))) throw new TypeError("Select a Fleet instance by externalKey or id");
     return new FleetInstance(this.options, Object.freeze({ ...selector }), () => resolveFleetConfiguration(this.name, this.context, this.profile));

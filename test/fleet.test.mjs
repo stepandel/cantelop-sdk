@@ -160,3 +160,23 @@ test('relay paths cannot replace the credential-bound Edge origin', async t => {
   await connection.fetch(new Request('https://logical.example//another.example/commands/stop'));
   assert.equal(new URL(calls.at(-1).url).origin, 'https://app.example');
 });
+
+
+test('Fleet relay binding and role profiles preserve the compiled definition independently', async t => {
+  const key = Symbol.for(APP_CONFIGURATION_CONTEXT_KEY), previous = Reflect.get(globalThis, key), originalFetch = globalThis.fetch;
+  Reflect.set(globalThis, key, { ...document([binding]), profiles: { default: { apps: [], fleets: [binding] }, worker: { apps: [], fleets: [{ ...binding, accessToken: `${id('fsp')}.${'3'.repeat(64)}` }] } } });
+  t.after(() => { globalThis.fetch = originalFetch; if (previous === undefined) Reflect.deleteProperty(globalThis, key); else Reflect.set(globalThis, key, previous); });
+  const fleet = new CantelopClient().fleet({ name: 'juiced', runtime: { receive() {}, [Symbol.for('dev.cantelop.sdk.compiled-runtime.v1')]: 'rt_compiled' } });
+  const headers = [];
+  globalThis.fetch = async request => { headers.push(request.headers.get('Authorization')); return Response.json(row); };
+  await fleet.withProfile('worker').instance({ id: row.id }).status();
+  await fleet.instance({ id: row.id }).status();
+  assert.deepEqual(headers, [`Bearer ${id('fsp')}.${'3'.repeat(64)}`, `Bearer ${binding.accessToken}`]);
+  let relayed;
+  const app = fleet.connect({ fetch: async request => { relayed = request; const body = await request.json(); return Response.json({ protocolVersion: 2, id: body.id }); } });
+  await app.workspace({ slug: 'default' }).session({ id: 'chat' }).stop();
+  assert.equal(relayed.headers.get('X-Cantelop-Session-Runtime'), fleet.runtimeId);
+  assert.equal(app.runtimeId, fleet.runtimeId);
+  assert.throws(() => fleet.withProfile(''), TypeError);
+  assert.throws(() => fleet.connect({}), TypeError);
+});
