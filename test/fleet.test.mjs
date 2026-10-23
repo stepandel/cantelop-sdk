@@ -59,7 +59,7 @@ test('policy projection preserves revision conflicts, fences and enforcement pro
   assert.equal((await instance.status()).enforcedRevision, 0);
   conflict = true;
   await assert.rejects(instance.setPolicy({ expectedRevision: 1, sourceFence: '42', policy }), e => e instanceof FleetError && e.code === 'policy_revision_conflict' && e.status === 409);
-  for (const options of [{ expectedRevision: 0, policy }, { expectedRevision: 1, sourceFence: '9223372036854775808', policy }, { expectedRevision: 1, policy: { ...policy, maxSandboxes: -1 } }]) await assert.rejects(instance.setPolicy(options), TypeError);
+  for (const options of [{ expectedRevision: -1, policy }, { expectedRevision: 1, sourceFence: '9223372036854775808', policy }, { expectedRevision: 1, policy: { ...policy, maxSandboxes: -1 } }]) await assert.rejects(instance.setPolicy(options), TypeError);
 });
 test('instance App and relay connections use App credentials and preserve compiled runtime identity', async t => {
   const { instance, calls } = fixture(t, async request => {
@@ -76,7 +76,7 @@ test('instance App and relay connections use App credentials and preserve compil
   await app.workspace({ slug: 'default' }).session({ id: 'conversation' }).stop();
   assert.equal(calls.at(-1).url, 'https://app.example/commands/stop');
   const connection = await instance.connection();
-  assert.throws(() => connection.fetch(new Request('https://edge.example/commands/stop', { headers: { 'X-Cantelop-Session-Runtime': 'rt_other' } })), e => e.code === 'session_runtime_mismatch');
+  await assert.rejects(connection.fetch(new Request('https://edge.example/commands/stop', { headers: { 'X-Cantelop-Session-Runtime': 'rt_other' } })), e => e.code === 'session_runtime_mismatch');
 });
 test('mismatched credentials and incompatible runtime fail before App access', async t => {
   let incompatible = false;
@@ -97,6 +97,18 @@ test('scope failures, cancellation and oversized responses remain distinguishabl
   oversized = true;
   await assert.rejects(instance.status(), e => e.code === 'invalid_fleet_response');
 });
+test('non-JSON error bodies keep their HTTP status', async t => {
+  const { instance } = fixture(t, () => new Response('<html>unavailable</html>', { status: 503 }));
+  await assert.rejects(instance.status(), e => e.code === 'fleet_request_failed' && e.status === 503);
+});
+test('creation returns an existing instance on another package and requires runtime metadata when compiled', async t => {
+  const { instance } = fixture(t, async () => Response.json({ ...row, package_id: `pkg_${'5'.repeat(32)}` }));
+  assert.equal((await instance.create()).packageId, `pkg_${'5'.repeat(32)}`);
+  const { runtimeId, ...withoutRuntime } = binding;
+  const { instance: missing, calls } = fixture(t, () => { throw Error('unexpected network'); }, [withoutRuntime]);
+  await assert.rejects(missing.create(), e => e instanceof FleetConfigurationError && e.code === 'fleet_deployment_missing');
+  assert.equal(calls.length, 0);
+});
 test('Fleet profile binding is captured, scoped by name/profile, and rejects expired or unsafe configuration', async () => {
   const injected = parseAppConfiguration({ ...document([binding]), profiles: { default: { apps: [], fleets: [binding] }, production: { apps: [], fleets: [{ ...binding, packageId: `pkg_${'3'.repeat(32)}` }] } } });
   const context = { env: {}, injected, loadLocal: async () => ({}) };
@@ -104,7 +116,13 @@ test('Fleet profile binding is captured, scoped by name/profile, and rejects exp
   await assert.rejects(resolveFleetConfiguration('other', context), e => e.code === 'fleet_not_configured');
   const expired = { ...context, injected: parseAppConfiguration(document([{ ...binding, expiresAt: '2000-01-01' }])) };
   await assert.rejects(resolveFleetConfiguration('juiced', expired), e => e.code === 'fleet_credentials_expired');
-  for (const change of [{ controlUrl: 'http://public.example' }, { accessToken: 'app-token' }, { packageId: 'bad' }, { runtimeId: 'bad runtime' }]) assert.throws(() => parseAppConfiguration(document([{ ...binding, ...change }])), FleetConfigurationError);
+  for (const change of [{ controlUrl: 'http://public.example' }, { accessToken: 'app-token' }, { packageId: 'bad' }, { runtimeId: 'bad runtime' }]) {
+    const unsafe = parseAppConfiguration({ ...document([{ ...binding, ...change }]), profiles: { default: { apps: [{ id: `app_${'4'.repeat(32)}`, slug: 'other-app', accessToken: 'app-token' }], fleets: [{ ...binding, ...change }] } } });
+    assert.equal(unsafe.profiles.default.apps[0].slug, 'other-app');
+    await assert.rejects(resolveFleetConfiguration('juiced', { env: {}, injected: unsafe, loadLocal: async () => ({}) }), e => e instanceof FleetConfigurationError && e.code === 'fleet_configuration_invalid');
+  }
+  await assert.rejects(resolveFleetConfiguration('juiced', context, 'staging'), e => e.code === 'fleet_not_configured');
+  await assert.rejects(resolveFleetConfiguration('juiced', { env: {}, loadLocal: async () => { throw Error('unreadable'); } }), e => e instanceof FleetConfigurationError && e.code === 'fleet_configuration_invalid');
 });
 test('compiler builds Fleet artifacts and a typed backend without loading runtime-only dependencies', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'cantelop-fleet-'));

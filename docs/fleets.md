@@ -30,7 +30,7 @@ const current = await instance.status({ signal });
 
 Construction is local and never creates remote resources. External keys are stable service-owned idempotency keys: 16–128 ASCII letters, digits, underscores, periods, colons or hyphens. Platform instance IDs use the existing `ins_` format; the platform continues calling instances "installations" internally.
 
-`create()` requires an external-key reference and CLI-supplied package metadata. It submits an idempotent provisioning intent and returns the current state; it does not wait until ready. Repeating a key with a different configured package can return `installation_conflict`: creation does not upgrade an existing instance. `status()` never creates and returns `undefined` for `not_found`. After an ambiguous creation response, recover using `status()` with the same external key.
+`create()` requires an external-key reference and CLI-supplied package metadata. It submits an idempotent provisioning intent and returns the current state; it does not wait until ready. Repeating a key with a different configured package can return `installation_conflict`: creation does not upgrade an existing instance, so a returned instance can report another `packageId`. `status()` never creates and returns `undefined` for `not_found`. After an ambiguous creation response, recover using `status()` with the same external key.
 
 Status exposes `id`, `externalKey`, `appId`, `packageId`, optional `nextPackageId`, `version`, `runtimeId`, `state`, `policyRevision`, `enforcedRevision` and optional `errorCode`. States match the platform: `provisioning`, `ready`, `suspended`, `upgrading`, `failed`, `deleting`, `deleted`. The machine status endpoint does not return the policy body.
 
@@ -72,7 +72,7 @@ const response = await connection.fetch(runtimeRequest);
 
 `app()` resolves a typed App retaining the Fleet's message, event, reply, view and auth contracts. `connection()` exposes an `AppConnection` for services forwarding SDK protocol requests, including event streams and file sync. Both resolve status and App credentials without provisioning. They verify App/runtime identity and reject a mismatch with the compiled definition. A caller-supplied runtime header cannot override that identity.
 
-Connections use the App token only for its Edge origin; Fleet principals are used only for the control API. Credential resolution occurs on each `app()`/`connection()` call; returned connections retain those credentials. Re-resolve after credential rotation. Requests preserve cancellation, stream upload bodies and return upstream response streams without buffering them.
+Connections use the App token only for its Edge origin; Fleet principals are used only for the control API. Credential resolution occurs on each `app()`/`connection()` call; returned connections retain those credentials. Re-resolve after credential rotation. Requests preserve cancellation and return upstream response streams without buffering them; `connection()` also streams upload bodies, while `app()` buffers its bounded commands.
 
 A service such as Juiced still owns user/account authorization, durable provisioning jobs, billing decisions, protocol allowlists, terminal leases and stream revocation. The SDK replaces its Fleet HTTP wrapper and credential-to-connection plumbing. The retired platform budget/usage endpoints are not included.
 

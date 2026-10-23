@@ -4,7 +4,7 @@ import type { ConfigurationContext, NormalizedAppOptions } from "./app-config.js
 import { createEdgeConnection, resolveEdgeConnection } from "./edge-connection.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
 import { isRecord } from "./shared.js";
-import { FleetError, FleetConfigurationError, fleetIdentifier, resolveFleetConfiguration, type ConfiguredFleet } from "./fleet-config.js";
+import { FleetError, FleetConfigurationError, activeFleet, fleetIdentifier, resolveFleetConfiguration, type ConfiguredFleet } from "./fleet-config.js";
 
 /** Shared application definition. Deployment and package selection belong to the CLI. */
 export type FleetOptions<Message = unknown, Event = never, Reply = never, View = unknown> =
@@ -58,7 +58,7 @@ function status(value: unknown): FleetInstanceStatus {
 }
 function validatePolicy(options: FleetPolicyUpdate): void {
   const policy = options?.policy;
-  if (!revision(options?.expectedRevision) || options.expectedRevision < 1 || options.expectedRevision > 2147483646 || options.sourceFence !== undefined && (typeof options.sourceFence !== "string" || !/^[0-9]{1,19}$/.test(options.sourceFence) || BigInt(options.sourceFence) > 9223372036854775807n) ||
+  if (!revision(options?.expectedRevision) || options.expectedRevision > 2147483646 || options.sourceFence !== undefined && (typeof options.sourceFence !== "string" || !/^[0-9]{1,19}$/.test(options.sourceFence) || BigInt(options.sourceFence) > 9223372036854775807n) ||
       !policy || typeof policy.active !== "boolean" || typeof policy.expiresAt !== "string" || !Number.isFinite(Date.parse(policy.expiresAt))) throw new TypeError("Invalid Fleet policy update");
   const limits = { maxSandboxes: 1000, maxVcpus: 10000, maxMemoryMib: 1_000_000, maxWorkspaces: 10000, maxStorageBytes: 1024 ** 4 };
   if (Object.keys(policy).some(key => !["active", "expiresAt", ...Object.keys(limits)].includes(key))) throw new TypeError("Invalid Fleet policy");
@@ -69,6 +69,7 @@ function validatePolicy(options: FleetPolicyUpdate): void {
 }
 
 export class Fleet<Message = unknown, Event = never, Reply = never, View = unknown> {
+  #pending: Promise<ConfiguredFleet> | undefined;
   constructor(private readonly options: NormalizedAppOptions<Message, Event, Reply, View>, private readonly context: ConfigurationContext, private readonly profile?: string) {}
   get name(): string { return this.options.name; }
   get runtime(): NormalizedAppOptions<Message, Event, Reply, View>["runtime"] { return this.options.runtime; }
@@ -85,7 +86,12 @@ export class Fleet<Message = unknown, Event = never, Reply = never, View = unkno
   }
   instance(selector: FleetInstanceSelector): FleetInstance<Message, Event, Reply, View> {
     if (!isRecord(selector) || Object.keys(selector).length !== 1 || !(validKey(selector.externalKey) || fleetIdentifier(selector.id, "ins"))) throw new TypeError("Select a Fleet instance by externalKey or id");
-    return new FleetInstance(this.options, Object.freeze({ ...selector }), () => resolveFleetConfiguration(this.name, this.context, this.profile));
+    return new FleetInstance(this.options, Object.freeze({ ...selector }), () => this.#configuration());
+  }
+  /** Resolve the binding once per Fleet; failures retry on the next operation. */
+  async #configuration(): Promise<ConfiguredFleet> {
+    this.#pending ??= resolveFleetConfiguration(this.name, this.context, this.profile).catch(error => { this.#pending = undefined; throw error; });
+    return activeFleet(await this.#pending);
   }
 }
 
@@ -114,8 +120,9 @@ export class FleetInstance<Message = unknown, Event = never, Reply = never, View
     } finally { reader.releaseLock(); }
     const bytes = new Uint8Array(size); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    // Empty successes have no body; non-JSON error bodies keep their HTTP status.
     let value: unknown;
-    try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { return invalidResponse(); }
+    try { value = size === 0 ? undefined : JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { if (response.ok) return invalidResponse(); }
     if (!response.ok) {
       const code = isRecord(value) && typeof value.error === "string" && /^[a-z0-9_]{1,128}$/.test(value.error) ? value.error : "fleet_request_failed";
       throw new FleetError(code, response.status);
@@ -136,10 +143,11 @@ export class FleetInstance<Message = unknown, Event = never, Reply = never, View
     if (this.selector.externalKey === undefined) throw new TypeError("Creating a Fleet instance requires an external key");
     options?.signal?.throwIfAborted();
     const configuration = await this.configuration();
-    if (!configuration.packageId) throw new FleetConfigurationError("fleet_deployment_missing");
+    if (!configuration.packageId || this.definition.runtimeId !== undefined && configuration.runtimeId === undefined) throw new FleetConfigurationError("fleet_deployment_missing");
     this.assertRuntime(configuration.runtimeId);
+    // An existing instance keeps its package: creation does not upgrade it.
     const result = status(await this.request("PUT", `installations/${encodeURIComponent(this.selector.externalKey)}`, options, { packageId: configuration.packageId }));
-    if (result.externalKey !== this.selector.externalKey || result.packageId !== configuration.packageId) return invalidResponse();
+    if (result.externalKey !== this.selector.externalKey) return invalidResponse();
     this.assertRuntime(result.runtimeId);
     return result;
   }
@@ -160,24 +168,29 @@ export class FleetInstance<Message = unknown, Event = never, Reply = never, View
   }
   async delete(options?: FleetOperationOptions): Promise<{ readonly state: "deleting" }> {
     const value = await this.request("DELETE", this.path(), options);
-    if (!isRecord(value) || (this.selector.id === undefined ? value.deleted !== true : value.id !== this.selector.id || value.status !== "deleting")) return invalidResponse();
+    if (value !== undefined && (!isRecord(value) || (this.selector.id === undefined ? value.deleted !== true : value.id !== this.selector.id || value.status !== "deleting"))) return invalidResponse();
     return Object.freeze({ state: "deleting" });
   }
+  /** Raw relay connection; request bodies stream through unbuffered. */
   async connection(options?: FleetOperationOptions): Promise<AppConnection> {
+    return this.edge(options, true);
+  }
+  private async edge(options: FleetOperationOptions | undefined, streamRequestBody: boolean): Promise<AppConnection> {
     const target = await this.requireStatus(options);
     this.assertRuntime(target.runtimeId);
     const value = await this.request("GET", `installations/${target.id}/credentials`, options);
     if (!isRecord(value) || value.appId !== target.appId || value.runtimeId !== target.runtimeId || typeof value.edgeUrl !== "string" || typeof value.accessToken !== "string") return invalidResponse();
     let connection: AppConnection;
-    try { connection = createEdgeConnection({ edgeUrl: value.edgeUrl, accessToken: value.accessToken, runtimeId: value.runtimeId as string }, { streamRequestBody: true }); } catch { return invalidResponse(); }
+    try { connection = createEdgeConnection({ edgeUrl: value.edgeUrl, accessToken: value.accessToken, runtimeId: value.runtimeId as string }, { streamRequestBody }); } catch { return invalidResponse(); }
     const runtimeId = this.definition.runtimeId ?? target.runtimeId;
-    return Object.freeze({ fetch(request: Request) {
+    return Object.freeze({ async fetch(request: Request) {
       const supplied = request.headers.get("X-Cantelop-Session-Runtime");
       if (supplied !== null && supplied !== runtimeId) throw new FleetError("session_runtime_mismatch", 409);
       return connection.fetch(request);
     } });
   }
   async app(options?: FleetOperationOptions): Promise<App<Message, Event, Reply, View>> {
-    return new App(this.definition, await this.connection(options));
+    // Commands are buffered so they keep a Content-Length.
+    return new App(this.definition, await this.edge(options, false));
   }
 }

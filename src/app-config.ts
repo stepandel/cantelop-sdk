@@ -1,4 +1,4 @@
-import { parseConfiguredFleets, type ConfiguredFleet } from "./fleet-config.js";
+import { FleetConfigurationError, parseConfiguredFleets, type ConfiguredFleet } from "./fleet-config.js";
 import { validateWebhookRoutes, type HomepageHandler, type WebhookRoutes } from "./webhooks.js";
 import { isRecord } from "./shared.js";
 import { validateAppDeploymentConfiguration, type AppDeploymentConfiguration } from "./app-definition.js";
@@ -41,7 +41,8 @@ export interface AppConfigurationDocument {
   readonly profiles: Readonly<Record<string, {
     readonly defaultApp?: AppSelector;
     readonly apps: readonly ConfiguredApp[];
-    readonly fleets?: readonly ConfiguredFleet[];
+    /** "invalid" fails only Fleet resolution, so a bad binding never breaks App configuration. */
+    readonly fleets?: readonly ConfiguredFleet[] | "invalid";
   }>>;
 }
 export interface ConfigurationContext {
@@ -53,6 +54,9 @@ export interface ConfigurationContext {
 }
 
 function invalid(): never { throw new AppConfigurationError("app_configuration_invalid"); }
+function fleets(value: unknown): readonly ConfiguredFleet[] | "invalid" {
+  try { return parseConfiguredFleets(value); } catch (error) { if (error instanceof FleetConfigurationError) return "invalid"; throw error; }
+}
 function selector(value: unknown): AppSelector {
   if (!isRecord(value) || Object.keys(value).length !== 1) return invalid();
   if (typeof value.id === "string" && APP_ID.test(value.id)) return { id: value.id };
@@ -124,7 +128,7 @@ export function parseAppConfiguration(value: unknown): AppConfigurationDocument 
         ...(app.expiresAt === undefined ? {} : { expiresAt: app.expiresAt as string }),
       });
     });
-    profiles[name] = Object.freeze({ apps: Object.freeze(apps), ...(profile.fleets === undefined ? {} : { fleets: parseConfiguredFleets(profile.fleets) }), ...(profile.defaultApp === undefined ? {} : { defaultApp: Object.freeze(selector(profile.defaultApp)) }) });
+    profiles[name] = Object.freeze({ apps: Object.freeze(apps), ...(profile.fleets === undefined ? {} : { fleets: fleets(profile.fleets) }), ...(profile.defaultApp === undefined ? {} : { defaultApp: Object.freeze(selector(profile.defaultApp)) }) });
   }
   return Object.freeze({ schemaVersion: 1, activeProfile: value.activeProfile, profiles: Object.freeze(profiles) });
 }
@@ -145,12 +149,27 @@ export function captureConfigurationContext(): ConfigurationContext {
   return Object.freeze({ env: Object.freeze(env), ...(injected === undefined ? {} : { injected }), ...(localDatabaseOrigin === undefined ? {} : { localDatabaseOrigin }) });
 }
 
-/** Resolve identity and matching credentials independently; never borrow another App's token. */
-export async function resolveAppConfiguration(options: { readonly id?: string; readonly slug?: string; readonly profile?: string }, context: ConfigurationContext): Promise<{ edgeUrl: string; accessToken: string; runtimeId?: string }> {
-  const explicit = options.id !== undefined ? selector({ id: options.id }) : options.slug !== undefined ? selector({ slug: options.slug }) : undefined;
+/** Injected and environment documents, consulted before any local file. */
+export function capturedConfigurationDocuments(context: ConfigurationContext): AppConfigurationDocument[] {
   const documents: AppConfigurationDocument[] = [];
   if (context.injected !== undefined) documents.push(context.injected);
   if (context.env.CANTELOP_APP_CONFIG !== undefined) documents.push(parseJSON(context.env.CANTELOP_APP_CONFIG));
+  return documents;
+}
+
+/** The local integration file, read through the test seam or the Node-only adapter. */
+export async function loadLocalConfigurationDocument(context: ConfigurationContext): Promise<AppConfigurationDocument | undefined> {
+  const runtime = globalThis as typeof globalThis & { process?: { versions?: { node?: string } } };
+  const local = context.loadLocal !== undefined ? await context.loadLocal() : runtime.process?.versions?.node !== undefined
+    ? await (await import("#cantelop-app-config")).loadNodeAppConfiguration(context.env)
+    : {};
+  return local.document;
+}
+
+/** Resolve identity and matching credentials independently; never borrow another App's token. */
+export async function resolveAppConfiguration(options: { readonly id?: string; readonly slug?: string; readonly profile?: string }, context: ConfigurationContext): Promise<{ edgeUrl: string; accessToken: string; runtimeId?: string }> {
+  const explicit = options.id !== undefined ? selector({ id: options.id }) : options.slug !== undefined ? selector({ slug: options.slug }) : undefined;
+  const documents = capturedConfigurationDocuments(context);
   const envID = context.env.CANTELOP_APP_ID, envSlug = context.env.CANTELOP_APP_SLUG;
   if (envID !== undefined && !APP_ID.test(envID) || envSlug !== undefined && !SLUG_PATTERN.test(envSlug)) return invalid();
   const environmentSelector = envID !== undefined ? { id: envID } : envSlug !== undefined ? { slug: envSlug } : undefined;
@@ -188,12 +207,9 @@ export async function resolveAppConfiguration(options: { readonly id?: string; r
   };
   const configured = findConfigured();
   if (configured) return configured;
-  const runtime = globalThis as typeof globalThis & { process?: { versions?: { node?: string } } };
-  const local = context.loadLocal !== undefined ? await context.loadLocal() : runtime.process?.versions?.node !== undefined
-    ? await (await import("#cantelop-app-config")).loadNodeAppConfiguration(context.env)
-    : {};
-  if (local.document !== undefined) documents.push(local.document);
-  selected ??= (local.document === undefined ? undefined : profileFor(local.document).defaultApp);
+  const local = await loadLocalConfigurationDocument(context);
+  if (local !== undefined) documents.push(local);
+  selected ??= (local === undefined ? undefined : profileFor(local).defaultApp);
   if (selected === undefined) throw new AppConfigurationError("app_configuration_missing");
   const resolved = findConfigured();
   if (resolved) return resolved;
