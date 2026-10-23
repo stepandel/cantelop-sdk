@@ -84,7 +84,7 @@ Deploy the backend and the App together, from the same source. Until both are ou
 
 Watch follows implementation and type dependencies. Invalid edits preserve the last successful native manifest and repairs resume builds. Schema watching remains independent. Project `db/schema.ts` applies to the selected Apps' isolated Workspace databases.
 
-The SDK uses project schema 3, CLI build protocol 6, integration protocol 2 and actor protocol 2. Use Cantelop CLI 0.15.2 or newer: `cantelop dev` and `cantelop deploy` build the App, honor its environment and image declarations, and deploy matching Edge and Sandbox artifacts to its hostname. Pass `--app NAME` when the definition exports more than one App.
+The SDK uses project schema 3, CLI build protocol 7, integration protocol 2 and actor protocol 2. Use a Cantelop CLI release supporting build protocol 7: `cantelop dev` and `cantelop deploy` build the App, honor its environment and image declarations, and deploy matching Edge and Sandbox artifacts to its hostname. Pass `--app NAME` when the definition exports more than one App.
 
 ## Optional webhook implementations
 

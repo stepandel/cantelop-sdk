@@ -298,3 +298,5 @@ pnpm test:bun
 ```
 
 Package qualification checks the actual npm tarball and its packed files, generated Edge and native runtime build artifacts, and a clean consumer's integration types. Publishing is a separate operation; see [release guidance](docs/releasing.md).
+
+Define shared applications with `cantelop.fleet({...})` and manage isolated instances through `fleet.instance(...)`. See [Fleets and instances](docs/fleets.md) for lifecycle, typed App access and the CLI integration contract.

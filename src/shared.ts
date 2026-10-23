@@ -19,3 +19,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function abortReason(signal: AbortSignal, message: string): unknown {
   return signal.reason ?? new DOMException(message, "AbortError");
 }
+
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
+/** A bare HTTPS origin, or an HTTP loopback origin for local development. */
+export function isServiceOrigin(url: URL): boolean {
+  return (url.protocol === "https:" || url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) &&
+    !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+}

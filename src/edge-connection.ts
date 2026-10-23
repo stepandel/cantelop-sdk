@@ -1,10 +1,9 @@
 import { assertRuntimeID } from "./session-runtime-contract.js";
-import { EDGE_ORIGIN } from "./shared.js";
+import { EDGE_ORIGIN, isServiceOrigin } from "./shared.js";
 import { AppConfigurationError, resolveAppConfiguration, type ConfigurationContext, type NormalizedAppOptions } from "./app-config.js";
 import type { AppConnection } from "./integration.js";
 
 const EDGE_HOST = new URL(EDGE_ORIGIN).host;
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
  * Assigns the logical Edge origin (and any SDK headers) to a request before it leaves the SDK.
@@ -20,14 +19,12 @@ export function edgeRequest(request: Request, headers: Readonly<Record<string, s
   return addressed;
 }
 
-export function createEdgeConnection(options: { readonly edgeUrl?: string; readonly accessToken?: string; readonly runtimeId?: string } | undefined): AppConnection {
+export function createEdgeConnection(options: { readonly edgeUrl?: string; readonly accessToken?: string; readonly runtimeId?: string } | undefined, transport: { readonly streamRequestBody?: boolean } = {}): AppConnection {
   if (!options?.edgeUrl || !options.accessToken || /[\r\n]/.test(options.accessToken)) {
     throw new TypeError("An App Edge URL and access token are required");
   }
   const origin = new URL(options.edgeUrl);
-  const loopback = LOOPBACK_HOSTS.has(origin.hostname);
-  if ((origin.protocol !== "https:" && !(origin.protocol === "http:" && loopback)) ||
-      origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+  if (!isServiceOrigin(origin)) {
     throw new TypeError("App Edge URL must be an HTTPS origin (HTTP loopback is allowed for local dev)");
   }
   const token = options.accessToken;
@@ -36,14 +33,16 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
   return Object.freeze({
     async fetch(request: Request) {
       const source = new URL(request.url);
-      const target = new URL(source.pathname + source.search, origin);
+      const target = new URL(origin);
+      target.pathname = source.pathname;
+      target.search = source.search;
       const headers = new Headers(request.headers);
       if (!headers.has("X-Cantelop-Session-Runtime") && runtimeId !== undefined) headers.set("X-Cantelop-Session-Runtime", runtimeId);
       headers.set("Authorization", `Bearer ${token}`);
-      // Command bodies are small, bounded JSON: buffering keeps a Content-Length instead of chunked upload.
+      // Commands keep Content-Length; service relays can preserve streaming sync uploads.
       return fetch(new Request(target, {
         method: request.method, headers, signal: request.signal, redirect: "manual",
-        ...(request.body === null ? {} : { body: await request.arrayBuffer() }),
+        ...(request.body === null ? {} : transport.streamRequestBody ? { body: request.body, duplex: "half" } as RequestInit : { body: await request.arrayBuffer() }),
       }));
     },
   });

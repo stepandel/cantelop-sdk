@@ -26,3 +26,7 @@ export type { AppEnvironment, EnvironmentUpdate, EnvironmentCommand, Environment
 export type { AppDeploymentConfiguration, AppEnvironmentDeclaration } from "./app-definition.js";
 
 export type { AppRequestContext, HomepageHandler, WebhookContext, WebhookHandler, WebhookRoute, WebhookRoutes } from "./webhooks.js";
+
+export type { Fleet, FleetOptions, FleetInstance, FleetInstanceSelector, FleetInstanceStatus, FleetInstanceState, FleetInstancePolicy, FleetOperationOptions, FleetPolicyUpdate } from "./fleet.js";
+export { FleetError, FleetConfigurationError } from "./fleet-config.js";
+export type { ConfiguredFleet } from "./fleet-config.js";
