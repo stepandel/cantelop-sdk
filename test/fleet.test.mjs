@@ -198,3 +198,30 @@ test('Fleet relay binding and role profiles preserve the compiled definition ind
   assert.throws(() => fleet.withProfile(''), TypeError);
   assert.throws(() => fleet.connect({}), TypeError);
 });
+
+test('explicit unlimited compute reaches the platform and does not weaken finite validation', async t => {
+  const unlimited = { ...policy, maxSandboxes: null, maxVcpus: null, maxMemoryMib: null };
+  const sent = [];
+  const { instance, calls } = fixture(t, async request => {
+    if (request.method === 'GET') return Response.json(row);
+    sent.push((await request.json()).policy);
+    return Response.json({ revision: 2 });
+  });
+  await instance.setPolicy({ expectedRevision: 1, policy: unlimited });
+  assert.deepEqual(sent[0], unlimited);
+  await instance.setPolicy({ expectedRevision: 1, policy: { ...unlimited, maxSandboxes: 0 } });
+  assert.equal(sent[1].maxSandboxes, 0);
+  const before = calls.length;
+  for (const field of ['maxSandboxes', 'maxVcpus', 'maxMemoryMib']) {
+    for (const value of [undefined, -1, 1.5, Infinity, '2', {}])
+      await assert.rejects(instance.setPolicy({ expectedRevision: 1, policy: { ...unlimited, [field]: value } }), TypeError);
+  }
+  for (const [field, max] of Object.entries({ maxSandboxes: 1000, maxVcpus: 10000, maxMemoryMib: 1_000_000 })) {
+    await assert.rejects(instance.setPolicy({ expectedRevision: 1, policy: { ...unlimited, [field]: max + 1 } }), TypeError);
+    const { [field]: _, ...omitted } = unlimited;
+    await assert.rejects(instance.setPolicy({ expectedRevision: 1, policy: omitted }), TypeError);
+  }
+  for (const field of ['maxWorkspaces', 'maxStorageBytes'])
+    await assert.rejects(instance.setPolicy({ expectedRevision: 1, policy: { ...unlimited, [field]: null } }), TypeError);
+  assert.equal(calls.length, before);
+});

@@ -15,9 +15,9 @@ export type FleetInstanceState = "deleted" | "deleting" | "suspended" | "upgradi
 export interface FleetInstancePolicy {
   readonly active: boolean;
   readonly expiresAt: string;
-  readonly maxSandboxes: number;
-  readonly maxVcpus: number;
-  readonly maxMemoryMib: number;
+  readonly maxSandboxes: number | null;
+  readonly maxVcpus: number | null;
+  readonly maxMemoryMib: number | null;
   readonly maxWorkspaces: number;
   readonly maxStorageBytes: number;
 }
@@ -61,9 +61,12 @@ function validatePolicy(options: FleetPolicyUpdate): void {
   if (!revision(options?.expectedRevision) || options.expectedRevision > 2147483646 || options.sourceFence !== undefined && (typeof options.sourceFence !== "string" || !/^[0-9]{1,19}$/.test(options.sourceFence) || BigInt(options.sourceFence) > 9223372036854775807n) ||
       !policy || typeof policy.active !== "boolean" || typeof policy.expiresAt !== "string" || !Number.isFinite(Date.parse(policy.expiresAt))) throw new TypeError("Invalid Fleet policy update");
   const limits = { maxSandboxes: 1000, maxVcpus: 10000, maxMemoryMib: 1_000_000, maxWorkspaces: 10000, maxStorageBytes: 1024 ** 4 };
+  // `null` means no per-instance cap; Workspace and storage limits stay finite.
+  const unlimited = new Set(["maxSandboxes", "maxVcpus", "maxMemoryMib"]);
   if (Object.keys(policy).some(key => !["active", "expiresAt", ...Object.keys(limits)].includes(key))) throw new TypeError("Invalid Fleet policy");
   for (const [key, max] of Object.entries(limits)) {
     const value = policy[key as keyof typeof limits];
+    if (value === null && unlimited.has(key)) continue;
     if (!revision(value) || value > max) throw new TypeError("Invalid Fleet policy limit");
   }
 }

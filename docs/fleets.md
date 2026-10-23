@@ -54,6 +54,19 @@ const update = await instance.setPolicy({
 });
 ```
 
+To opt an instance out of per-instance compute caps, set `maxSandboxes`,
+`maxVcpus`, and `maxMemoryMib` to explicit `null`:
+
+```ts
+policy: { ...entitlement, maxSandboxes: null, maxVcpus: null, maxMemoryMib: null }
+```
+
+Finite limits, including zero, remain supported; omitting a field is invalid.
+Shared host admission still applies, and Workspace and storage limits remain
+finite. The SDK does not detect platform support: deploy the platform support
+for nullable compute limits before projecting them, because an older control
+plane may reject `null` or treat it as zero.
+
 `setPolicy()` returns `{ revision }`. Acceptance is distinct from compute enforcement: a durable reconciler checks status until `enforcedRevision >= update.revision`. Revision conflicts and stale source fences remain typed platform errors; the SDK does not automatically overwrite concurrent changes. Suspension uses an inactive policy, with limits and expiry chosen by the service.
 
 `await instance.delete()` submits permanent deletion and returns `{ state: "deleting" }`. An external-key reference deletes by key even if creation has not returned an instance ID. The platform tombstones that key permanently; it cannot be reused to resurrect the instance. Status polling observes completion. A missing ID may return `not_found`, which a deletion reconciler can treat as completion.
