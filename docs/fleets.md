@@ -45,14 +45,20 @@ const update = await instance.setPolicy({
   policy: {
     active: true,
     expiresAt: periodEnd.toISOString(),
-    maxSandboxes: 2,
-    maxVcpus: 8,
-    maxMemoryMib: 9216,
+    maxSandboxes: null,
+    maxVcpus: null,
+    maxMemoryMib: null,
     maxWorkspaces: 8,
     maxStorageBytes: 10 * 1024 ** 3,
   },
 });
 ```
+
+`maxSandboxes`, `maxVcpus`, and `maxMemoryMib` accept explicit `null` for no
+per-instance compute cap. Finite limits, including zero, remain supported;
+omitting a field is invalid. Shared host admission still applies, and Workspace
+and storage limits remain finite. Deploy the platform support for nullable
+compute limits before projecting them.
 
 `setPolicy()` returns `{ revision }`. Acceptance is distinct from compute enforcement: a durable reconciler checks status until `enforcedRevision >= update.revision`. Revision conflicts and stale source fences remain typed platform errors; the SDK does not automatically overwrite concurrent changes. Suspension uses an inactive policy, with limits and expiry chosen by the service.
 

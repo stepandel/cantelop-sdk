@@ -15,9 +15,9 @@ export type FleetInstanceState = "deleted" | "deleting" | "suspended" | "upgradi
 export interface FleetInstancePolicy {
   readonly active: boolean;
   readonly expiresAt: string;
-  readonly maxSandboxes: number;
-  readonly maxVcpus: number;
-  readonly maxMemoryMib: number;
+  readonly maxSandboxes: number | null;
+  readonly maxVcpus: number | null;
+  readonly maxMemoryMib: number | null;
   readonly maxWorkspaces: number;
   readonly maxStorageBytes: number;
 }
@@ -64,7 +64,8 @@ function validatePolicy(options: FleetPolicyUpdate): void {
   if (Object.keys(policy).some(key => !["active", "expiresAt", ...Object.keys(limits)].includes(key))) throw new TypeError("Invalid Fleet policy");
   for (const [key, max] of Object.entries(limits)) {
     const value = policy[key as keyof typeof limits];
-    if (!revision(value) || value > max) throw new TypeError("Invalid Fleet policy limit");
+    if (value === null && ["maxSandboxes", "maxVcpus", "maxMemoryMib"].includes(key)) continue;
+    if (!revision(value) || (value as number) > max) throw new TypeError("Invalid Fleet policy limit");
   }
 }
 
