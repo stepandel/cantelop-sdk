@@ -216,6 +216,11 @@ test('explicit unlimited compute reaches the platform and does not weaken finite
     for (const value of [undefined, -1, 1.5, Infinity, '2', {}])
       await assert.rejects(instance.setPolicy({ expectedRevision: 1, policy: { ...unlimited, [field]: value } }), TypeError);
   }
+  for (const [field, max] of Object.entries({ maxSandboxes: 1000, maxVcpus: 10000, maxMemoryMib: 1_000_000 })) {
+    await assert.rejects(instance.setPolicy({ expectedRevision: 1, policy: { ...unlimited, [field]: max + 1 } }), TypeError);
+    const { [field]: _, ...omitted } = unlimited;
+    await assert.rejects(instance.setPolicy({ expectedRevision: 1, policy: omitted }), TypeError);
+  }
   for (const field of ['maxWorkspaces', 'maxStorageBytes'])
     await assert.rejects(instance.setPolicy({ expectedRevision: 1, policy: { ...unlimited, [field]: null } }), TypeError);
   assert.equal(calls.length, before);
