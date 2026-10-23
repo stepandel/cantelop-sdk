@@ -1,6 +1,6 @@
-import type { ConfigurationContext, AppConfigurationDocument } from "./app-config.js";
-import { parseAppConfiguration, MAX_CONFIG_BYTES } from "./app-config.js";
-import { isRecord } from "./shared.js";
+import type { ConfigurationContext } from "./app-config.js";
+import { capturedConfigurationDocuments, loadLocalConfigurationDocument } from "./app-config.js";
+import { isRecord, isServiceOrigin } from "./shared.js";
 import { SLUG_PATTERN } from "./integration-protocol.js";
 import { assertRuntimeID } from "./session-runtime-contract.js";
 
@@ -28,7 +28,7 @@ export interface ConfiguredFleet {
 export const fleetIdentifier = (value: unknown, prefix: string): value is string => typeof value === "string" && new RegExp(`^${prefix}_[a-f0-9]{32}$`).test(value);
 export function controlOrigin(value: string): URL {
   const url = new URL(value);
-  if ((url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new TypeError("Fleet control URL must be an HTTPS origin (HTTP loopback is allowed for local dev)");
+  if (!isServiceOrigin(url)) throw new TypeError("Fleet control URL must be an HTTPS origin (HTTP loopback is allowed for local dev)");
   return url;
 }
 export function parseConfiguredFleets(value: unknown): readonly ConfiguredFleet[] {
@@ -52,32 +52,35 @@ export function parseConfiguredFleets(value: unknown): readonly ConfiguredFleet[
   }));
 }
 
+/** Rejects expired credentials; checked on every use, including cached bindings. */
+export function activeFleet(entry: ConfiguredFleet): ConfiguredFleet {
+  if (entry.expiresAt !== undefined && Date.parse(entry.expiresAt) <= Date.now()) throw new FleetConfigurationError("fleet_credentials_expired");
+  return entry;
+}
+
 /** Uses the same captured, private integration profiles as Apps, never CLI owner credentials. */
 export async function resolveFleetConfiguration(name: string, context: ConfigurationContext, profile?: string): Promise<ConfiguredFleet> {
-  const documents: AppConfigurationDocument[] = [];
-  if (context.injected) documents.push(context.injected);
-  if (context.env.CANTELOP_APP_CONFIG !== undefined) {
-    const text = context.env.CANTELOP_APP_CONFIG;
-    if (new TextEncoder().encode(text).length > MAX_CONFIG_BYTES) throw new FleetConfigurationError("fleet_configuration_invalid");
-    try { documents.push(parseAppConfiguration(JSON.parse(text))); } catch { throw new FleetConfigurationError("fleet_configuration_invalid"); }
-  }
+  const profileName = profile ?? context.env.CANTELOP_PROFILE;
+  if (profileName !== undefined && !profileName) throw new FleetConfigurationError("fleet_configuration_invalid");
+  const load = async <T>(read: () => T | Promise<T>): Promise<T> => {
+    try { return await read(); } catch { throw new FleetConfigurationError("fleet_configuration_invalid"); }
+  };
+  const documents = await load(() => capturedConfigurationDocuments(context));
   const find = () => {
     for (const document of documents) {
-      const selected = profile ?? context.env.CANTELOP_PROFILE ?? document.activeProfile;
-      const entry = Object.hasOwn(document.profiles, selected) ? document.profiles[selected]?.fleets?.find(fleet => fleet.name === name) : undefined;
-      if (entry) {
-        if (entry.expiresAt !== undefined && Date.parse(entry.expiresAt) <= Date.now()) throw new FleetConfigurationError("fleet_credentials_expired");
-        return entry;
-      }
+      const selected = profileName ?? document.activeProfile;
+      if (!Object.hasOwn(document.profiles, selected)) throw new FleetConfigurationError("fleet_not_configured");
+      const fleets = document.profiles[selected]!.fleets;
+      if (fleets === "invalid") throw new FleetConfigurationError("fleet_configuration_invalid");
+      const entry = fleets?.find(fleet => fleet.name === name);
+      if (entry) return activeFleet(entry);
     }
     return undefined;
   };
   const configured = find();
   if (configured) return configured;
-  const runtime = globalThis as typeof globalThis & { process?: { versions?: { node?: string } } };
-  const local = context.loadLocal ? await context.loadLocal() : runtime.process?.versions?.node
-    ? await (await import("#cantelop-app-config")).loadNodeAppConfiguration(context.env) : {};
-  if (local.document) documents.push(local.document);
+  const local = await load(() => loadLocalConfigurationDocument(context));
+  if (local) documents.push(local);
   const resolved = find();
   if (!resolved) throw new FleetConfigurationError("fleet_not_configured");
   return resolved;

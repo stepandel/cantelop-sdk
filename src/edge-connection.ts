@@ -1,10 +1,9 @@
 import { assertRuntimeID } from "./session-runtime-contract.js";
-import { EDGE_ORIGIN } from "./shared.js";
+import { EDGE_ORIGIN, isServiceOrigin } from "./shared.js";
 import { AppConfigurationError, resolveAppConfiguration, type ConfigurationContext, type NormalizedAppOptions } from "./app-config.js";
 import type { AppConnection } from "./integration.js";
 
 const EDGE_HOST = new URL(EDGE_ORIGIN).host;
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
  * Assigns the logical Edge origin (and any SDK headers) to a request before it leaves the SDK.
@@ -25,9 +24,7 @@ export function createEdgeConnection(options: { readonly edgeUrl?: string; reado
     throw new TypeError("An App Edge URL and access token are required");
   }
   const origin = new URL(options.edgeUrl);
-  const loopback = LOOPBACK_HOSTS.has(origin.hostname);
-  if ((origin.protocol !== "https:" && !(origin.protocol === "http:" && loopback)) ||
-      origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+  if (!isServiceOrigin(origin)) {
     throw new TypeError("App Edge URL must be an HTTPS origin (HTTP loopback is allowed for local dev)");
   }
   const token = options.accessToken;
